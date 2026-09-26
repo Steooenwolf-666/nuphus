@@ -267,6 +267,7 @@ fn main() {
             commands::get_supported_providers,
             commands::create_custom_provider,
             commands::update_custom_provider,
+            commands::remove_custom_provider,
             commands::oauth_begin,
             commands::oauth_status,
             commands::oauth_logout,

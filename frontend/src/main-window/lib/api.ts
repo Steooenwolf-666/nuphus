@@ -1052,6 +1052,22 @@ export function updateCustomProvider(
   })
 }
 
+/**
+ * 删除自定义模型实例 —— 模型页左栏「自定义模型」条目删除图标的落盘入口。
+ *
+ * 后端整段移除 `providers.toml` 里对应的 `[[providers]]`（见
+ * `remove_provider_segment`），不只是清空段内模型列表。
+ *
+ * 返回 `false` 表示**段本来就不存在**（重复删除 / 已被外部改动），这不是错误：
+ * 调用方想达成的「该实例不存在」已经成立，应静默收敛而不是弹失败。
+ * 只有真正的 IO / 解析失败才 reject。
+ *
+ * 删除只落盘、不同步运行时：调用方负责在成功后重新拉取服务商列表。
+ */
+export function removeCustomProvider(name: string) {
+  return invoke<boolean>('remove_custom_provider', { name })
+}
+
 // ── OAuth 订阅登录（custom 实例的授权码 + 本地回调流程）──
 
 /** `oauth_begin` 返回：授权 URL（前端经 openExternal 打开）与本地回调端口 */
