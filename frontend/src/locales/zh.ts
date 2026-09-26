@@ -1159,6 +1159,7 @@ const zh: Record<string, string> = {
 
   'taskBubble.idle': '待命',
   'taskBubble.failed': ' · {0}失败',
+  'taskBubble.interrupted': ' · {0}未结算',
 
   'security.low': '低风险',
   'security.medium': '中风险',

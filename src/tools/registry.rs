@@ -801,7 +801,7 @@ pub const WORKFLOW_TOOL_EXCLUDE: &[&str] = &[
     "task_dispatch",
     "planner_create",
     "planner_parse",
-    "planner_complete",
+    "planner_archive",
     "planner_list",
     "tenet_add",
     // 记忆 / 会话检索（agent 上下文交互，注册表实际名见 definitions/memory.rs）
@@ -943,7 +943,7 @@ impl ToolRegistry {
         self.register_task_dispatch();
         self.register_planner_create();
         self.register_planner_parse();
-        self.register_planner_complete();
+        self.register_planner_archive();
         self.register_planner_list();
         self.register_tenet_add();
         self.register_annotation_add();
@@ -1040,7 +1040,7 @@ impl ToolRegistry {
         registry.register_task_dispatch();
         registry.register_planner_create();
         registry.register_planner_parse();
-        registry.register_planner_complete();
+        registry.register_planner_archive();
         registry.register_planner_list();
         registry.register_tenet_add();
         // 额外: workflow_run + schedule_cron + wf_call

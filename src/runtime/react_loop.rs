@@ -3,7 +3,7 @@
 //! ReactAgent::run()'s ~630 line loop body is inlined here;
 //! Runtime truly owns the execution loop, ReactAgent degrades to a pure state container.
 
-use crate::agent::events::{NuphusEvent, TaskItem};
+use crate::agent::events::NuphusEvent;
 use crate::agent::prompt;
 use crate::agent::reminders::{ReminderCategory, ReminderPriority};
 use crate::runtime::protection::{ProtectionAlert, ProtectionGuard};
@@ -1377,40 +1377,10 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                 };
                 self.agent.steps.push(step.clone());
 
-                // planner_create success → push TaskList
-                if call.tool == "planner_create" && result.success {
-                    if let Some(ref output) = result.output {
-                        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(output) {
-                            if let Some(plan) = parsed.get("plan") {
-                                if let Some(tasks) = plan.get("tasks").and_then(|t| t.as_array()) {
-                                    let task_items: Vec<TaskItem> = tasks
-                                        .iter()
-                                        .enumerate()
-                                        .filter_map(|(i, t)| {
-                                            Some(TaskItem {
-                                                id: i + 1,
-                                                name: t.get("name")?.as_str()?.to_string(),
-                                                status: "pending".to_string(),
-                                            })
-                                        })
-                                        .collect();
-                                    if !task_items.is_empty() {
-                                        if let Some(ref emitter) = self.agent.exec_emitter {
-                                            emitter.emit(NuphusEvent::TaskList {
-                                                plan_path: parsed
-                                                    .get("plan_path")
-                                                    .and_then(|p| p.as_str())
-                                                    .unwrap_or("")
-                                                    .to_string(),
-                                                tasks: task_items,
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                // 注意：这里**不再**因 planner_create 成功而推任务列表。
+                // 计划文档是「理解传递」工件，任务列表的上墙归 dispatch 的 TaskRun 台账
+                // （见 runtime::dispatch / agent::task_run）——传递层与显示层单向切开，
+                // 墙不再来自文档，未派发的任务不该出现在执行面板上。
 
                 if result.success {
                     let output_str = result.output.as_deref().unwrap_or("");

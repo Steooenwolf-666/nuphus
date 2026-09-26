@@ -1217,6 +1217,7 @@ const en: Record<string, string> = {
 
   'taskBubble.idle': 'Idle',
   'taskBubble.failed': ' → {0} failed',
+  'taskBubble.interrupted': ' → {0} unsettled',
 
   'security.low': 'Low Risk',
   'security.medium': 'Medium Risk',
