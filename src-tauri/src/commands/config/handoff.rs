@@ -1,6 +1,6 @@
 //! 外部 Agent 工作台 —— 阶段 0（地基）：agent 目录初始化 + 门铃预检 + 交付上报。
 //!
-//! 目录约定（项目根 = find_plugin_dir().parent()）：
+//! 目录约定（项目根 = plugin_root().parent()，即 workspace_root()）：
 //!   {root}/.nuphus/handoff/{agent}/
 //!     read.md          —— 对接协议（模板内嵌，{agent_name}/{description} 已替换）
 //!     memory.md        —— 该 Agent 跨任务记忆骨架
@@ -62,17 +62,142 @@ const READ_TEMPLATE: &str = r#"# {agent_name} 对接协议
 - 禁止长时间静默空转：受阻立即 blocked 并说明原因。
 "#;
 
-/// handoff 根目录：{项目根}/.nuphus/handoff
+/// handoff 根目录：{项目根}/.nuphus/handoff —— **唯一权威推导**。
+///
+/// 派生规则纯函数见 `nuphus::utils::handoff_root_from`：
+/// 开发机（plugin 根在源码检出内）→ `<repo>/.nuphus/handoff`（零迁移）；
+/// 发布版（plugin 根落在 nuphus_data_dir() 之下）→ `nuphus_data_dir()/handoff`。
 pub fn handoff_root() -> PathBuf {
-    crate::plugin_apps::find_plugin_dir()
-        .parent()
-        .map(|root| root.join(".nuphus").join("handoff"))
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .unwrap_or_default()
-                .join(".nuphus")
-                .join("handoff")
-        })
+    nuphus::utils::handoff_root_from(
+        &nuphus::utils::plugin_root(),
+        &nuphus::utils::nuphus_data_dir(),
+    )
+}
+
+/// 旧 handoff 根 → 新根的一次性迁移汇总（**agent 目录级**粒度）。
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct HandoffMigrationReport {
+    /// 从旧根拷入新根的 agent 名（按来源顺序）
+    pub copied: Vec<String>,
+    /// 新根已有同名 agent 目录 → 保留新根、弃用旧副本的 agent 名
+    pub skipped: Vec<String>,
+    /// (agent 名, 错误信息)；单个 agent 失败不影响其余迁移
+    pub failed: Vec<(String, String)>,
+}
+
+impl HandoffMigrationReport {
+    /// 无任何实质动作（没迁、没跳、没失败）。
+    pub fn is_empty(&self) -> bool {
+        self.copied.is_empty() && self.skipped.is_empty() && self.failed.is_empty()
+    }
+}
+
+/// 迁移核心（root 注入，可单测）：把多个候选旧根下的 agent 目录合并进 target。
+///
+/// 粒度是 **agent 目录级**：target 已有该 agent 目录即跳过——绝不能整根跳过，
+/// 否则首次启动建出新根后，迁移逻辑永远不会再触发。
+/// 同一 agent 在多个来源都出现时，按 `sources` 顺序首个胜出。
+/// 来源目录不存在 / 不可读 → 视为无此来源，不报错。
+pub fn migrate_handoff_agents_into(target: &Path, sources: &[PathBuf]) -> HandoffMigrationReport {
+    let mut report = HandoffMigrationReport::default();
+    for source in sources {
+        let Ok(entries) = std::fs::read_dir(source) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue; // 只迁 agent 目录，散落文件不处理
+            }
+            let Some(agent) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_string)
+            else {
+                continue;
+            };
+            let dest = target.join(&agent);
+            if dest.exists() {
+                report.skipped.push(agent);
+                continue;
+            }
+            // 第一次真实拷贝时才确保 target 存在（无内容可迁不凭空建新根）
+            if let Err(e) = std::fs::create_dir_all(target) {
+                report
+                    .failed
+                    .push((agent, format!("创建 handoff 根 {target:?} 失败: {e}")));
+                continue;
+            }
+            match copy_dir_recursive(&path, &dest) {
+                Ok(()) => report.copied.push(agent),
+                Err(e) => {
+                    let msg = format!("拷贝 {agent} 目录失败: {e}");
+                    report.failed.push((agent, msg));
+                }
+            }
+        }
+    }
+    report
+}
+
+/// 递归拷贝目录内容（不存在目标层级时逐级创建）。
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let target_path = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&entry.path(), &target_path)?;
+        } else {
+            std::fs::copy(entry.path(), &target_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// 启动期接线：候选旧根 → 新 handoff 根的一次性合并迁移（详见 `migrate_handoff_agents_into`）。
+///
+/// 旧根候选覆盖历史全部布局：
+/// ① `<exe_dir>/.nuphus/handoff`（exe 同级）
+/// ② `<cwd>/.nuphus/handoff`（发布版 cwd 常 ≠ exe_dir）
+/// ③ `nuphus_data_dir()/.nuphus/handoff`（历史版本嵌进 data_dir 的嵌套坑）
+///
+/// 必须在 `reset_all_statuses_at_startup()` **之前**调用：后者按新根清零
+/// status.json，先迁移才能让迁过来的真实状态参与本轮生命周期判定。
+pub fn migrate_legacy_handoff_roots() -> HandoffMigrationReport {
+    let data_dir = nuphus::utils::nuphus_data_dir();
+    let target = nuphus::utils::handoff_root_from(&nuphus::utils::plugin_root(), &data_dir);
+
+    let mut sources: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            sources.push(dir.join(".nuphus").join("handoff"));
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        sources.push(cwd.join(".nuphus").join("handoff"));
+    }
+    sources.push(data_dir.join(".nuphus").join("handoff"));
+
+    // 去重（cwd == exe_dir 时同一路径出现两次）+ 排除目标自身（自拷贝）
+    let mut uniq: Vec<PathBuf> = Vec::new();
+    for s in sources {
+        if s != target && !uniq.contains(&s) {
+            uniq.push(s);
+        }
+    }
+
+    let report = migrate_handoff_agents_into(&target, &uniq);
+    if !report.is_empty() {
+        tracing::info!(
+            "[Handoff] 旧根合并迁移: target={:?}, copied={:?}, skipped={:?}, failed={:?}",
+            target,
+            report.copied,
+            report.skipped,
+            report.failed
+        );
+    }
+    report
 }
 
 /// 应用启动时清空全部 agent 运行时状态（重启即清空，杜绝陈旧显示）。
@@ -1013,6 +1138,88 @@ mod tests {
     fn test_agent_status_uninitialized() {
         let root = tmp_root("status");
         assert_eq!(status_at(&root, "ghost")["state"], "uninitialized");
+    }
+
+    /// 多源合并 + agent 目录级跳过：目标已有该 agent 目录必须原样保留
+    /// （绝不「整根存在即跳过」——那会导致建出新根后迁移永不触发）。
+    #[test]
+    fn test_migrate_handoff_merges_sources_with_agent_level_skip() {
+        let base = tmp_root("migrate");
+        let target = base.join("target");
+        let src1 = base.join("src1");
+        let src2 = base.join("src2");
+
+        // src1：web_agent（含子目录递归内容）+ claude-code + 散落文件
+        std::fs::create_dir_all(src1.join("web_agent").join("briefs")).unwrap();
+        std::fs::write(src1.join("web_agent").join("read.md"), "src1 web").unwrap();
+        std::fs::write(
+            src1.join("web_agent").join("briefs").join("t1-brief.md"),
+            "b1",
+        )
+        .unwrap();
+        std::fs::create_dir_all(src1.join("claude-code")).unwrap();
+        std::fs::write(src1.join("claude-code").join("read.md"), "src1 cc").unwrap();
+        std::fs::write(src1.join("loose-file.md"), "x").unwrap();
+
+        // src2：web_agent（旧副本，必须被跳过）+ gemini
+        std::fs::create_dir_all(src2.join("web_agent")).unwrap();
+        std::fs::write(src2.join("web_agent").join("read.md"), "src2 web").unwrap();
+        std::fs::create_dir_all(src2.join("gemini")).unwrap();
+        std::fs::write(src2.join("gemini").join("status.json"), "{}").unwrap();
+
+        // target 已有 claude-code（新根数据优先，旧副本不得覆盖）
+        std::fs::create_dir_all(target.join("claude-code")).unwrap();
+        std::fs::write(target.join("claude-code").join("read.md"), "target cc").unwrap();
+
+        let report = migrate_handoff_agents_into(&target, &[src1.clone(), src2.clone()]);
+
+        assert_eq!(
+            report.copied,
+            vec!["web_agent".to_string(), "gemini".to_string()],
+            "copied 应按来源顺序汇总"
+        );
+        assert_eq!(
+            report.skipped,
+            vec!["claude-code".to_string()],
+            "目标已有的 agent 目录必须逐个跳过并记录"
+        );
+        assert!(report.failed.is_empty());
+
+        // web_agent 来自 src1（含子目录递归拷贝）；src2 同名副本被跳过不覆盖
+        assert_eq!(
+            std::fs::read_to_string(target.join("web_agent").join("read.md")).unwrap(),
+            "src1 web"
+        );
+        assert_eq!(
+            std::fs::read_to_string(target.join("web_agent").join("briefs").join("t1-brief.md"))
+                .unwrap(),
+            "b1"
+        );
+        // claude-code 保留目标版本（agent 目录级跳过的核心语义）
+        assert_eq!(
+            std::fs::read_to_string(target.join("claude-code").join("read.md")).unwrap(),
+            "target cc"
+        );
+        assert!(target.join("gemini").join("status.json").is_file());
+        assert!(
+            !target.join("loose-file.md").exists(),
+            "散落文件不属于 agent 目录"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 全部来源不存在 → 空汇总，且不得凭空创建新根。
+    #[test]
+    fn test_migrate_handoff_tolerates_missing_sources() {
+        let base = tmp_root("migrate-empty");
+        let target = base.join("target");
+        let report =
+            migrate_handoff_agents_into(&target, &[base.join("nope1"), base.join("nope2")]);
+        assert!(report.is_empty());
+        assert!(!target.exists(), "无内容可迁时不得创建空的新根");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

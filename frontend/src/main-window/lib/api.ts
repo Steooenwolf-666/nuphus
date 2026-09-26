@@ -659,9 +659,9 @@ export function upsertExternalAgent(agent: ExternalAgentConfig) {
   return invoke<string>('upsert_external_agent', { agent })
 }
 
-/** 删除外部 Agent 段（不删除 .nuphus/handoff/{key}/ 目录） */
+/** 删除外部 Agent 段（不删除 .nuphus/handoff/{key}/ 目录）；false = 本来就不存在（零改动） */
 export function deleteExternalAgent(key: string) {
-  return invoke<void>('delete_external_agent', { key })
+  return invoke<boolean>('delete_external_agent', { key })
 }
 
 /** 提取应用图标为 data URL（图片文件直接编码；exe/dll/ico 提取关联图标转 PNG） */
