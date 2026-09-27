@@ -43,10 +43,10 @@ process = "<进程名>"       # 进程名特征（process_list 识别依赖此�
    - `launch` / `args`：启动命令与参数（Leader 手动启动时使用，§2 启动 SOP）
    - `window_hint`：窗口标题特征（windows_list 匹配；终端类运行时标题常被覆写，hint 应选稳定前缀）
    - `process`：进程名特征（process_list 识别依赖此字段）
-   - `cooldown_secs` / `await_timeout_secs` / `timeout_action` / `confirm_keywords`：启动冷却/超时动作/确认词表（缺省有默认值）
    - `description`：职责一句话（路由提示；新 agent 自动同步为其 `.nuphus/handoff/{key}/read.md` 的职责段）
    - `note`：Leader 专属实测备忘（如某热键不生效、某交互必须换路径等一手观察），随配置读取并在派发结果中回显；UI 禁止编辑
-   > **字段全集以代码为准**：`AgentFields`（`src-tauri/src/commands/config/team.rs`）——上面只列 Leader 步骤必须用到的字段，其余（type/open/args/dir/timeout_script/auto_approve 等）以该结构体定义为准，本文档不重复维护。
+   > **已废弃不生效**：`cooldown_secs` / `await_timeout_secs` / `timeout_action` / `timeout_script` / `auto_approve` / `auto_approve_script` / `confirm_keywords`——早期设想（隐式冷启等待/投递后短等/超时自检/确认词自动代答）均未落地，当前同步路径零等待、禁隐式冷启动，agent_dispatch 不消费这些字段；后端仅为旧 team.toml 兼容而继续解析，配置中心 UI 也不再提供录入——**配了等同没配，不要依赖**。
+   > **字段全集以代码为准**：`AgentFields`（`src-tauri/src/commands/config/team.rs`）——上面只列 Leader 步骤必须用到的字段，其余（type/open/args/dir 等）以该结构体定义为准；其中 cooldown_secs/await_timeout_secs/timeout_action/timeout_script/auto_approve/auto_approve_script/confirm_keywords 仅为旧配置兼容保留、当前不生效（见上文），本文档不重复维护。
 2. **落盘核对**：`plugin/team.toml` 出现该段且原有段未被破坏（写回是段级增量）；新 key 联动生成 handoff 工作目录。
 3. 完整段示例（**全量字段的格式示例**；值一律占位，实况以 `plugin/team.toml` 为准）：
 
@@ -58,11 +58,10 @@ icon = "terminal"
 launch = "<启动命令>"
 window_hint = "<窗口特征>"
 process = "<进程名>"
-cooldown_secs = 20
-await_timeout_secs = 90
-timeout_action = "screenshot_alive"
-confirm_keywords = ["allow", "confirm", "proceed", "yes/no", "approve"]
 note = "<Leader 实测备忘>（Leader 专属，UI 不可编辑）"
+
+# 旧配置里可能还有 cooldown_secs / await_timeout_secs / timeout_action /
+# confirm_keywords 等字段：后端兼容解析，但当前不生效——不要配、不要依赖
 
 [[{key}.dispatch_steps]]
 tool = "desktop_window_activate"
@@ -164,7 +163,7 @@ with = { hwnd = "{hwnd}", … } # 参数表；值中的 {hwnd}/{message} 等占�
 
 ### 启动（Leader 主导四步 SOP——外部 Agent 的第一步动作）
 
-**Step 1 读配置与注意事项**：Read team.toml 对应段 → 记住 `launch` 启动命令、`window_hint`、`process`、`confirm_keywords` 与 `note` 实测备忘（逐条记住——投递方式可能因此不同）。
+**Step 1 读配置与注意事项**：Read team.toml 对应段 → 记住 `launch` 启动命令、`window_hint`、`process` 与 `note` 实测备忘（逐条记住——投递方式可能因此不同；cooldown/超时自检/确认词表等旧字段不生效，读了也不要依其决策）。
 
 **Step 2 查已有实例（复用优先）**：process_list 按 `process` 字段查活进程；windows_list 按 `window_hint` 扫窗口。有且健康 → 直接记下 PID/hwnd 进入 Step 4。
 
