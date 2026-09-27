@@ -453,6 +453,7 @@ impl ToolRegistry {
     ///   诱导 Leader 判投递中断而重投 ⇒ 双投递、两条序列还可能交错敲键。
     ///   宁可晚、不可早，取宽档。
     /// - 其余工具 15s 防文件系统卡死
+    ///
     /// 注：desktop_/browser_ 工具在上方分支已提前返回，不经过此处
     fn tool_timeout(tool_name: &str) -> Duration {
         if tool_name == "system_shell" || tool_name == "system_sleep" {
