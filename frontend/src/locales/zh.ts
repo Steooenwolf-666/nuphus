@@ -225,6 +225,7 @@ const zh: Record<string, string> = {
   'extAgents.deliver.empty': '暂无交付物',
   'extAgents.deliver.loading': '加载中…',
   'extAgents.deliver.reports': '任务报告',
+  'extAgents.deliver.latestReport': '最近上报报告',
   'extAgents.deliver.artifacts': '产物文件',
   'extAgents.deliver.preview': '点击预览',
   'extAgents.deliver.delete': '删除该生成物',
