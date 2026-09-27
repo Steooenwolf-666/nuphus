@@ -1338,15 +1338,23 @@ mod tests {
 
         let report = migrate_handoff_agents_into(&target, &[src1.clone(), src2.clone()]);
 
+        // read_dir 顺序不保证，两个汇总都按「排序后比较集合」断言。
+        // 同一 agent 在多个来源出现时首个 copy、其余 skip：因此 src2 的 web_agent
+        // 旧副本**也会进 skipped**——这正是「不覆盖已有数据」的期望行为（见下方
+        // 「src2 同名副本被跳过不覆盖」的断言），不是漏记。
+        let mut copied = report.copied.clone();
+        copied.sort();
         assert_eq!(
-            report.copied,
-            vec!["web_agent".to_string(), "gemini".to_string()],
-            "copied 应按来源顺序汇总"
+            copied,
+            vec!["gemini".to_string(), "web_agent".to_string()],
+            "copied 应含两个真实拷入的 agent"
         );
+        let mut skipped = report.skipped.clone();
+        skipped.sort();
         assert_eq!(
-            report.skipped,
-            vec!["claude-code".to_string()],
-            "目标已有的 agent 目录必须逐个跳过并记录"
+            skipped,
+            vec!["claude-code".to_string(), "web_agent".to_string()],
+            "目标已有的 agent 与后到的同名旧副本，都必须逐个跳过并记录"
         );
         assert!(report.failed.is_empty());
 
