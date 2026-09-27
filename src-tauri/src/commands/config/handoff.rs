@@ -1052,7 +1052,7 @@ fn update_agent_status_from_doorbell_at(
         serde_json::json!(chrono::Local::now().to_rfc3339()),
     );
     if let Err(e) = write_status_locked(root, agent, &doc) {
-        tracing::w!("[Handoff] 更新 agent[{agent}] status.json 失败（不影响门铃流程）: {e}");
+        tracing::warn!("[Handoff] 更新 agent[{agent}] status.json 失败（不影响门铃流程）: {e}");
     }
     audit
 }
