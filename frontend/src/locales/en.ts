@@ -1759,6 +1759,8 @@ const en: Record<string, string> = {
   'mobile.voiceInput': 'Voice input',
   'mobile.readConfigFailed': 'Failed to load config, check your network',
   'mobile.retry': 'Retry',
+  'mobile.imageReload': 'Reload image',
+  'mobile.imageReloading': 'Loading image…',
   'mobile.currentModel': 'Current model',
   'mobile.notFetched': 'Not fetched',
   'mobile.context': 'Context',

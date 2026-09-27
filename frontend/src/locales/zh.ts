@@ -1670,6 +1670,8 @@ const zh: Record<string, string> = {
   'mobile.voiceInput': '语音输入',
   'mobile.readConfigFailed': '读取配置失败，请检查网络',
   'mobile.retry': '重试',
+  'mobile.imageReload': '重新加载图片',
+  'mobile.imageReloading': '正在加载图片…',
   'mobile.currentModel': '当前模型',
   'mobile.notFetched': '未获取',
   'mobile.context': '上下文',
