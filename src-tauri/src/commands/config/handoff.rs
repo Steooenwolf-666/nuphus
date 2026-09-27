@@ -352,11 +352,55 @@ fn write_status_locked(root: &Path, agent: &str, status: &serde_json::Value) -> 
     Ok(())
 }
 
-/// 读 status.json；不存在 / 不可解析 → None（调用方按语义处理）
-fn read_status_at(root: &Path, agent: &str) -> Option<serde_json::Value> {
+/// 读 status.json；不存在 / 不可解析 → None（调用方按语义处理）。
+/// pub(crate)：ext_agent 派发前的在途闸预检要读它——闸门判据必须看真实看板，
+/// 不能凭调用方（LLM）自述「我以为 agent 空闲」。
+pub(crate) fn read_status_at(root: &Path, agent: &str) -> Option<serde_json::Value> {
     let path = root.join(agent).join("status.json");
     let content = std::fs::read_to_string(&path).ok()?;
     serde_json::from_str(&content).ok()
+}
+
+/// 在途闸（派发前预检，纯判定）：板上 state 为 `dispatched`/`in_progress` **且**板上
+/// task_id 与本轮新任务不同 → 返回阻止原因（Some）；否则放行（None）。
+///
+/// 为什么建这道闸：`agent_dispatch` 原本不看在板状态就直接上板——agent 还在跑 task_A
+/// 时派 task_B，两个任务会在同一个 TUI 里交错执行（键入互相插入、门铃归属混乱；
+/// task_id 一致性闸只能保状态不串，保不了终端执行不互相干扰）。
+/// 放行边界（保守，不挡正当路径）：
+/// - 同一 task_id 的重派/续派放行——失败重试、契约刷新都走这条路（brief 覆盖是幂等语义）；
+/// - 板上 task_id 为空（骨架/异常态）放行——新上板会顺带修复看板；
+/// - doc 缺失/不可解析放行——无法判定在途时不挡路，由上板路径自愈。
+pub(crate) fn in_flight_block_reason(
+    doc: Option<&serde_json::Value>,
+    new_task_id: &str,
+) -> Option<String> {
+    let doc = doc?;
+    let obj = doc.as_object()?;
+    let state = obj
+        .get("state")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if state != "dispatched" && state != "in_progress" {
+        return None;
+    }
+    let board = obj
+        .get("task_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    if board == new_task_id {
+        return None; // 同 task_id 重派/续派放行
+    }
+    Some(format!(
+        "agent 有在途任务未到终态（task_id={board}，state={state}）——拒绝派发 {new_task_id}，\
+         避免两个任务在同一终端交错执行。\n\
+         出口：① 等在途任务的门铃终态（done/blocked）到达后再派；\n\
+         ② 若确认在途任务已死（终端空闲、无执行痕迹），用原 task_id「{board}」重新派发刷新看板\
+         （新 brief 覆盖旧板，agent 按新契约上报）。\n\
+         禁令：禁止手改 status.json 绕闸。"
+    ))
 }
 
 /// 初始化 agent 工作目录（幂等：目录/文件已存在则补缺不覆盖）。
@@ -1067,6 +1111,39 @@ mod tests {
         let dir = base.join(format!("{}-{}", name, std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    fn doc(state: &str, task_id: &str) -> serde_json::Value {
+        serde_json::json!({"agent": "a", "state": state, "task_id": task_id, "last_event": null})
+    }
+
+    #[test]
+    fn test_in_flight_gate_blocks_different_task() {
+        let d = doc("in_progress", "task-a");
+        let reason = in_flight_block_reason(Some(&d), "task-b").expect("在途不同任务必须阻止");
+        assert!(reason.contains("task-a"), "原因须指认在途任务: {reason}");
+        assert!(reason.contains("task-b"), "原因须指认被拒任务: {reason}");
+        // dispatched 同样阻止（上板未投/未确认也是在途）
+        assert!(in_flight_block_reason(Some(&doc("dispatched", "task-a")), "task-b").is_some());
+    }
+
+    #[test]
+    fn test_in_flight_gate_allows_legit_paths() {
+        // 同 task_id 重派/续派放行（失败重试与契约刷新的唯一出口）
+        assert!(in_flight_block_reason(Some(&doc("in_progress", "task-a")), "task-a").is_none());
+        // 终态后放行
+        for s in ["done", "blocked", "error", "idle"] {
+            assert!(
+                in_flight_block_reason(Some(&doc(s, "task-a")), "task-b").is_none(),
+                "终态 {s} 不应阻止新派发"
+            );
+        }
+        // 板上 task_id 为空（骨架/异常态）放行——新上板顺带修复看板
+        assert!(in_flight_block_reason(Some(&doc("in_progress", "")), "task-b").is_none());
+        assert!(in_flight_block_reason(Some(&doc("in_progress", "  ")), "task-b").is_none());
+        // 无 status / 非对象 doc：无法判定在途，不挡路
+        assert!(in_flight_block_reason(None, "task-b").is_none());
+        assert!(in_flight_block_reason(Some(&serde_json::json!("oops")), "task-b").is_none());
     }
 
     /// 跑一条 git 命令；成功返回 trim 后的 stdout。环境无 git / 命令失败 → None。
