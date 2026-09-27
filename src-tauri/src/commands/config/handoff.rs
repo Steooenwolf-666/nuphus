@@ -834,6 +834,7 @@ pub fn update_agent_status_from_doorbell(
     update_agent_status_from_doorbell_at(&handoff_root(), id, status, summary, report_path)
 }
 
+/** Ignore superseded tasks before auditing; an unassigned agent still accepts legacy ready events. */
 fn update_agent_status_from_doorbell_at(
     root: &Path,
     id: &str,
@@ -852,6 +853,11 @@ fn update_agent_status_from_doorbell_at(
     // 未初始化 / 无 status.json / 不是对象 → 静默跳过，不覆盖
     let mut doc = read_status_at(root, agent)?;
     doc.as_object()?;
+    if let Some(task_id) = doc["task_id"].as_str().filter(|task| !task.is_empty()) {
+        if id.split_once("::").map(|(_, event_task)| event_task) != Some(task_id) {
+            return None;
+        }
+    }
     // 完工审计：只在 done/blocked 上做（progress 只是开工确认，此时工作区还没动）。
     let audit = if matches!(status, "done" | "blocked") {
         head_audit(&doc)
@@ -1248,6 +1254,102 @@ mod tests {
     }
 
     #[test]
+    fn test_doorbell_ignores_superseded_task_events() {
+        let root = tmp_root("superseded-events");
+        init_agent_at(&root, "web_agent", "desc").unwrap();
+        ensure_handoff_at(&root, "web_agent", "task-001", "旧任务", None).unwrap();
+        ensure_handoff_at(&root, "web_agent", "task-002", "当前任务", None).unwrap();
+        let before = status_json(&root, "web_agent");
+
+        for event_id in ["web_agent::task-001", "web_agent"] {
+            for event_status in ["ready", "progress", "done", "blocked"] {
+                assert!(update_agent_status_from_doorbell_at(
+                    &root,
+                    event_id,
+                    event_status,
+                    "旧任务迟到的上报",
+                    Some("C:/报告/旧任务.md"),
+                )
+                .is_none());
+                assert_eq!(
+                    status_json(&root, "web_agent"),
+                    before,
+                    "{event_id} {event_status}"
+                );
+            }
+        }
+
+        update_agent_status_from_doorbell_at(
+            &root,
+            "web_agent::task-002",
+            "progress",
+            "当前任务开始",
+            None,
+        );
+        let progress = status_json(&root, "web_agent");
+        assert_eq!(progress["task_id"], "task-002");
+        assert_eq!(progress["state"], "in_progress");
+        assert_eq!(progress["last_event"]["summary"], "当前任务开始");
+
+        update_agent_status_from_doorbell_at(
+            &root,
+            "web_agent::task-002",
+            "done",
+            "当前任务完成",
+            Some("C:/报告/当前任务.md"),
+        );
+        let done = status_json(&root, "web_agent");
+        assert_eq!(done["task_id"], "task-002");
+        assert_eq!(done["state"], "done");
+        assert_eq!(done["last_event"]["summary"], "当前任务完成");
+        assert_eq!(done["last_event"]["report_path"], "C:/报告/当前任务.md");
+    }
+
+    #[test]
+    fn test_doorbell_does_not_audit_superseded_task() {
+        let root = tmp_root("superseded-audit");
+        init_agent_at(&root, "web_agent", "desc").unwrap();
+        let Some((ws, _)) = tmp_git_workspace("superseded-audit-repo") else {
+            eprintln!("跳过：环境无 git");
+            return;
+        };
+        ensure_handoff_at(&root, "web_agent", "task-001", "旧任务", None).unwrap();
+        ensure_handoff_at(&root, "web_agent", "task-002", "当前任务", Some(&ws)).unwrap();
+        assert!(git_run(
+            Path::new(&ws),
+            &["commit", "-q", "--allow-empty", "-m", "current task change"]
+        )
+        .is_some());
+        let before = status_json(&root, "web_agent");
+
+        for event_status in ["done", "blocked"] {
+            assert!(update_agent_status_from_doorbell_at(
+                &root,
+                "web_agent::task-001",
+                event_status,
+                "旧任务迟到的终态",
+                None,
+            )
+            .is_none());
+            assert_eq!(status_json(&root, "web_agent"), before, "{event_status}");
+        }
+
+        let audit = update_agent_status_from_doorbell_at(
+            &root,
+            "web_agent::task-002",
+            "done",
+            "当前任务完成",
+            None,
+        )
+        .expect("当前任务仍应使用自身派发基线审计");
+        assert!(audit.changed);
+        assert_eq!(
+            status_json(&root, "web_agent")["head_check"]["changed"],
+            true
+        );
+    }
+
+    #[test]
     fn test_doorbell_grouping_updates_status_and_skips_unknown() {
         let root = tmp_root("group");
         init_agent_at(&root, "web_agent", "desc").unwrap();
@@ -1258,6 +1360,7 @@ mod tests {
             &std::fs::read_to_string(root.join("web_agent").join("status.json")).unwrap(),
         )
         .unwrap();
+        assert_eq!(status["task_id"], "");
         assert_eq!(status["state"], "in_progress");
         assert_eq!(status["last_event"]["status"], "ready");
 
