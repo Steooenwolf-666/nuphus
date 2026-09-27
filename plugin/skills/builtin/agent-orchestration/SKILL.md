@@ -342,7 +342,7 @@ Nuphus 重启（有在途任务）→ 令牌已轮换（旧令牌 403，契约�
 | `error` | 出错 | 介入：查终端报错 |
 | `idle` / `ready` | 空闲/就绪 | 无在途任务 |
 
-注意：状态栏**只读不写**，state 由外部 Agent 门铃 POST 驱动（`progress`/`done`/`blocked`）；Leader 不要试图直接改 status.json。状态栏与门铃同源（status.json），门铃已响则状态栏必同步，二者互证。
+注意：状态栏**只读不写**，state 由外部 Agent 门铃 POST 驱动（`progress`/`done`/`blocked`）；Leader 不要试图直接改 status.json。状态栏与门铃同源（status.json），门铃已响则状态栏必同步，二者互证。例外：`agent_dispatch` 派发失败（上板前未登记 / 上板或投递失败）会由后端写 `error` 并把人类可读原因落在 `error_reason`——此时按原因判断是进程没起来、窗口没捕获还是输入没进去，照 §5 接管 SOP 处置，不要当成 agent 自己出的错。
 
 **重启重置（设计意图）**：应用重启会把 status.json 重置为 idle/空 task_id（运行时态不跨重启）。在途任务经重启后，验收依据 = brief/report 文件（`.nuphus/handoff/`），状态栏只反映重启后的新事件；续派需重新 dispatch。
 

@@ -51,6 +51,22 @@ fn bridge_dispatch(params: &serde_json::Value) -> Result<String, String> {
 // 编排
 // ────────────────────────────────────────────────────────────────────────────
 
+/// 派发失败统一收口：先给该 agent 落 `state="error"` + 人类可读原因，再原样返回错误。
+///
+/// 为什么必须有：上板成功但投递失败时，status.json 会永久停在 `dispatched`
+/// （面板显示「已派发·待确认」 forever），用户看不到这一轮其实已经失败。
+/// 前端早已把 `error` 映射为 is-error，缺的只是「有人写它」。
+/// `reason` 需能指认失败环节（进程没起来 / 窗口没捕获 / 输入没进去），由调用方给出。
+fn fail_dispatch(
+    root: &std::path::Path,
+    agent: &str,
+    task_id: &str,
+    reason: String,
+) -> Result<String, String> {
+    crate::commands::config::handoff::mark_agent_error_at(root, agent, Some(task_id), &reason);
+    Err(reason)
+}
+
 /// agent_dispatch 编排主流程。返回工具结果 JSON（ok / timeout 两分支）。
 async fn dispatch_async(app: AppHandle, params: serde_json::Value) -> Result<String, String> {
     let agent = params
@@ -105,48 +121,35 @@ async fn dispatch_async(app: AppHandle, params: serde_json::Value) -> Result<Str
         .filter(|s| !s.is_empty());
     if let Some(ws) = workspace {
         if !std::path::Path::new(ws).is_dir() {
-            return Err(format!("workspace 不是已存在的目录: {ws}"));
+            return fail_dispatch(
+                &root,
+                &agent,
+                &task_id,
+                format!("workspace 不是已存在的目录: {ws}"),
+            );
         }
     }
-    crate::commands::config::handoff::ensure_handoff_at(
-        &root,
-        &agent,
-        &task_id,
-        &full_brief,
-        workspace,
-    )?;
-    // 可选产物子目录（对齐 read.md「产物写 projects/{project}/」）
-    if let Some(project) = params
-        .get("project")
-        .and_then(|v| v.as_str())
-        .filter(|p| !p.is_empty())
-    {
-        if !project
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        {
-            return Err("project 只能包含字母、数字、下划线、连字符".to_string());
+    // agent 登记读取必须前移到上板之前：「agent 根本没登记」属于上板前失败，
+    // 也要先落 error 态——否则状态栏停在上一轮 state，用户看不到本轮派发失败。
+    let cfg = match crate::commands::config::team::agent_config(&agent) {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            return fail_dispatch(
+                &root,
+                &agent,
+                &task_id,
+                format!("agent「{agent}」未在 team.toml 登记，请先在外部 Agent 配置中心登记"),
+            )
         }
-        std::fs::create_dir_all(agent_dir.join("projects").join(project))
-            .map_err(|e| format!("创建产物子目录失败: {e}"))?;
-    }
-    let brief_path = agent_dir.join("briefs").join(format!("{task_id}-brief.md"));
-    let brief_path_str = brief_path.to_string_lossy().to_string();
-
-    emitter.emit(NuphusEvent::HudUpdate {
-        text: format!("agent_dispatch 上板 {agent}::{task_id}"),
-        phase: "running".to_string(),
-        step_kind: Some("tool".to_string()),
-    });
-
-    // ② 进程捕获（复用 DesktopClient）
-    let client = state
-        .tools
-        .desktop_client()
-        .ok_or_else(|| "桌面自动化不可用（desktop_client 未连接）".to_string())?;
-    let cfg = crate::commands::config::team::agent_config(&agent)?.ok_or_else(|| {
-        format!("agent「{agent}」未在 team.toml 登记，请先在外部 Agent 配置中心登记")
-    })?;
+        Err(e) => {
+            return fail_dispatch(
+                &root,
+                &agent,
+                &task_id,
+                format!("读取 agent[{agent}] 配置失败: {e}"),
+            )
+        }
+    };
 
     // 实测记录（note）：Leader 专属的特别注意事项备忘，随 team 配置一并读取，
     // 注入工具结果供 Leader 派发决策参考（如「ctrl+v 无效用直输」）。
@@ -158,7 +161,65 @@ async fn dispatch_async(app: AppHandle, params: serde_json::Value) -> Result<Str
         .trim()
         .to_string();
 
-    let mut vars = capture_process(&agent, &cfg, &client, requested_pid).await?;
+    // 上板失败（brief 写不进 / 目录建不出 / 基线记不下）同样落 error 态：
+    // 这一刻任务并没有真正上板，停留在上一轮 state 会让用户误判。
+    if let Err(e) = crate::commands::config::handoff::ensure_handoff_at(
+        &root,
+        &agent,
+        &task_id,
+        &full_brief,
+        workspace,
+    ) {
+        return fail_dispatch(&root, &agent, &task_id, format!("上板失败: {e}"));
+    }
+    // 可选产物子目录（对齐 read.md「产物写 projects/{project}/」）
+    if let Some(project) = params
+        .get("project")
+        .and_then(|v| v.as_str())
+        .filter(|p| !p.is_empty())
+    {
+        if !project
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            return fail_dispatch(
+                &root,
+                &agent,
+                &task_id,
+                "project 只能包含字母、数字、下划线、连字符".to_string(),
+            );
+        }
+        if let Err(e) = std::fs::create_dir_all(agent_dir.join("projects").join(project)) {
+            return fail_dispatch(&root, &agent, &task_id, format!("创建产物子目录失败: {e}"));
+        }
+    }
+    let brief_path = agent_dir.join("briefs").join(format!("{task_id}-brief.md"));
+    let brief_path_str = brief_path.to_string_lossy().to_string();
+
+    emitter.emit(NuphusEvent::HudUpdate {
+        text: format!("agent_dispatch 上板 {agent}::{task_id}"),
+        phase: "running".to_string(),
+        step_kind: Some("tool".to_string()),
+    });
+
+    // ② 进程捕获（复用 DesktopClient）
+    let client = match state.tools.desktop_client() {
+        Some(c) => c,
+        None => {
+            return fail_dispatch(
+                &root,
+                &agent,
+                &task_id,
+                "桌面自动化不可用（desktop_client 未连接）：agent 进程与窗口无从捕获".to_string(),
+            )
+        }
+    };
+
+    let mut vars = match capture_process(&agent, &cfg, &client, requested_pid).await {
+        Ok(v) => v,
+        // 进程没起来 / 窗口没捕获（capture_process 的文案已区分两种成因）
+        Err(e) => return fail_dispatch(&root, &agent, &task_id, format!("进程/窗口捕获失败: {e}")),
+    };
     vars.insert("task_id".to_string(), task_id.clone());
     vars.insert("brief_path".to_string(), brief_path_str.clone());
 
@@ -184,13 +245,21 @@ async fn dispatch_async(app: AppHandle, params: serde_json::Value) -> Result<Str
         Err(e) => {
             // 失败就地完整暴露：哪一步、什么工具、什么原因——Leader 无需复跑即可定位
             // 终态 HUD（error 15s autoHide）：同成功分支，running 常驻必须显式收尾。
+            // 上板已完成、投递未完成：落 error 态，否则 status.json 永久停在 dispatched。
+            let reason = format!(
+                "投递失败（第 {} 步 {}）：{}",
+                e.step_index + 1,
+                e.tool,
+                e.message
+            );
+            crate::commands::config::handoff::mark_agent_error_at(
+                &root,
+                &agent,
+                Some(&task_id),
+                &reason,
+            );
             emitter.emit(NuphusEvent::HudUpdate {
-                text: format!(
-                    "agent_dispatch {agent}::{task_id} 投递失败（第 {} 步 {}）：{}",
-                    e.step_index + 1,
-                    e.tool,
-                    e.message
-                ),
+                text: format!("agent_dispatch {agent}::{task_id} {reason}"),
                 phase: "error".to_string(),
                 step_kind: Some("tool".to_string()),
             });
