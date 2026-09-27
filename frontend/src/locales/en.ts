@@ -372,10 +372,10 @@ const en: Record<string, string> = {
   // 鈹€鈹€ v8 advanced group: interaction hardening 鈹€鈹€
   'extAgents.cfg.advanced': 'Interaction hardening (optional, recommended for terminal agents)',
   'extAgents.cfg.advancedHint':
-    'Once configured, Leader calls agent_dispatch once to auto capture window 鈫?position 鈫?deliver 鈫?await confirmation',
-  'extAgents.cfg.launch': 'Cold-start command (launch)',
+    'Once the interaction details are set, a single agent_dispatch call does: board the brief -> capture the current window -> deliver step by step per dispatch_steps. It returns as soon as delivery finishes; the external agent later progress arrives asynchronously via its doorbell pings, and is not awaited inside the call',
+  'extAgents.cfg.launch': 'Launch command (launch)',
   'extAgents.cfg.launchHint':
-    'Command to spawn when the window is not found (e.g. wt.exe -p PowerShell opencode)',
+    'The command Leader uses to start this agent manually (skill section 2 startup SOP). agent_dispatch performs no implicit cold start - if the window cannot be captured it fails outright',
   'extAgents.cfg.windowHint': 'Window match hint (window_hint)',
   'extAgents.cfg.windowHintField':
     'Matched when window title or process name contains it (falls back to process field)',

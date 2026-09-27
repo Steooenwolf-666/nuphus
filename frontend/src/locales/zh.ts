@@ -359,9 +359,10 @@ const zh: Record<string, string> = {
   // ── v8 高级分组：交互固化 ──
   'extAgents.cfg.advanced': '交互固化（可选，终端型推荐配置）',
   'extAgents.cfg.advancedHint':
-    '配置后 Leader 用 agent_dispatch 单次调用即可自动完成 捕获窗口 → 归位 → 投递 → 等确认',
-  'extAgents.cfg.launch': '冷启动命令 (launch)',
-  'extAgents.cfg.launchHint': '窗口未捕获到时自动拉起的命令（如 wt.exe -p PowerShell opencode）',
+    '配好交互细节后，Leader 一次 agent_dispatch 即完成 上板 brief → 捕获当次窗口 → 按 dispatch_steps 逐条投递；投递完成就返回，外部 Agent 的后续进展靠门铃上报异步推送，调用内不做等待',
+  'extAgents.cfg.launch': '启动命令 (launch)',
+  'extAgents.cfg.launchHint':
+    'Leader 手动启动该 Agent 时用的命令（按 skill §2 启动 SOP 执行）；agent_dispatch 不做隐式冷启动，捕获不到窗口会直接失败',
   'extAgents.cfg.windowHint': '窗口匹配特征 (window_hint)',
   'extAgents.cfg.windowHintField': '窗口标题或进程名包含该特征即命中（也回退匹配 process 字段）',
   'extAgents.cfg.cooldown': '冷启动等待上限（秒）',
