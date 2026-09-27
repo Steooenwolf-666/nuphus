@@ -209,7 +209,7 @@ with = { hwnd = "{hwnd}", … } # 参数表；值中的 {hwnd}/{message} 等占�
 3. 桌面 UI 定位失败 → 分页/局部语义观察 → 能力不足才走本地 OCR/视觉锚点；目标仍不清晰时请用户帮助（见 §6）
 4. ui-maps 缓存失效（布局实质变化）→ 重新识别并更新参数文件
 5. 产出不合格 → §7.4 返工（brief 升版本重发 ≤3 轮）→ 超限报告用户
-6. **agent_dispatch 工具超时/失败接管 SOP**（实测有效）：① Read `.nuphus/handoff/{agent}/status.json` + briefs/ —— 确认上板是否已完成（brief 存在即算）；② process_list/windows_list 按 team 配置核对进程与窗口实况；③ 已上板但投递未完成 → 直接 `desktop_window_activate` 激活窗口后 `desktop_input` 直输「Read {brief_path} and execute it.」补完投递；④ 进程已死或从未启动 → 重走 §2 启动 SOP；⑤ 全程以文件与实况为准，禁止凭工具报错文本猜根因。
+6. **agent_dispatch 工具超时/失败接管 SOP**（实测有效）：① Read `.nuphus/handoff/{agent}/status.json` + briefs/ —— 确认上板是否已完成（brief 存在即算）；② process_list/windows_list 按 team 配置核对进程与窗口实况；③ **超时≠取消**：工具层超时（180s）或投递步骤失败时，同步序列不会被取消、可能仍在后台逐条执行——先截图/看回显确认指令是否已进入终端：**已进入则勿重投**（两条序列会交错敲键、任务被执行两遍），确认未进入才 `desktop_window_activate` 激活窗口后 `desktop_input` 直输「Read {brief_path} and execute it.」补完投递；④ 进程已死或从未启动 → 重走 §2 启动 SOP；⑤ 全程以文件与实况为准，禁止凭工具报错文本猜根因。
 
 ---
 
@@ -270,7 +270,7 @@ with = { hwnd = "{hwnd}", … } # 参数表；值中的 {hwnd}/{message} 等占�
    状态栏自动反映，不轮询不打断。
 4. 收 done/blocked → Read report 全文 + 交叉验证产物（§4）→ 达标归档（§7.6）/ 不达标返工（≤3 轮）。
 5. 工具异常兜底：agent_dispatch 返回错误或被外层超时切断时，一律按 §5 第 6 条接管 SOP
-   以文件与实况为准恢复链路——上板通常已完成，只需补投递。
+   以文件与实况为准恢复链路——上板通常已完成，但补投前必须先按终端实况核对指令是否已进入：已进入则勿重投（序列可能仍在后台跑），确认未进入才补输单行指令。
 ```
 
 **降级手段（仅调试用）**：POST http://127.0.0.1:{port}/handoff/dispatch
@@ -342,14 +342,14 @@ Nuphus 重启（有在途任务）→ 令牌已轮换（旧令牌 403，契约�
 | `error` | 出错 | 介入：查终端报错 |
 | `idle` / `ready` | 空闲/就绪 | 无在途任务 |
 
-注意：状态栏**只读不写**，state 由外部 Agent 门铃 POST 驱动（`progress`/`done`/`blocked`）；Leader 不要试图直接改 status.json。状态栏与门铃同源（status.json），门铃已响则状态栏必同步，二者互证。例外：`agent_dispatch` 派发失败（上板前未登记 / 上板或投递失败）会由后端写 `error` 并把人类可读原因落在 `error_reason`——此时按原因判断是进程没起来、窗口没捕获还是输入没进去，照 §5 接管 SOP 处置，不要当成 agent 自己出的错。
+注意：状态栏**只读不写**，state 由外部 Agent 门铃 POST 驱动（`progress`/`done`/`blocked`）；Leader 不要试图直接改 status.json。状态栏与门铃同源（status.json），门铃已响则状态栏必同步，二者互证。例外：`agent_dispatch` 派发失败（上板前未登记 / 上板或投递失败）会由后端写 `error` 并把人类可读原因落在 `error_reason`——此时按原因判断是进程没起来、窗口没捕获还是输入没进去，照 §5 接管 SOP 处置，不要当成 agent 自己出的错。工具返回里的 `submitted=true` 只表示 brief 已上板、不代表指令已送达外部 Agent——是否补投以终端实况为准（§5 第 6 条），勿据该字段直接重投。
 
 **重启重置（设计意图）**：应用重启会把 status.json 重置为 idle/空 task_id（运行时态不跨重启）。在途任务经重启后，验收依据 = brief/report 文件（`.nuphus/handoff/`），状态栏只反映重启后的新事件；续派需重新 dispatch。
 
 **契约未送达的探测信号**：状态栏 `in_progress` 停留但 `last_event` 长时间为 null → agent 大概率没拿到可用契约或上报被门铃拒绝（403/422，见 7.2 错误码表）。不要干等：Read brief 检查门铃契约段是否为 contract 原文（含 token/header/示例）→ 缺失则补发正确契约并让 agent 重报；agent 在终端反复试错探测端点也是同一信号。
 
 
-**投递链路中断的探测信号**：`in_progress` + `last_event: null` + 终端无任何反应（agent 从未收到指令）→ 上板已完成但投递步骤失败。典型成因：派发前 agent 已被关闭、窗口句柄过期、dispatch 被外层超时切断。处置按 §5 第 6 条接管 SOP：核对进程/窗口实况，激活后补输「Read {brief_path} and execute it.」即可恢复，无需重新上板。
+**投递链路中断的探测信号**：`in_progress` + `last_event: null` + 终端无任何反应（agent 从未收到指令）→ 上板已完成但投递步骤失败。典型成因：派发前 agent 已被关闭、窗口句柄过期、dispatch 被外层超时切断。处置按 §5 第 6 条接管 SOP：核对进程/窗口实况，截图确认指令未进入终端后，激活并补输「Read {brief_path} and execute it.」即可恢复，无需重新上板；若指令已进入终端（序列可能仍在后台跑）则勿重投，转交门铃/自然验收点验证。
 
 ### 7.6 归档
 

@@ -1,13 +1,18 @@
 //! ext_agent — agent_dispatch 工具编排实现（桌面壳侧）
 //!
-//! 完整链路（方案 v8 三章）：
+//! 完整链路（以本文件实现为准）：
 //!   ① 校验 + 上板：validate_agent/validate_task_id → ensure_handoff_at 写 brief
-//!      （brief 内嵌 build_contract 渲染的门铃契约）→ status.json 置 in_progress
-//!   ② 进程捕获：runtime.json 存活句柄复用 → windows_list 按 window_hint 匹配 →
-//!      launch 冷启动 + cooldown_secs 轮询 → 捕获结果落 runtime.json
-//!   ③ SeqRunner：按 team.toml dispatch_steps 工具序列确定性执行（不经 LLM）
-//!   ④ await 门铃：wait_first_ringer 短时确认（收到第一声拉铃即 ok）
-//!   ⑤ 超时自检：timeout_action / timeout_script 生成 self_check（fallback，非长等）
+//!      （brief 内嵌 build_contract 渲染的门铃契约）→ status.json 置 dispatched
+//!      （上板≠执行：in_progress 由外部 Agent 第一声 ready/progress 门铃触发）
+//!   ② 进程捕获（当次实况，Leader 主导启动模型）：显式 pid → 当次 windows_list
+//!      按 process_id 匹配可见窗口；缺省 → 按 window_hint/process 全表扫描。
+//!      禁止历史缓存句柄、禁止隐式冷启动——进程生命周期归 Leader（skill §2 启动 SOP）
+//!   ③ SeqRunner：按 team.toml dispatch_steps 工具序列确定性执行（不经 LLM），
+//!      每步成败结构化回传，禁止静默
+//!   ④ 门铃异步：同步路径不做任何等待——门铃事件到达后自动注入 Leader 上下文，
+//!      在此等待只会顶撞工具层超时上限（registry 的 agent_dispatch 档位）
+//!   ⑤ 失败收口：投递中断 → status.json 落 state=error + error_reason（否则永久
+//!      停在 dispatched 幽灵态）+ HUD error 显式收尾（running 常驻无 autoHide）
 //!
 //! 注册：main.rs setup 调用 init_bridge(app)，注入 fn 指针到 nuphus::ext_agent_bridge。
 //! 工具 executor 是同步 fn，经 run_blocking + Handle::block_on 在 Leader 的
@@ -67,7 +72,10 @@ fn fail_dispatch(
     Err(reason)
 }
 
-/// agent_dispatch 编排主流程。返回工具结果 JSON（ok / timeout 两分支）。
+/// agent_dispatch 编排主流程。两分支均以 Ok(JSON) 返回：ok:true（投递序列完成）
+/// / ok:false（序列中断，带 failed_step/hint）；上板前失败走 fail_dispatch 的 Err
+/// 文本路径（executor 包装为「agent_dispatch 失败：…」）。同步路径不等待门铃；
+/// 外层超时口径见 registry 的 agent_dispatch 档位（超时不取消序列，只停止等待）。
 async fn dispatch_async(app: AppHandle, params: serde_json::Value) -> Result<String, String> {
     let agent = params
         .get("agent")
@@ -265,11 +273,28 @@ async fn dispatch_async(app: AppHandle, params: serde_json::Value) -> Result<Str
             });
             let out = serde_json::json!({
                 "ok": false,
+                // submitted = brief 已上板（走到本分支即保证上板成功）；它不代表
+                // 指令已被外部 Agent 收到——是否补投看 hint，禁止据此字段直接重试
                 "submitted": true,
                 "brief_path": brief_path_str,
                 "error": e.to_string(),
                 "failed_step": { "index": e.step_index, "tool": e.tool },
-                "hint": "按 skill §5.6 接管 SOP：核对进程/窗口实况后补投递；若 agent 进程已死则重走 §2 启动 SOP",
+                // 实情口径：序列未被取消（ext_agent 无 kill 路径），已执行步骤不可
+                // 回滚，后续步骤可能仍在后台跑。hint 禁止出现「补投递」这类无条件
+                // 重试指引——双序列会交错敲键、任务被执行两遍。
+                "hint": format!(
+                    "上板已完成（brief 已落盘，勿重新上板）；投递序列在第 {} 步「{}」后中断，\
+                     序列未被取消——已执行步骤不可回滚，后续步骤是否仍在后台执行未知。\n\
+                     接管 SOP（skill §5 失败回退第 6 条）：① Read status.json 确认上板态；\
+                     ② process_list/windows_list 核对进程与窗口实况，截图确认指令是否已进入终端；\
+                     ③ 已进入 → 勿重投（两条序列会交错敲键、任务被外部 Agent 执行两遍）；\
+                     确认未进入 → 才 desktop_window_activate + desktop_input 补输单行指令\
+                     「Read {brief_path_str} and execute it.」补完投递；\
+                     ④ 进程已死或从未启动 → 重走 §2 启动 SOP。\
+                     全程以文件与实况为准，禁止凭本返回文本猜根因。",
+                    e.step_index + 1,
+                    e.tool
+                ),
                 "note": field_note,
             });
             Ok(out.to_string())
