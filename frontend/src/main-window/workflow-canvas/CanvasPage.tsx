@@ -2506,6 +2506,7 @@ function CanvasInner({
         <WorkflowInputsDialog
           open={inputsOpen}
           specs={declaredInputs}
+          workflowId={workflowId}
           resetToken={workflowId}
           title={
             ir

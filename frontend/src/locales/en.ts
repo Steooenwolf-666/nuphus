@@ -1898,6 +1898,20 @@ const en: Record<string, string> = {
   'mobile.msgNotDelivered': 'Message not delivered (network interruption), please resend',
   'mobile.switchModelFailed': 'Switch model failed',
   'mobile.switchModeFailed': 'Switch mode failed',
+  'workflow.presets.label': 'Input presets',
+  'workflow.presets.choose': 'Choose a saved preset',
+  'workflow.presets.name': 'Preset name',
+  'workflow.presets.save': 'Save preset',
+  'workflow.presets.delete': 'Delete preset',
+  'workflow.presets.hint':
+    'Presets stay on this device and exclude sensitive inputs. Enter sensitive inputs again after applying a preset.',
+  'workflow.presets.saved': 'Input preset saved',
+  'workflow.presets.deleted': 'Input preset deleted. Current inputs are unchanged.',
+  'workflow.presets.duplicate': 'This preset name already exists. Choose another name.',
+  'workflow.presets.readError':
+    'Saved presets could not be read. You can still enter inputs and run.',
+  'workflow.presets.writeError':
+    'Preset changes could not be saved. Check local storage and try again.',
 }
 
 export default en

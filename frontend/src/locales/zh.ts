@@ -1806,6 +1806,17 @@ const zh: Record<string, string> = {
   'mobile.msgNotDelivered': '有消息未送达（网络中断），请重发',
   'mobile.switchModelFailed': '切换模型失败',
   'mobile.switchModeFailed': '切换模式失败',
+  'workflow.presets.label': '参数方案',
+  'workflow.presets.choose': '选择已保存的方案',
+  'workflow.presets.name': '方案名称',
+  'workflow.presets.save': '保存方案',
+  'workflow.presets.delete': '删除方案',
+  'workflow.presets.hint': '方案仅保存在本机，不保存敏感输入。应用方案后请重新填写敏感输入。',
+  'workflow.presets.saved': '参数方案已保存',
+  'workflow.presets.deleted': '参数方案已删除，当前输入保持不变',
+  'workflow.presets.duplicate': '方案名称已存在，请使用其他名称',
+  'workflow.presets.readError': '无法读取已保存的参数方案，仍可手动填写并运行',
+  'workflow.presets.writeError': '无法保存参数方案的更改，请检查本机存储后重试',
 }
 
 export default zh
