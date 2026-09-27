@@ -235,6 +235,7 @@ const en: Record<string, string> = {
   'extAgents.deliver.empty': 'No deliverables yet',
   'extAgents.deliver.loading': 'Loading...',
   'extAgents.deliver.reports': 'Reports',
+  'extAgents.deliver.latestReport': 'Last reported report',
   'extAgents.deliver.artifacts': 'Artifacts',
   'extAgents.deliver.preview': 'Click to preview',
   'extAgents.deliver.delete': 'Delete this deliverable',
