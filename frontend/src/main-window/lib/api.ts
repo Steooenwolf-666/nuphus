@@ -636,11 +636,15 @@ export interface ExternalAgentConfig {
   note?: string
   /** Agent 工作目录（用户个性化配置；Leader 查找/定位用） */
   dir?: string
-  // ── v8 交互固化字段（终端型推荐配置；agent_dispatch 使用）──
+  // ── v8 交互固化字段 ──
+  // 当前生效（agent_dispatch 真实消费）：
   launch?: string
   window_hint?: string
-  cooldown_secs?: number
   dispatch_steps?: Array<{ tool: string; with?: Record<string, unknown> }>
+
+  // ── 以下字段服务端仍会解析并返回（team.toml AgentFields schema 不动，
+  // 旧配置兼容），但当前不被 agent_dispatch 消费，UI 已不再提供编辑入口 ──
+  cooldown_secs?: number
   await_timeout_secs?: number
   timeout_action?: string
   timeout_script?: string
