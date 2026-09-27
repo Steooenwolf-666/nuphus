@@ -165,6 +165,7 @@ fn agent_config_at(plugin_dir: &Path, key: &str) -> Result<Option<serde_json::Va
 /// 字段清单：key/display_name/icon/type/mode/open/args/process/description/note +
 /// launch/window_hint/cooldown_secs/dispatch_steps/await_timeout_secs/timeout_action/
 /// timeout_script/auto_approve/auto_approve_script/confirm_keywords
+/// （后 7 个仅为旧 team.toml 兼容返回，当前无消费方——见 `AgentFields` 注释）
 fn agent_json(key: &str, obj: &toml::Table) -> serde_json::Value {
     serde_json::json!({
         "key": key,
@@ -301,6 +302,16 @@ fn toml_lit(s: &str) -> String {
 }
 
 /// 段字段（含 v8 交互固化字段）。写回时目标段由模板重生成（行内注释不保留）。
+///
+/// ⚠️ 字段集即 schema：`cooldown_secs` / `await_timeout_secs` / `timeout_action` /
+/// `timeout_script` / `auto_approve` / `auto_approve_script` / `confirm_keywords`
+/// 保留**仅为旧 team.toml 兼容解析**——当前 `agent_dispatch` 不消费这些字段
+/// （同步路径零等待、禁隐式冷启动，detect_confirm/自动代答从未实现），UI 也已
+/// 不再提供编辑入口；读路径 (`agent_json`) 仍会带默认值返回它们，删字段会让旧
+/// 配置读不到默认补全，故一律不删。
+/// 真正生效的只有：`dispatch_steps`（SeqRunner 逐条执行）与
+/// `window_hint` / `process`（进程捕获匹配）；`launch` 供 Leader 按 skill §2
+/// 启动 SOP 手动启动，agent_dispatch 不做隐式拉起。
 struct AgentFields {
     type_: String,
     mode: String,
