@@ -52,6 +52,15 @@ $NpmDesktop = $PSScriptRoot
 $Downloads  = Join-Path $NpmDesktop 'downloads'
 $Packages   = Join-Path $NpmDesktop 'packages'
 $ReleaseUrl = 'https://github.com/mrpulor-gh/nuphus/releases/download'
+# GitHub Release API（digest 权威来源，本机直连可达；schannel 握手失败的机器设 NUPHUS_GITHUB_PROXY）
+$ReleaseApi = 'https://api.github.com/repos/mrpulor-gh/nuphus'
+# 国内镜像前缀（2026-09-28 本机实测：gh-proxy ~6.4 MB/s >> cors.isteed ~548 KB/s > ghfast.top ~295 KB/s；
+# 而 GitHub 资产直连实测 TLS 被重置或仅 19 KB/s）。镜像只加速传输、不承担可信度：每个资产都要与
+# Release API 的 sha256 digest 对账，对不上即删除换源；取不到 digest 时只允许 GitHub 权威源，
+# 未校验的镜像产物不得进入 npm 包。
+$MirrorUrls = @('https://gh-proxy.com', 'https://cors.isteed.cc')
+# 访问 GitHub API 需经代理的机器设此环境变量，如 http://127.0.0.1:2081
+$ApiProxy = $(if ($env:NUPHUS_GITHUB_PROXY) { $env:NUPHUS_GITHUB_PROXY } else { '' })
 $Registry   = 'https://registry.npmjs.org'
 $MetaName   = 'nuphus-desktop'
 
@@ -134,10 +143,30 @@ function Test-NotPublished($pkgName, $version) {
     }
 }
 
+function Get-ReleaseDigest($assetName, $version) {
+    # 权威 digest 取 GitHub Release API（assets[].digest = "sha256:<hex>"，本机直连可达）。
+    # 取不到返回 $null：调用方据此刻意拒绝未校验镜像，只走 GitHub 权威源。
+    try {
+        $req = @{
+            Uri             = "$ReleaseApi/releases/tags/v$version"
+            UseBasicParsing = $true
+            TimeoutSec      = 60
+        }
+        if ($ApiProxy) { $req['Proxy'] = $ApiProxy }
+        $res = Invoke-WebRequest @req
+        $rel = $res.Content | ConvertFrom-Json
+        $hit = @($rel.assets) | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
+        if (-not $hit) { return $null }
+        $dig = [string]$hit.digest
+        if ($dig -match '^sha256:([0-9a-fA-F]{64})$') { return $Matches[1].ToLower() }
+        return $null
+    } catch {
+        return $null
+    }
+}
 function Get-Asset($p, $version) {
     # Asset 为命名模板（{0}=version）：nuphus-<platform>-<version> 格式
     $assetName = $p.Asset -f $version
-    $assetUrl = "$ReleaseUrl/v$version/$assetName"
     # 版本隔离缓存：downloads/<version>/<asset>，避免同名资产跨版本误复用（资产名不随版本变）
     $versionDir = "$Downloads\$version"
     $localFile = "$versionDir\$assetName"
@@ -146,18 +175,59 @@ function Get-Asset($p, $version) {
         return $localFile
     }
     if ($DryRun) {
-        Write-Ok "[dry-run] would download $assetUrl"
+        Write-Ok "[dry-run] would download $assetName <- $ReleaseUrl/v$version/ (mirrors: $($MirrorUrls -join ' '))"
         return $null
     }
-    Write-Step "Downloading $assetName <- $assetUrl"
     New-Item -ItemType Directory -Force -Path $versionDir | Out-Null
-    try {
-        Invoke-WebRequest -Uri $assetUrl -OutFile $localFile -UseBasicParsing -TimeoutSec 600
-    } catch {
-        throw "Failed to download $assetUrl : $($_.Exception.Message)`nCheck that GitHub Release v$version exists and the asset name matches release.yml."
+    # 期望 sha256：取到 digest 才镜像优先；取不到只走 GitHub 权威源（不降级成未校验镜像）
+    $expected = Get-ReleaseDigest $assetName $version
+    if ($expected) {
+        Write-Ok "expected sha256 (Release API): $expected"
+    } else {
+        Write-WarnMsg "取不到 $assetName 的 Release digest —— 本资产只用 GitHub 权威源，不经镜像"
     }
-    Write-Ok "downloaded $assetName ($((Get-Item $localFile).Length) bytes)"
-    return $localFile
+    # 来源顺序：镜像优先（国内实测快一个数量级），GitHub 权威源兜底。
+    # 只有拿到 digest 才把镜像放进候选——未校验的镜像字节不得进入 npm 包。
+    $sources = @()
+    if ($expected) {
+        foreach ($m in $MirrorUrls) {
+            $sources += @{ Label = "mirror $m"; Uri = "$m/$ReleaseUrl/v$version/$assetName" }
+        }
+    }
+    $sources += @{ Label = 'github'; Uri = "$ReleaseUrl/v$version/$assetName" }
+    $lastErr = ''
+    foreach ($s in $sources) {
+        # 一律先落 .tmp：校验不过或中途失败即删除，截断/污染文件不得留在缓存里被 -SkipDownload 复用
+        $tmp = "$localFile.tmp"
+        Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        Write-Step "Downloading $assetName <- $($s.Uri)"
+        try {
+            $req = @{ Uri = $s.Uri; OutFile = $tmp; UseBasicParsing = $true; TimeoutSec = 1200 }
+            # 镜像必须直连（叠本地代理会被限速回 40 KB/s）；只有裸 GitHub 域名才按需走代理
+            if ($s.Label -eq 'github' -and $ApiProxy) { $req['Proxy'] = $ApiProxy }
+            Invoke-WebRequest @req | Out-Null
+            if (-not (Test-Path $tmp)) { throw 'download produced no file' }
+            $size = (Get-Item $tmp).Length
+            if ($size -le 0) { throw 'zero-byte file' }
+            $actual = (Get-FileHash -Path $tmp -Algorithm SHA256).Hash.ToLower()
+            if ($expected -and $actual -ne $expected) {
+                throw "sha256 mismatch: expected $expected, got $actual"
+            }
+            Move-Item -Path $tmp -Destination $localFile -Force
+            if ($expected) {
+                Write-Ok "downloaded $assetName via $($s.Label) ($size bytes, sha256 verified: $actual)"
+            } else {
+                # 只说事实：没有权威 digest 可比对时这只是记录哈希，不叫「已校验」
+                Write-Ok "downloaded $assetName via $($s.Label) ($size bytes, sha256=$actual, 无 Release digest 可比对、未经校验)"
+            }
+            return $localFile
+        } catch {
+            $lastErr = $_.Exception.Message
+            Write-WarnMsg "$($s.Label) failed: $lastErr"
+            Remove-Item $tmp -Force -ErrorAction SilentlyContinue
+        }
+    }
+    throw "Failed to download $assetName from any source (mirrors + github); last error: $lastErr. Check that GitHub Release v$version exists and the asset name matches release.yml."
 }
 
 function Build-PlatformPackage($p, $version, $assetFile) {
