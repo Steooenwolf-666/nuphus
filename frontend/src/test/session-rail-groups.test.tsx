@@ -117,6 +117,8 @@ describe('SessionRail 项目文件夹分组渲染', () => {
   beforeEach(() => {
     calls.length = 0
     activeId = 'cur'
+    // 「上次对话」记录（启动折叠策略的判据）逐例隔离：残留记录会改掉默认展开态
+    localStorage.clear()
     listShelfSessions.mockReset().mockImplementation(async () => shelfResponse())
     switchSession.mockReset().mockImplementation(async (id: string) => {
       calls.push('switch')
@@ -344,17 +346,57 @@ describe('SessionRail 项目文件夹分组渲染', () => {
     expect(within(ungrouped).queryByLabelText('归档文件夹')).not.toBeInTheDocument()
   })
 
-  it('组头可整组折叠/展开（默认展开）', async () => {
+  it('组头可整组折叠/展开', async () => {
     renderRail()
     await waitFor(() => expect(screen.getByText('一号新会话')).toBeInTheDocument())
 
-    const head = screen.getByText('一号').closest('.sr-group-head') as HTMLElement
-    fireEvent.click(within(head).getByText('一号'))
+    fireEvent.click(screen.getByText('一号'))
     await waitFor(() => expect(screen.queryByText('一号新会话')).not.toBeInTheDocument())
     expect(screen.getByText('一号')).toBeInTheDocument() // 组头仍在
 
     fireEvent.click(screen.getByText('一号'))
     await waitFor(() => expect(screen.getByText('一号新会话')).toBeInTheDocument())
+  })
+
+  it('启动时只展开「上次对话」所在的项目文件夹，其余文件夹收起', async () => {
+    // 上次关闭软件前停在 E:\NUS\1 下的对话
+    localStorage.setItem('nuphus:rail-last-project', 'E:\\NUS\\1')
+    renderRail()
+    await waitFor(() => expect(screen.getByText('一号')).toBeInTheDocument())
+
+    const expanded = (name: string) =>
+      (screen.getByText(name).closest('.sr-group-toggle') as HTMLElement).getAttribute(
+        'aria-expanded',
+      )
+    expect(expanded('一号')).toBe('true')
+    expect(expanded('Nuphus')).toBe('false')
+    expect(expanded('未分组')).toBe('false')
+    expect(screen.getByText('一号新会话')).toBeInTheDocument()
+    expect(screen.queryByText('当前会话')).not.toBeInTheDocument()
+  })
+
+  it('上次对话无归属 → 展开「未分组」兜底组', async () => {
+    localStorage.setItem('nuphus:rail-last-project', '')
+    renderRail()
+    await waitFor(() => expect(screen.getByText('无归属会话')).toBeInTheDocument())
+
+    const ungrouped = screen.getByText('未分组').closest('.sr-group-toggle') as HTMLElement
+    expect(ungrouped.getAttribute('aria-expanded')).toBe('true')
+    expect(screen.queryByText('一号新会话')).not.toBeInTheDocument()
+  })
+
+  it('无「上次对话」记录（首次使用 / 存储被清）→ 保持全展开', async () => {
+    renderRail()
+    await waitFor(() => expect(screen.getByText('一号新会话')).toBeInTheDocument())
+    expect(screen.getByText('当前会话')).toBeInTheDocument()
+    expect(screen.getByText('无归属会话')).toBeInTheDocument()
+  })
+
+  it('「上次对话」所在文件夹已不在列表（归档 / 删书签）→ 保持全展开，不给空视角', async () => {
+    localStorage.setItem('nuphus:rail-last-project', 'E:\\work\\Gone')
+    renderRail()
+    await waitFor(() => expect(screen.getByText('一号新会话')).toBeInTheDocument())
+    expect(screen.getByText('当前会话')).toBeInTheDocument()
   })
 
   it('重命名文件夹：整表提交包含已归档书签，不丢归档记录，auto 组不写入', async () => {
@@ -409,6 +451,7 @@ describe('外部会话切换 → 工作目录跟随', () => {
   beforeEach(() => {
     calls.length = 0
     activeId = 'cur'
+    localStorage.clear()
     listShelfSessions.mockReset().mockImplementation(async () => shelfResponse())
     vi.useFakeTimers()
   })
@@ -445,5 +488,17 @@ describe('外部会话切换 → 工作目录跟随', () => {
     await primeThenSwitch('same')
 
     expect(calls.filter(c => c.startsWith('dir:'))).toHaveLength(0)
+  })
+
+  it('「上次对话」记录随 active 刷新（下次启动据此定位那一栏）', async () => {
+    renderRail()
+    await vi.advanceTimersByTimeAsync(0)
+    // 首轮：当前会话归属 Nuphus
+    expect(localStorage.getItem('nuphus:rail-last-project')).toBe('E:\\NUS\\Nuphus')
+
+    // 切到 E:\NUS\1 下的会话 → 记录跟随（它才是「关闭前最后停留的对话」）
+    activeId = 'bm1-new'
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(localStorage.getItem('nuphus:rail-last-project')).toBe('E:\\NUS\\1')
   })
 })

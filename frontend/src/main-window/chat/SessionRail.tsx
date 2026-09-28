@@ -54,6 +54,15 @@ const POLL_INTERVAL_MS = 5000
 /** 会话变更去抖：2s 内只触发一次 onSessionChanged，防轮询翻转连续触发风暴 */
 const SWITCH_NOTICE_THROTTLE_MS = 2000
 
+/**
+ * localStorage 键：会话工作台「上次对话」的归属项目（`normalizePathKey` 归一后的路径，
+ * 空串 = 无归属）。用途：软件重启后只展开**上次关闭前停留的那个对话**所在的项目文件夹。
+ *
+ * 为什么不用后端 active 会话做判据：active 只活在内存（`state.runtime`），重启即空，
+ * `list_shelf_sessions` 首轮没有任何 `is_active` 条目 —— 拿它判断必然落空。
+ */
+const RAIL_LAST_PROJECT_KEY = 'nuphus:rail-last-project'
+
 /** updated_at（Unix 毫秒）→ 行尾相对时间（刚刚 / N分钟 / N小时 / N天） */
 function relativeTime(ms: number, t: (key: string, ...args: string[]) => string): string {
   const minutes = Math.floor((Date.now() - ms) / 60_000)
@@ -851,6 +860,55 @@ export default function SessionRail({
     () => buildSessionGroups(items, projects, archivedProjects, sortPrefs),
     [items, projects, archivedProjects, sortPrefs],
   )
+
+  /**
+   * 启动折叠策略：首次拿到列表数据时，**只展开「上次对话」所在的项目组**，其余整组收起 ——
+   * 关闭软件前停在哪个对话，下次打开就落在哪一栏，不必挨个手点（ZPY 2026-09-27 反馈）。
+   *
+   * 「上次对话」的判据是 localStorage 里的归属路径（见 RAIL_LAST_PROJECT_KEY），不是当轮的
+   * active 会话：后端 active 只活在内存，重启即空，首轮没有任何 is_active 条目。
+   *
+   * 只跑一次：之后用户的手工折叠、「整理侧边栏」的全部展开 / 全部关闭、5s 轮询刷新一概不得
+   * 覆盖（否则就是「我的操作被系统改回去」）。
+   *
+   * 边界：库里没有任何会话 → 不猜，保持默认全展开；无记录（首次使用 / 存储被清）或记录里的
+   * 文件夹已不在当前列表（归档 / 删书签 / 改名）→ 同样保持全展开，宁可多显示也不给一个
+   * 「全部收起」的空视角。
+   */
+  const collapseInitializedRef = useRef(false)
+  useEffect(() => {
+    if (collapseInitializedRef.current || items.length === 0) return
+    collapseInitializedRef.current = true
+    let key: string | null = null
+    try {
+      key = localStorage.getItem(RAIL_LAST_PROJECT_KEY)
+    } catch {
+      key = null
+    }
+    if (key === null || !groups.some(g => g.key === key)) return
+    setCollapsedGroups(
+      Object.fromEntries(groups.filter(g => g.key !== key).map(g => [g.key, true])),
+    )
+  }, [items, groups])
+
+  /**
+   * 记录「上次对话」归属：当前会话每次变化（点击切换 / 手机端遥控切换 / 新建对话 / 切 mode）
+   * 各落一次盘，供下次启动决定展开哪一组 —— 它记的是「软件关闭前最后停留的那个对话」。
+   *
+   * ⚠️ 无 active 会话时不写：刚重启时列表里本就没有 active，此时若覆盖成空值，
+   * 「关软件 → 再打开」会先把自己的记录抹掉，折叠策略当场失效。
+   * ⚠️ 定义在启动折叠 effect **之后**：同一轮 items 变更里两个 effect 按定义顺序执行，
+   * 首轮必须先用旧记录定位，再谈刷新记录。
+   */
+  useEffect(() => {
+    const active = items.find(i => i.is_active)
+    if (!active) return
+    try {
+      localStorage.setItem(RAIL_LAST_PROJECT_KEY, normalizePathKey(active.project_path))
+    } catch {
+      /* 存储不可用（隐私模式 / 配额）：只影响启动展开偏好，不阻断列表 */
+    }
+  }, [items])
 
   /**
    * 整理侧边栏 · 全部展开：清空整组折叠表。
