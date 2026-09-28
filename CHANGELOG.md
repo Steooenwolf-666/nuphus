@@ -5,7 +5,7 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.2.23] - 2026-09-28
 
 ### Added
 - **会话工作台启动时只展开上次对话所在的项目文件夹**：启动（首次拿到列表数据）只展开「上次对话」
