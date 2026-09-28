@@ -41,6 +41,7 @@ import {
 } from '../lib/api'
 import type { ProviderInfo, ModelInfo, ProjectBookmark, ToolPermissions } from '../lib/api'
 import { friendlyIpcError } from '../lib/ipcError'
+import { orderProviderModels, readRecentModels, rememberRecentModel } from './modelPopupOrder'
 import { WelcomeScreen } from './WelcomeScreen'
 import { OnboardingModal } from './OnboardingModal'
 import { SessionDivider } from './SessionDivider'
@@ -960,6 +961,9 @@ export function ChatPanel({
         } catch {
           /* localStorage 写入失败不阻塞切换流程 */
         }
+        // 输入框弹窗子列表排序用：把这次选的模型置顶。只影响展示顺序，
+        // 不参与模型解析/切换/生效判定（后者走 get_provider_context）。
+        rememberRecentModel(localStorage, cfg.provider, cfg.model)
         // 本地同步 savedConfigs（切换后提供商项立即显示新模型名 + ✓）
         setSavedConfigs(prev =>
           prev.map(c =>
@@ -2401,7 +2405,12 @@ export function ChatPanel({
                     <div className="model-provider-picker">
                       <div className="model-provider-list">
                         {savedConfigs.map(cfg => {
-                          const providerModels = allModels.filter(m => m.provider === cfg.provider)
+                          // 子列表按「最近切换顺序」排：模型多的 provider 不必每次
+                          // 都在长列表里找。只用展示顺序，不参与模型解析/切换。
+                          const providerModels = orderProviderModels(
+                            allModels.filter(m => m.provider === cfg.provider),
+                            readRecentModels(localStorage, cfg.provider),
+                          )
                           // 勾选态 = (provider, model) 双全等：官方厂商与 opencode-go 存在同 id
                           // 模型（deepseek-v4-flash 等），仅比 id 会让两 provider 卡片同时打勾。
                           // currentProvider 来自 get_provider_context（mode 感知的生效模型
