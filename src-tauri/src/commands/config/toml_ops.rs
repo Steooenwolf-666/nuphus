@@ -1693,6 +1693,15 @@ pub fn update_provider_base_url(
     if url.is_empty() {
         return Ok(());
     }
+    // 地址必须带 scheme：这个值是 transport 直接拿去发请求的，缺 scheme 的串落盘后要到
+    // 请求期才炸，且报错与「哪一次切换写坏的」毫无关联，用户只能去手改配置文件。
+    // 只判 scheme 前缀，不套 jev/laya 那套「必须 HTTPS」——provider 端点大量是自托管
+    // http（代理、局域网推理服务），收紧到 HTTPS-only 会打死合法配置，那是回归。
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(format!(
+            "接口地址必须以 http:// 或 https:// 开头（当前: {url}）"
+        ));
+    }
     let content = std::fs::read_to_string(config_path)
         .map_err(|e| format!("read config.toml failed: {e}"))?;
     let mut doc: toml::Value = content
@@ -1709,6 +1718,16 @@ pub fn update_provider_base_url(
     let map = segment
         .as_table_mut()
         .ok_or_else(|| format!("配置段格式非法: {provider_name}"))?;
+    // 同值快路径：前端每次切模型都会把当前地址原样下发，值与磁盘一致时没必要
+    // read→parse→整文档重排→write 走一遍（to_string_pretty 会重排格式，无谓落盘
+    // 只会让 diff 噪音变大）。base_url 非字符串时 as_str() 取到 None，按「不同」处理。
+    if map.get("base_url").and_then(|v| v.as_str()) == Some(url) {
+        tracing::debug!(
+            "base_url for provider {} unchanged, skip write",
+            provider_name
+        );
+        return Ok(());
+    }
     map.insert("base_url".to_string(), toml::Value::String(url.to_string()));
     nuphus::cookies::encrypt_plaintext_provider_keys(&mut doc);
     let new_content =
@@ -2993,6 +3012,77 @@ base_url = "http://192.168.5.150:8080/v1"
         // 段不存在：报错
         let err = update_provider_base_url(&path, "ghost", "http://x/v1").unwrap_err();
         assert!(err.contains("不存在段"), "段缺失必须报错，实际: {err}");
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 缺 scheme 的地址必须当场拒绝且不落盘：落盘也只会在请求期才炸，届时报错
+    /// 与「哪一次切换写坏的」毫无关联。只卡 scheme，不收紧到 HTTPS——自托管 http
+    /// 端点（代理、局域网推理服务）是合法配置。
+    #[test]
+    fn update_provider_base_url_rejects_missing_scheme() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "local"
+provider_type = "local"
+base_url = "http://192.168.5.150:8080/v1"
+"#,
+        );
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        for bad in ["192.168.5.210:8080/v1", "api.example.com/v1", "ftp://x/v1"] {
+            let err = update_provider_base_url(&path, "local", bad).unwrap_err();
+            assert!(
+                err.contains("http://") && err.contains("https://"),
+                "错误信息要点明合法前缀，实际: {err}"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            before,
+            "被拒绝的地址不得落盘"
+        );
+
+        // 自托管 http 必须放行
+        update_provider_base_url(&path, "local", "http://192.168.5.210:8080/v1").unwrap();
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// 同值快路径：值与磁盘一致时不得重写文件。夹具带前导空行，`to_string_pretty`
+    /// 不可能复现该格式，因此一旦发生写入内容必然变化，断言有反证能力。
+    #[test]
+    fn update_provider_base_url_same_value_skips_write() {
+        let path = write_temp_config(
+            r#"
+[[providers]]
+name = "local"
+provider_type = "local"
+base_url = "http://192.168.5.150:8080/v1"
+
+"#,
+        );
+        let before = std::fs::read_to_string(&path).unwrap();
+
+        update_provider_base_url(&path, "local", "http://192.168.5.150:8080/v1").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            before,
+            "同值不得触发写盘"
+        );
+
+        // 值不同仍然正常落盘
+        update_provider_base_url(&path, "local", "http://192.168.5.210:8080/v1").unwrap();
+        let doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        let url = doc
+            .get("providers")
+            .and_then(|p| p.as_array())
+            .and_then(|a| a.first())
+            .and_then(|v| v.get("base_url"))
+            .and_then(|v| v.as_str())
+            .unwrap();
+        assert_eq!(url, "http://192.168.5.210:8080/v1");
 
         std::fs::remove_file(&path).ok();
     }
