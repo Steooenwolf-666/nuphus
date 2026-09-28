@@ -20,7 +20,7 @@ export const CORE_TOKEN_KEYS: readonly CoreTokenKey[] = [
 ]
 
 /** 选择 --accent 时一并派生的关联变量 */
-export const ACCENT_DERIVED_KEYS = [
+const ACCENT_DERIVED_KEYS = [
   '--accent-rgb',
   '--accent-hover',
   '--accent-dim',
@@ -80,7 +80,7 @@ export function rgbToHex(r: number, g: number, b: number): string {
 }
 
 /** 向白色混合 ratio（0~1）得到亮阶变体（用于 --accent-hover） */
-export function lightenHex(hex: string, ratio = ACCENT_HOVER_MIX): string {
+function lightenHex(hex: string, ratio = ACCENT_HOVER_MIX): string {
   const rgb = hexToRgb(hex)
   if (!rgb) return hex
   return rgbToHex(
@@ -91,7 +91,7 @@ export function lightenHex(hex: string, ratio = ACCENT_HOVER_MIX): string {
 }
 
 /** 由强调色派生 --accent-rgb / --accent-hover / --accent-dim / --accent-glow */
-export function deriveAccentOverrides(accentHex: string): Record<string, string> {
+function deriveAccentOverrides(accentHex: string): Record<string, string> {
   const rgb = hexToRgb(accentHex)
   if (!rgb) return {}
   return {
@@ -168,7 +168,7 @@ export const OPACITY_INTENT_KEY_ORDER: readonly OpacityChannel[] = [
  * 用户设定的透明度丢失，而滑块读数仍显示旧值（读数来自 overrides），
  * 画面与滑块彻底脱钩。这正是「输入框背景不跟透明度变化」的确定性成因。
  */
-export const LS_OPACITY_INTENT = 'nuphus_opacity_intent'
+const LS_OPACITY_INTENT = 'nuphus_opacity_intent'
 
 const EMPTY_INTENT: Record<OpacityChannel, boolean> = {
   bubbles: false,
