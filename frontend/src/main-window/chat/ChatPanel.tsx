@@ -42,6 +42,7 @@ import {
 import type { ProviderInfo, ModelInfo, ProjectBookmark, ToolPermissions } from '../lib/api'
 import { friendlyIpcError } from '../lib/ipcError'
 import { orderProviderModels, readRecentModels, rememberRecentModel } from './modelPopupOrder'
+import { buildQuoteRef, isSelectableInBubble, truncateQuote } from './messageSelection'
 import { WelcomeScreen } from './WelcomeScreen'
 import { OnboardingModal } from './OnboardingModal'
 import { SessionDivider } from './SessionDivider'
@@ -76,6 +77,7 @@ import {
   IconStar,
   IconChartColumn,
   IconChevronsDown,
+  IconQuote,
 } from '../../ui/Icons'
 import { RatingModal } from '../layout/ExecutionTraceFloating'
 import { MoodFace } from '../../ui/MoodFace'
@@ -403,6 +405,9 @@ export function ChatPanel({
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
   // Pending resource references (skill/knowledge/workflow) — attached to next user message
   const [pendingReferences, setPendingReferences] = useState<ChatReference[]>([])
+  /** 聊天区选中文字的引用浮条：命中 .message-content 内的非空选区时出现。
+   *  x/y 是选区最后一行的屏幕坐标（fixed 定位，CSS 负责 translate(-50%)）。 */
+  const [quoteBar, setQuoteBar] = useState<{ x: number; y: number; label: string } | null>(null)
 
   // Load tool permissions for WORKFLOW mode check
   const [toolPermissions, setToolPermissions] = useState<ToolPermissions | undefined>()
@@ -1465,6 +1470,53 @@ export function ChatPanel({
     setPendingReferences(prev => prev.filter((_, i) => i !== index))
   }, [])
 
+  // ── 选中文字 → 引用（复用 ChatReference 的 quote 分支，不新开注入通道）──
+  /** mouseup 判定选区：非空 + 锚点落在 .message-content 内才弹浮条。
+   *  刻意不用 selectionchange——拖选过程中弹窗会跟着选区跳动，松手才定型。 */
+  const handleMessagesMouseUp = useCallback(() => {
+    const sel = window.getSelection()
+    const raw = sel?.toString() ?? ''
+    if (!raw.trim() || !sel || sel.rangeCount === 0) {
+      setQuoteBar(null)
+      return
+    }
+    // 跨气泡拖选只认锚点所在气泡：多气泡会让浮条定位飘，且引文归属不明
+    if (!isSelectableInBubble(sel.anchorNode)) {
+      setQuoteBar(null)
+      return
+    }
+    // 入 state 前先截断：选区可能误拖到整篇长文，没必要把原文整体存进 React state
+    const { text } = truncateQuote(raw)
+    if (!text) {
+      setQuoteBar(null)
+      return
+    }
+    const rect = sel.getRangeAt(0).getBoundingClientRect()
+    setQuoteBar({ x: rect.left + rect.width / 2, y: rect.bottom, label: text })
+  }, [])
+
+  /** 点击浮条 → 入引用栏。按钮的 mousedown 已 preventDefault（见 JSX 注释）保住
+   *  selection；这里显式清除，免得残留 range 干扰下一次选区判定。 */
+  const handleQuoteCommit = useCallback(() => {
+    if (!quoteBar) return
+    const ref = buildQuoteRef(quoteBar.label)
+    if (ref) addReference(ref)
+    window.getSelection()?.removeAllRanges()
+    setQuoteBar(null)
+  }, [quoteBar, addReference])
+
+  /** 点击浮条之外（消息区空白处 / 输入框 / 按钮）→ 收起，否则浮条会滞留在原处。
+   *  selection 本身交给浏览器处理，这里只管浮条生命周期。 */
+  useEffect(() => {
+    if (!quoteBar) return
+    const onDown = (e: MouseEvent) => {
+      if ((e.target as Element | null)?.closest?.('.quote-float')) return
+      setQuoteBar(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [quoteBar])
+
   const removePendingImage = useCallback((index: number) => {
     setPendingImages(prev => prev.filter((_, i) => i !== index))
   }, [])
@@ -1741,7 +1793,16 @@ export function ChatPanel({
           钉进内容坐标（直接给 .chat-messages 加 position:relative 会随滚动消失，
           原理见 styles/chat-messages.css 的同名规则注释） */}
       <div className="chat-messages-wrap">
-        <div className="chat-messages" ref={scrollRef} onScroll={onScroll}>
+        <div
+          className="chat-messages"
+          ref={scrollRef}
+          onScroll={() => {
+            // 滚动即选区失效：浮条用屏幕坐标，不收起会飘到别的内容上
+            setQuoteBar(null)
+            onScroll()
+          }}
+          onMouseUp={handleMessagesMouseUp}
+        >
           {messages.length === 0 ? (
             <WelcomeScreen
               onSend={onSend}
@@ -2004,6 +2065,25 @@ export function ChatPanel({
           )}
         </div>
       </div>
+
+      {/* ── 选中文字引用浮条：fixed + portal（避开 .chat-messages 的滚动裁剪）── */}
+      {quoteBar &&
+        createPortal(
+          <button
+            type="button"
+            className="quote-float"
+            style={{ left: quoteBar.x, top: quoteBar.y }}
+            /* 必须拦住 mousedown：焦点移到按钮会清掉 selection，点击时就取不到原文 */
+            onMouseDown={e => e.preventDefault()}
+            onClick={handleQuoteCommit}
+            aria-label={t('chat.quoteSelection')}
+            title={t('chat.quoteSelection')}
+          >
+            <IconQuote size={13} />
+            {t('chat.quoteSelection')}
+          </button>,
+          document.body,
+        )}
 
       {/* ── Pause Modal ── */}
       <PauseOverlay

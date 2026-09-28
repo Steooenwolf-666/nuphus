@@ -1919,3 +1919,45 @@
     transform: translateY(0);
   }
 }
+
+/* ── 选中文字 → 引用浮条（固定定位，z-index 高于 .chat-jump-bottom 的 30）──
+   位置由 JS 按选区最后一行内联给定（left/top + translate(-50%) 居中），
+   这里只管外观与指针事件：mousedown 必须 preventDefault，
+   否则焦点转移会清掉 selection，点击时已读不到原文。 */
+.quote-float {
+  position: fixed;
+  z-index: 40;
+  transform: translate(-50%, 8px);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--glass-3);
+  border-radius: var(--radius-1);
+  background: color-mix(in srgb, var(--panel-bg) 88%, transparent);
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  color: var(--spark-secondary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  animation: quote-float-in 120ms ease both;
+}
+
+.quote-float:hover {
+  color: var(--spark-primary);
+  border-color: var(--accent);
+}
+
+@keyframes quote-float-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 2px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 8px);
+  }
+}

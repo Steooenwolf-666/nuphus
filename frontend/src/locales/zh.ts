@@ -1118,6 +1118,7 @@ const zh: Record<string, string> = {
   'chat.llmErrorPrefix': 'LLM请求失败',
   'chat.retry': '重试',
   'chat.jumpToBottom': '回到底部',
+  'chat.quoteSelection': '引用这段',
   'chat.gracefulStop':
     'LLM请求失败：{0}\n已执行 {1} 步，执行结果已保留；本次不重试，请检查模型额度/连接后重新发送',
 

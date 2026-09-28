@@ -1171,6 +1171,7 @@ const en: Record<string, string> = {
   'chat.llmErrorPrefix': 'LLM Error',
   'chat.retry': 'Retry',
   'chat.jumpToBottom': 'Scroll to bottom',
+  'chat.quoteSelection': 'Quote selection',
   'chat.gracefulStop':
     'LLM request failed: {0}\nExecuted {1} step(s), results preserved; not retrying this round. Check model quota/connection and resend.',
 
