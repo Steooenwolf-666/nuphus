@@ -254,9 +254,31 @@ function Publish-Package($pkgName, $version) {
         return
     }
     Write-Step "npm publish $pkgName@$version"
-    & npm.cmd publish $dir --registry $Registry
-    if ($LASTEXITCODE -ne 0) { throw "npm publish failed for $pkgName" }
-    Write-Ok "$pkgName@$version published"
+    # 捕获输出：npm 的 `+ <pkg>@<version>` 行 + exit 0 才是「发布成功」的权威信号。
+    # registry view 滞后不得推翻它（见下文 Registry verification）。
+    $out = & npm.cmd publish $dir --registry $Registry 2>&1
+    $exit = $LASTEXITCODE
+    if ($exit -ne 0) {
+        $out | Select-Object -Last 20 | ForEach-Object { Write-Host "    $_" }
+        throw "npm publish failed for $pkgName (exit $exit)"
+    }
+    $confirmed = $false
+    foreach ($line in $out) {
+        $s = ("$line").Trim()
+        if ($s.StartsWith('+') -and $s.Contains("@nuphus/$pkgName") -and $s.Contains($version)) {
+            $confirmed = $true
+            break
+        }
+    }
+    if (-not $script:PublishResults.ContainsKey($pkgName)) { $script:PublishResults[$pkgName] = $false }
+    $script:PublishResults[$pkgName] = $confirmed
+    if ($confirmed) {
+        Write-Ok "$pkgName@$version published (npm confirmed)"
+    } else {
+        # 不假装成功：exit 0 但没抓到确认行，按「未确认」处理
+        Write-WarnMsg "$pkgName@$version returned exit 0 but no '+ pkg@version' confirmation line matched (treating as UNCONFIRMED)"
+        $out | Select-Object -Last 10 | ForEach-Object { Write-Host "    $_" }
+    }
 }
 
 function Verify-Install($version) {
@@ -325,28 +347,69 @@ if ($DryRun) {
 }
 
 Write-Step 'Publishing (platform packages first, then meta)'
+# pkgName -> $true when npm itself printed `+ <pkg>@<version>` and exited 0.
+# Registry view lag must never override this (see Registry verification below).
+$script:PublishResults = @{}
 foreach ($p in $Platforms) { Publish-Package $p.Name $version }
 Publish-Package $MetaName $version
 
-# Verify published versions on registry (with propagation retry:
-# npm registry is eventually-consistent; immediate view may return old version)
+# Verify published versions on registry.
+#
+# npm registry is eventually-consistent: `npm view <pkg> version` reads the `latest`
+# dist-tag, which can lag a *successful* publish by minutes (measured: 150s on v0.2.23,
+# across all 4 packages). A lagging view must NEVER be reported as a failed publish:
+#
+#   - npm's own `+ <pkg>@<version>` + exit 0 (captured in $script:PublishResults) is the
+#     authoritative signal that the publish happened.
+#   - If npm confirmed but the view still lags -> WARN + tell the user how to verify.
+#     Throwing here would be a FALSE FAILURE, and the harmful reaction is republishing
+#     (npm registry is immutable -> same version can never be republished).
+#   - Only throw when npm itself did not confirm the publish.
 Write-Step 'Registry verification'
 if ($DryRun) {
     Write-Ok '[dry-run] would verify all 4 packages on registry after publish (skipped)'
 } else {
-    foreach ($n in @($MetaName) + @($Platforms | ForEach-Object { $_.Name })) {
-        $v = $null
-        # 大包（linux tarball 99MB / 解包 232MB）npm 侧异步处理可达数分钟，
-        # 实测 4×5s 会在包已成功发布时误判失败并抛出，故放宽到 12×15s。
-        $maxAttempts = 12
-        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-            $v = Get-PublishedVersion "@nuphus/$n"
-            if ($v -eq $version) { break }
-            Write-Ok "[retry $attempt/$maxAttempts] @nuphus/$n not yet $version (got '$v'), waiting for registry propagation..."
-            Start-Sleep -Seconds 15
+    # Global budget, not per-package: propagation is one registry-wide lag, so poll all
+    # unresolved packages together each round. Worst case is the budget, not budget x N.
+    # (An earlier 20 x 15s per-package version could stall ~20 min across 4 packages.)
+    $budgetMin = 5
+    if ($env:NPM_VERIFY_BUDGET_MIN) { $budgetMin = [int]$env:NPM_VERIFY_BUDGET_MIN }
+    $sleepSecs = 15
+    $deadline = (Get-Date).AddMinutes($budgetMin)
+    $pending = @($MetaName) + @($Platforms | ForEach-Object { $_.Name })
+    $firstRound = $true
+    while ($pending.Count -gt 0) {
+        if (-not $firstRound) { Start-Sleep -Seconds $sleepSecs }
+        $firstRound = $false
+        $still = @()
+        foreach ($n in $pending) {
+            $pkg = "@nuphus/$n"
+            $v = Get-PublishedVersion $pkg
+            if ($v -eq $version) {
+                Write-Ok "$pkg@$v confirmed on registry"
+            } else {
+                $still += $n
+            }
         }
-        if ($v -ne $version) { throw "registry verification failed: @nuphus/$n expected $version got $v" }
-        Write-Ok "@nuphus/$n@$v confirmed on registry"
+        $pending = $still
+        if ($pending.Count -gt 0) {
+            if ((Get-Date) -ge $deadline) { break }
+            Write-Ok "registry propagation pending ($($pending.Count)): $($pending -join ', ') - retrying in ${sleepSecs}s..."
+        }
+    }
+    foreach ($n in $pending) {
+        $pkg = "@nuphus/$n"
+        $lastView = Get-PublishedVersion $pkg
+        $npmConfirmed = $script:PublishResults.ContainsKey($n) -and $script:PublishResults[$n]
+        if ($npmConfirmed) {
+            Write-WarnMsg "$pkg PUBLISHED (npm confirmed) but registry view still reports '$lastView' after ${budgetMin}min."
+            Write-WarnMsg "  -> This is registry propagation lag, NOT a failed publish."
+            Write-WarnMsg "  -> Do NOT republish: the npm registry is immutable, the same version cannot be published again."
+            Write-WarnMsg "  -> Confirm manually:  npm view $pkg version --registry $Registry"
+            Write-WarnMsg "  -> Or wait a few minutes and re-run that view command."
+        } else {
+            throw "registry verification failed for ${pkg}: expected $version got '$lastView' (npm did not confirm the publish either)"
+        }
     }
 }
 
@@ -354,5 +417,11 @@ Verify-Install $version
 
 Write-Host ''
 Write-Host '============================================================' -ForegroundColor Green
-Write-Host " DONE: @nuphus/$MetaName@$version + 3 platform packages published" -ForegroundColor Green
+$allConfirmed = ($script:PublishResults.Count -eq 4) -and (($script:PublishResults.Values | Where-Object { $_ -ne $true } | Measure-Object).Count -eq 0)
+if ($allConfirmed) {
+    Write-Host " DONE: @nuphus/$MetaName@$version + 3 platform packages published (npm confirmed)" -ForegroundColor Green
+} else {
+    Write-WarnMsg "DONE WITH CAVEAT: @nuphus/$MetaName@$version — some packages were not confirmed by npm."
+    Write-WarnMsg "  Registry is immutable; if a package really is missing, bump the version and republish."
+}
 Write-Host '============================================================' -ForegroundColor Green
