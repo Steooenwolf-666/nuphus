@@ -459,6 +459,8 @@ export interface ExternalAgentStatus {
     ts?: string
   } | null
   updated_at?: string
+  /** 用户已从列表栏移出（后端共享态标注：应用生命周期内保持、重启即净） */
+  hidden?: boolean
 }
 
 /** 列出所有已初始化外部 agent 的运行时态（按 agent 名排序） */

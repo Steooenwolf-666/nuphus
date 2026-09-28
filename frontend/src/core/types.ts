@@ -743,6 +743,8 @@ export interface TaskRun {
   /** 服务端下发的唯一身份（进程内单调 */
   run_id: string
   title: string
+  /** 派发正文全文（给 Exec 的那份：任务定义 / 上下文等） */
+  task: string
   goal_type: string
   origin: TaskRunOrigin | null
   /** 同标题/同归属的第几次执行（重试计数，从 1 开始） */

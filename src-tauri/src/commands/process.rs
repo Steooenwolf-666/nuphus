@@ -1549,7 +1549,23 @@ fn persist_leader_turn(
         pattern: None,
         custom_agent_id: None,
     };
-    let _ = memory::insert_entry(&entry);
+    // Fire-and-forget 落盘：insert_entry 内部含 bge-small-zh embedding 前向
+    // （debug 构建单线程 CPU 下秒级）+ DB 事务，不能再压在 Finalizing 关键
+    // 路径上阻塞 busy 解锁（前端无 idle 事件推送，靠 300ms 轮询兜底）。
+    // entry id `leader-{sid8}-{turn}-000` 为 REPLACE 幂等，后台迟到不与
+    // 下一轮写入冲突；db pool 为自建 Mutex 池，并发写靠池排队串行化。
+    // entry 为 owned（MemoryEntry: Send + 'static），闭包不借用 state/引用。
+    let entry_id = entry.id.clone();
+    tokio::spawn(async move {
+        match memory::insert_entry(&entry) {
+            Ok(()) => tracing::info!("persist_leader_turn: entry {} persisted", entry_id),
+            Err(e) => tracing::warn!(
+                "persist_leader_turn: insert entry {} failed: {}",
+                entry_id,
+                e
+            ),
+        }
+    });
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@
 ## [Unreleased]
 
 ### Fixed
+- **外部 Agent 列表栏移除与删除语义**：「从列表栏移除」此前只写前端内存态，前端重载即复活；配置中心删除只删 team.toml 段、不清 status.json，条目照显至重启。现移出态由后端共享态持有（应用生命周期内保持、重启即净；仅「时刻更晚的新门铃活动」或「配置中心保存」可撤销——遵循用户选择）；配置中心删除联动清理 status.json（briefs/report/memory.md 全留，追溯链不断），删除即从列表消失且重启不复活。
 - **外部 Agent 编排五处缺陷**（#69）：plugin 根解析收敛到 `plugin_root()` 单一权威并补 handoff 多源迁移，修复发布版配置中心空白与 `agent_dispatch` 必然失败；`agent_dispatch` 独立 180s 超时桶，文案改为实情口径（超时不取消任何东西、禁止诱导重投）；门铃事件增加 task_id 一致性闸，跨任务迟到事件不再串改状态与完工审计；派发失败统一落 `state=error` + `error_reason`，八个失败点收口，消除永久 `dispatched` 幽灵；status.json 读—改—写纳入同一把写锁、临时文件名带 pid+序号。
 
 ### Changed
