@@ -316,6 +316,11 @@ const en: Record<string, string> = {
   'sessionRail.menuRestore': 'Restore hidden projects ({0})',
   'sessionRail.restoreFailGeneric': 'Restore failed',
   'sessionRail.sortPrefsFailGeneric': 'Sort setting not saved, please retry',
+  'sessionRail.pin': 'Pin',
+  'sessionRail.unpin': 'Unpin',
+  'sessionRail.pinnedTag': 'Pinned',
+  'sessionRail.pinnedHint': 'This session is pinned to the top of its folder',
+  'sessionRail.pinFailGeneric': 'Pin setting not saved, please retry',
   'app.sessionGroups': 'Sessions',
   'settings.sessionGroups.limit': 'Sessions shown per group',
   'settings.sessionGroups.limitHint':

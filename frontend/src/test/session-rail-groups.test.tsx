@@ -18,6 +18,7 @@ const archiveSession = vi.fn()
 const setProjectBookmarks = vi.fn()
 const setProjectFolderArchived = vi.fn()
 const setSessionSortPrefs = vi.fn()
+const setPinnedSessions = vi.fn()
 
 vi.mock('../main-window/lib/api', () => ({
   listShelfSessions: () => listShelfSessions(),
@@ -27,6 +28,7 @@ vi.mock('../main-window/lib/api', () => ({
   setProjectBookmarks: (...args: unknown[]) => setProjectBookmarks(...args),
   setProjectFolderArchived: (...args: unknown[]) => setProjectFolderArchived(...args),
   setSessionSortPrefs: (...args: unknown[]) => setSessionSortPrefs(...args),
+  setPinnedSessions: (...args: unknown[]) => setPinnedSessions(...args),
   SESSION_GROUP_LIMIT_CHANGED_EVENT: 'nuphus:session-group-limit-changed',
 }))
 
@@ -73,6 +75,7 @@ function baseItems() {
 }
 
 /** 后端返回体夹具（字段名/形状与 Phase 1 契约一致） */
+let pinnedIds: string[] = []
 function shelfResponse(overrides: Record<string, unknown> = {}) {
   return {
     can_switch: true,
@@ -87,6 +90,8 @@ function shelfResponse(overrides: Record<string, unknown> = {}) {
     ],
     collapsed_limit: 6,
     sort_prefs: { group_order: 'bookmark', sort_key: 'updated' },
+    // 置顶会话（后端唯一权威：数组序即展示序）
+    pinned_sessions: pinnedIds,
     ...overrides,
   }
 }
@@ -117,6 +122,7 @@ describe('SessionRail 项目文件夹分组渲染', () => {
   beforeEach(() => {
     calls.length = 0
     activeId = 'cur'
+    pinnedIds = []
     // 「上次对话」记录（启动折叠策略的判据）逐例隔离：残留记录会改掉默认展开态
     localStorage.clear()
     listShelfSessions.mockReset().mockImplementation(async () => shelfResponse())
@@ -135,6 +141,11 @@ describe('SessionRail 项目文件夹分组渲染', () => {
         group_order: groupOrder,
         sort_key: sortKey,
       }))
+    // 置顶：命令镜像后端语义（写啥回啥），轮询夹具经 pinnedIds 跟随
+    setPinnedSessions.mockReset().mockImplementation(async (ids: string[]) => {
+      pinnedIds = ids
+      return ids
+    })
   })
 
   it('抽屉头部只有标题与收起按钮（文件夹管理入口已全部迁至项目中心）', async () => {
@@ -451,6 +462,7 @@ describe('外部会话切换 → 工作目录跟随', () => {
   beforeEach(() => {
     calls.length = 0
     activeId = 'cur'
+    pinnedIds = []
     localStorage.clear()
     listShelfSessions.mockReset().mockImplementation(async () => shelfResponse())
     vi.useFakeTimers()
@@ -500,5 +512,83 @@ describe('外部会话切换 → 工作目录跟随', () => {
     activeId = 'bm1-new'
     await vi.advanceTimersByTimeAsync(5000)
     expect(localStorage.getItem('nuphus:rail-last-project')).toBe('E:\\NUS\\1')
+  })
+})
+
+/**
+ * 组内置顶（issue #83 第一期）：点行内「置顶」→ `set_pinned_sessions` 落盘（后端是
+ * 唯一权威，轮询读数回流）→ 列表重排。置顶可逆、无确认弹窗，但失败必须有可感知提示。
+ */
+describe('SessionRail 组内置顶', () => {
+  /** 某组内会话标题的 DOM 顺序（.sr-group 按书签序：一号 / Nuphus / auto / 未分组） */
+  function railTitles(group: HTMLElement): (string | null)[] {
+    return Array.from(group.querySelectorAll('.sr-title-btn')).map(b => b.textContent)
+  }
+  const firstGroup = () => document.querySelectorAll('.sr-group')[0] as HTMLElement
+  /** 行内置顶按钮（抽屉收起态整块 aria-hidden，角色查询不可达，与既有用例同走元素查询） */
+  const pinBtn = (row: HTMLElement) => row.querySelector('.sr-pin-btn') as HTMLButtonElement
+  /** 行内置顶标记（复用 .sr-group-tag 中性弱标签） */
+  const hasPinTag = (row: HTMLElement) => !!row.querySelector('.sr-group-tag')
+
+  beforeEach(() => {
+    calls.length = 0
+    activeId = 'cur'
+    pinnedIds = []
+    localStorage.clear()
+    listShelfSessions.mockReset().mockImplementation(async () => shelfResponse())
+    switchSession.mockReset().mockResolvedValue(undefined)
+    renameSession.mockReset().mockResolvedValue(undefined)
+    archiveSession.mockReset().mockResolvedValue(undefined)
+    setPinnedSessions.mockReset().mockImplementation(async (ids: string[]) => {
+      pinnedIds = ids
+      return ids
+    })
+  })
+
+  it('点「置顶」→ set_pinned_sessions 落盘 → 该会话重排到所在组最上方并被标记', async () => {
+    renderRail()
+    await waitFor(() => expect(screen.getByText('一号旧会话')).toBeInTheDocument())
+    // 初始顺序：更新时间倒序（新会话在前）
+    expect(railTitles(firstGroup())).toEqual(['一号新会话', '一号旧会话'])
+
+    const row = screen.getByText('一号旧会话').closest('.sr-item') as HTMLElement
+    fireEvent.click(pinBtn(row))
+
+    // 整表交给后端（数组序即展示序），成功后以后端归一值为准
+    await waitFor(() => expect(setPinnedSessions).toHaveBeenCalledWith(['bm1-old']))
+    // 重排：一号组内第一位变成「一号旧会话」
+    await waitFor(() => expect(railTitles(firstGroup())[0]).toBe('一号旧会话'))
+    // 行内可感知的置顶标记
+    expect(hasPinTag(row)).toBe(true)
+    // 别组不受影响：Nuphus 组仍是原来的会话
+    const nuphus = document.querySelectorAll('.sr-group')[1] as HTMLElement
+    expect(railTitles(nuphus)).toEqual(['当前会话'])
+  })
+
+  it('点「取消置顶」→ 回到按更新时间排序的位置', async () => {
+    pinnedIds = ['bm1-old']
+    renderRail()
+    await waitFor(() => expect(railTitles(firstGroup())[0]).toBe('一号旧会话'))
+
+    const row = screen.getByText('一号旧会话').closest('.sr-item') as HTMLElement
+    fireEvent.click(pinBtn(row))
+
+    await waitFor(() => expect(setPinnedSessions).toHaveBeenCalledWith([]))
+    await waitFor(() => expect(railTitles(firstGroup())).toEqual(['一号新会话', '一号旧会话']))
+    expect(hasPinTag(row)).toBe(false)
+  })
+
+  it('置顶失败：回滚排序并给出可见提示（不静默、不留在错误位置）', async () => {
+    setPinnedSessions.mockReset().mockRejectedValue('pinFailGeneric')
+    renderRail()
+    await waitFor(() => expect(screen.getByText('一号旧会话')).toBeInTheDocument())
+
+    const row = screen.getByText('一号旧会话').closest('.sr-item') as HTMLElement
+    fireEvent.click(pinBtn(row))
+
+    await waitFor(() => expect(screen.getByText('置顶设置未保存，请重试')).toBeInTheDocument())
+    // 回滚：仍在原时间序位置，且没有置顶标记
+    expect(railTitles(firstGroup())).toEqual(['一号新会话', '一号旧会话'])
+    expect(hasPinTag(row)).toBe(false)
   })
 })
