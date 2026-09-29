@@ -163,7 +163,7 @@ pub fn read_model_context_window(
 /// Update model supports_vision in config.toml model entry.
 ///
 /// `source` 记录该值的来源：`Some("user")` = 用户在模型行内手动设定，
-/// 探测链路（post_configure 的 metadata/HTTP probe）必须让位于用户意图，
+/// 探测链路（model_metadata 后台发现的 metadata/HTTP probe）必须让位于用户意图，
 /// 否则用户今天勾上的视觉能力会在下次连接时被探测结果覆盖掉。
 /// `None` = 自动探测结果，不改动已有的来源标记。
 pub fn update_model_supports_vision(
