@@ -89,6 +89,9 @@ async fn resolve_references(refs: &[ChatReference]) -> String {
             "capture" => {
                 format!("[📷 用户附带图片，已保存至: {}]", r.id)
             }
+            // 聊天区选中文字追问：原文由 label 承载（前端 .ref-chip-label 只做显示截断）。
+            // 不落盘、不查文件——引用的就是这段文本本身，注入后即可针对它追问。
+            "quote" => r.label.clone(),
             _ => format!("[Unknown reference type: {}]", r.ref_type),
         };
         if !content.is_empty() {

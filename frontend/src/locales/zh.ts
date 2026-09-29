@@ -304,6 +304,12 @@ const zh: Record<string, string> = {
   'sessionRail.menuRestore': '恢复隐藏项目 ({0})',
   'sessionRail.restoreFailGeneric': '恢复失败',
   'sessionRail.sortPrefsFailGeneric': '排序设置未保存，请重试',
+  // ── 会话工作台：组内置顶（issue #83 第一期）──
+  'sessionRail.pin': '置顶',
+  'sessionRail.unpin': '取消置顶',
+  'sessionRail.pinnedTag': '置顶',
+  'sessionRail.pinnedHint': '该会话已置顶，固定在本文件夹最上方',
+  'sessionRail.pinFailGeneric': '置顶设置未保存，请重试',
   'app.sessionGroups': '会话',
   'settings.sessionGroups.limit': '每组显示会话数',
   'settings.sessionGroups.limitHint':
@@ -1118,6 +1124,7 @@ const zh: Record<string, string> = {
   'chat.llmErrorPrefix': 'LLM请求失败',
   'chat.retry': '重试',
   'chat.jumpToBottom': '回到底部',
+  'chat.quoteSelection': '引用这段',
   'chat.gracefulStop':
     'LLM请求失败：{0}\n已执行 {1} 步，执行结果已保留；本次不重试，请检查模型额度/连接后重新发送',
 

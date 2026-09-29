@@ -134,7 +134,7 @@ export function toAssetUrl(path: string | null | undefined): string | null {
 }
 
 /** 按扩展名推 MIME（含 gif/webp/svg）。 */
-export function guessImageMime(path: string): string {
+function guessImageMime(path: string): string {
   const ext = (path.split('.').pop() || '').toLowerCase()
   switch (ext) {
     case 'jpg':

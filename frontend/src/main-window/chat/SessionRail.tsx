@@ -14,6 +14,8 @@ import {
   IconFolderPlus,
   IconInfo,
   IconMoreHorizontal,
+  IconPin,
+  IconPinOff,
   IconPlus,
   IconTrash2,
   IconX,
@@ -31,6 +33,7 @@ import {
   setProjectBookmarks,
   setProjectFolderArchived,
   setSessionSortPrefs,
+  setPinnedSessions,
   createProjectChat,
   SESSION_GROUP_LIMIT_CHANGED_EVENT,
   type ProjectBookmark,
@@ -43,6 +46,7 @@ import {
   buildSessionGroups,
   normalizeGroupLimit,
   normalizePathKey,
+  normalizePinnedSessions,
   normalizeSessionSortPrefs,
   visibleGroupSessions,
   type SessionGroup,
@@ -174,6 +178,7 @@ function codeToI18n(code: string): string | null {
   if (code === 'archiveFailGeneric') return 'sessionRail.archiveFailGeneric'
   if (code === 'restoreFailGeneric') return 'sessionRail.restoreFailGeneric'
   if (code === 'sortPrefsFailGeneric') return 'sessionRail.sortPrefsFailGeneric'
+  if (code === 'pinFailGeneric') return 'sessionRail.pinFailGeneric'
   if (code === 'newChatSwitchFail') return 'sessionRail.newChatSwitchFail'
   if (code === 'browseDirFail') return 'sessionRail.newChatBrowseFail'
   if (code === 'no_project_dir') return 'sessionRail.createProjectFail'
@@ -566,6 +571,12 @@ export default function SessionRail({
    * 用「值相等则复用旧对象」避免每次轮询都触发重绘。
    */
   const [sortPrefs, setSortPrefs] = useState<SessionSortPrefs>(DEFAULT_SESSION_SORT_PREFS)
+  /**
+   * 置顶会话 id（组内置顶）：**唯一权威是后端 `pinned_sessions`**（落 preferences，
+   * 数组序即展示序，重启保持）；本地只在点击瞬间乐观更新，成功后以后端返回的
+   * 归一值为准。用「值相等则复用旧对象」避免每次轮询都触发重绘。
+   */
+  const [pinnedIds, setPinnedIds] = useState<string[]>([])
   const [canSwitch, setCanSwitch] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftTitle, setDraftTitle] = useState('')
@@ -712,6 +723,14 @@ export default function SessionRail({
             ? prev
             : nextPrefs,
         )
+        // 置顶会话同款处理：后端是唯一权威（数组序即展示序），读数变化立即重排；
+        // 值未变则复用旧对象不重绘（推进 groups 纯函数重算，不依赖列表签名）
+        const nextPinned = normalizePinnedSessions(r.pinned_sessions)
+        setPinnedIds(prev =>
+          prev.length === nextPinned.length && prev.every((id, i) => id === nextPinned[i])
+            ? prev
+            : nextPinned,
+        )
         // 签名守卫：id+active+标题+分钟桶/分组/上限未变则不 setItems——提炼/追加等后台写入只改
         // 消息内容与 updated_at，列表视图零重绘（消除轮询期闪动）；activeId 检测
         // 仍基于本轮新数据，不受影响。签名含顺序（数组序）与分组数据，新建/归档/改归属必然变化。
@@ -853,12 +872,12 @@ export default function SessionRail({
   )
 
   /**
-   * 分组视图：全部由返回体字段派生（组序维度 / 组内排序键 / 归档隐藏 / 未分组末位）。
+   * 分组视图：全部由返回体字段派生（组序维度 / 组内排序键 / 置顶 / 归档隐藏 / 未分组末位）。
    * 排序语义**只在 sessionGroups 纯函数里**（移动端 NavBar 复用同一实现），组件不重算。
    */
   const groups = useMemo(
-    () => buildSessionGroups(items, projects, archivedProjects, sortPrefs),
-    [items, projects, archivedProjects, sortPrefs],
+    () => buildSessionGroups(items, projects, archivedProjects, sortPrefs, pinnedIds),
+    [items, projects, archivedProjects, sortPrefs, pinnedIds],
   )
 
   /**
@@ -939,6 +958,30 @@ export default function SessionRail({
       }
     },
     [sortPrefs, refresh, flashNotice],
+  )
+
+  /**
+   * 置顶 / 取消置顶（组内置顶）：乐观更新（该会话立即顶到所在组最上方，追加在置顶区
+   * 末位）→ 落盘 → 以后端返回的归一值为准。失败回滚并给出可感知提示。
+   *
+   * 不加确认弹窗：置顶可逆、无副作用（只写 preferences，不碰会话数据/归属）。
+   * 执行中也不禁用：它不依赖 agent 槽，与归档/切换的守卫域不同。
+   */
+  const handleTogglePin = useCallback(
+    async (id: string) => {
+      const prev = pinnedIds
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+      setPinnedIds(next)
+      try {
+        const applied = await setPinnedSessions(next)
+        setPinnedIds(normalizePinnedSessions(applied))
+        void refresh()
+      } catch {
+        setPinnedIds(prev)
+        flashNotice('pinFailGeneric')
+      }
+    },
+    [pinnedIds, refresh, flashNotice],
   )
 
   /**
@@ -1287,11 +1330,12 @@ export default function SessionRail({
     setCollapsedGroups(m => ({ ...m, [key]: !m[key] }))
   }, [])
 
-  /** 渲染单条会话行（组内复用：L/W/C 标识 + 标题 + 相对时间 + 行内重命名/归档） */
+  /** 渲染单条会话行（组内复用：L/W/C 标识 + 标题 + 相对时间 + 行内重命名/归档/置顶） */
   const renderSessionItem = (it: ShelfSessionItem, dirAlreadyCurrent: boolean) => {
     // 草稿对话（新建项目文件夹后尚未开说的那条）：标题文案固定为「新建对话」，
     // 且不提供行内重命名/归档——重命名会写 sessions 行，违反「草稿不落库」。
     const titleText = it.draft ? t('sessionRail.newChat') : it.title || t('sessionRail.untitled')
+    const pinned = pinnedIds.includes(it.id)
     const modeText =
       it.mode === 'workflow'
         ? t('input.mode.workflow')
@@ -1380,11 +1424,27 @@ export default function SessionRail({
                 {t('sessionRail.current')}
               </span>
             )}
+            {/* 置顶标记（组内置顶，恒在组最上方）：复用中性弱标签样式，与「当前」
+                的 accent 徽标区分——一个是状态位置，一个是会话高亮 */}
+            {pinned && (
+              <span className="sr-group-tag" title={t('sessionRail.pinnedHint')}>
+                {t('sessionRail.pinnedTag')}
+              </span>
+            )}
             {/* 行尾相对时间：hover 时淡出让位给操作按钮，避免按钮挤动布局 */}
             <span className="sr-time">{relativeTime(it.updated_at, t)}</span>
             {/* 草稿对话无行内操作：重命名会写 sessions 行（违反不落库），归档对内存态无意义 */}
             {!it.draft && (
               <span className="sr-actions">
+                <button
+                  type="button"
+                  className="sr-edit-btn sr-pin-btn"
+                  onClick={() => void handleTogglePin(it.id)}
+                  title={pinned ? t('sessionRail.unpin') : t('sessionRail.pin')}
+                  aria-label={pinned ? t('sessionRail.unpin') : t('sessionRail.pin')}
+                >
+                  {pinned ? <IconPin size={12} /> : <IconPinOff size={12} />}
+                </button>
                 <button
                   type="button"
                   className="sr-edit-btn"

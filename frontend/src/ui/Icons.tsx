@@ -75,6 +75,7 @@ export {
   HardDrive as IconHardDrive,
   AppWindow as IconAppWindow,
   Radio as IconRadio,
+  Quote as IconQuote,
   Settings as IconSettings,
   MoreHorizontal as IconMoreHorizontal,
   ArchiveRestore as IconRestore,
