@@ -14,6 +14,7 @@ pub mod config;
 pub mod custom_agent;
 pub mod desktop;
 pub mod dict_ocr;
+pub mod dropped_files;
 pub mod export_log;
 pub mod external;
 pub mod hud;

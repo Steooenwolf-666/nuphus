@@ -24,6 +24,7 @@ import { StopChoiceDialog } from '../../ui/StopChoiceDialog'
 import { VoiceButton, type VoiceButtonHandle } from './VoiceButton'
 import { useLanguage } from '../../locales'
 import ReferenceBar from './ReferenceBar'
+import { filesToAttachments, isImageName } from './attachments'
 import type { ChatReference, PendingImage, PendingFile, TurnMeta } from '../../core/types'
 import { resolveTurnCalls, resolveTurnDuration } from '../../core/types'
 import {
@@ -357,44 +358,22 @@ export function ChatInputBar({
     })()
   }, [])
 
-  function isImagePath(p: string): boolean {
-    const ext = p.split('.').pop()?.toLowerCase()
-    return (
-      ext === 'png' ||
-      ext === 'jpg' ||
-      ext === 'jpeg' ||
-      ext === 'gif' ||
-      ext === 'webp' ||
-      ext === 'bmp'
-    )
+  /** 拖拽内容是否含文件——只有含文件才拦截，纯文本拖拽（如选中文字）不受影响。 */
+  function hasFiles(e: DragEvent): boolean {
+    const types = e.dataTransfer?.types
+    if (!types) return false
+    return Array.from(types).includes('Files')
   }
-  function partitionPaths(paths: string[]): { imagePaths: string[]; otherPaths: string[] } {
-    const imagePaths: string[] = []
-    const otherPaths: string[] = []
-    for (const p of paths) {
-      if (isImagePath(p)) imagePaths.push(p)
-      else otherPaths.push(p)
+
+  /** File[] → 引用栏条目（图片与文档统一入口）。 */
+  async function attachFiles(files: File[]) {
+    const { entries, failures } = await filesToAttachments(files)
+    for (const entry of entries) {
+      if (entry.kind === 'image') onImageAttachRef.current(entry.image)
+      else onFileAttachRef.current?.(entry.file)
     }
-    return { imagePaths, otherPaths }
-  }
-  async function handleDroppedImages(
-    paths: string[],
-    currentInput: string,
-    setInput: (v: string) => void,
-    setDrag: (v: boolean) => void,
-  ) {
-    for (const p of paths) {
-      try {
-        const { invoke } = await import('@tauri-apps/api/core')
-        const name = p.split('\\').pop()?.split('/').pop() || p
-        const raw = await invoke<{ base64: string; mime: string }>('read_image_base64', {
-          imagePath: p,
-        })
-        const dataUrl = `data:${raw.mime || 'image/png'};base64,${raw.base64}`
-        onImageAttachRef.current({ name, dataUrl })
-      } catch (e) {
-        console.error('[DragDrop] read image failed:', p, e)
-      }
+    if (failures.length > 0) {
+      console.error('[Drop] 附件添加失败:', failures.join('; '))
     }
   }
 
@@ -565,55 +544,58 @@ export function ChatInputBar({
   // 执行中不禁用输入框——用户可随时输入消息（发送 = 追加指令，与移动端一致）
   const inputDisabled = workflowLocked
 
-  // ── 拖拽文件：图片走 processImageAttachment，其他插路径 ──
+  // ── 拖拽文件：HTML5 drop 单一通道（图片/文档统一进引用栏）──
+  // 不再使用 Tauri 原生 onDragDropEvent：wry 会先 SetAllowExternalDrop(false) 关掉
+  // 浏览器通道、再自行注册 OLE target，一旦该注册因 webview 子窗口时序失效，
+  // 原生事件与浏览器事件会同时落空（拖拽彻底无响应且静默）。HTML5 通道由浏览器
+  // 内核保证，不依赖 wry 私有注册时机。
   useEffect(() => {
-    let unlisten: (() => void) | null = null
-    let cancelled = false
-
-    import('@tauri-apps/api/window')
-      .then(({ getCurrentWindow }) => {
-        if (cancelled) return
-        getCurrentWindow()
-          .onDragDropEvent(event => {
-            const type = event.payload.type
-            if (type === 'enter' || type === 'over') {
-              setIsDragOver(true)
-            } else if (type === 'leave') {
-              setIsDragOver(false)
-            } else if (type === 'drop') {
-              setIsDragOver(false)
-              const paths = event.payload.paths as string[]
-              if (paths && paths.length > 0) {
-                // Check each path — image files are processed via processImageAttachment
-                const { imagePaths, otherPaths } = partitionPaths(paths)
-                if (imagePaths.length > 0) {
-                  handleDroppedImages(
-                    imagePaths,
-                    inputRef.current,
-                    onInputChangeRef.current,
-                    setIsDragOver,
-                  )
-                }
-                if (otherPaths.length > 0) {
-                  for (const p of otherPaths) {
-                    const name = p.split('\\').pop()?.split('/').pop() || p
-                    onFileAttachRef.current?.({ path: p, name })
-                  }
-                }
-              }
-            }
-          })
-          .then(fn => {
-            unlisten = fn
-          })
-      })
-      .catch(err => {
-        console.error('[DragDrop] 拖拽监听注册失败（Tauri window API 不可用）:', err)
-      })
-
+    let depth = 0
+    const onDragEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      depth += 1
+      setIsDragOver(true)
+    }
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+    }
+    const onDragLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      depth = Math.max(0, depth - 1)
+      if (depth === 0) setIsDragOver(false)
+    }
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return
+      e.preventDefault()
+      depth = 0
+      setIsDragOver(false)
+      const files = Array.from(e.dataTransfer?.files ?? [])
+      if (files.length > 0) void attachFiles(files)
+    }
+    // 拖放默认行为（未 preventDefault 时浏览器会把文件当链接/文本处理）必须拦掉
+    const onWindowDragOver = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault()
+    }
+    const onWindowDrop = (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault()
+    }
+    const opts = { capture: true as const }
+    window.addEventListener('dragenter', onDragEnter, opts)
+    window.addEventListener('dragover', onDragOver, opts)
+    window.addEventListener('dragleave', onDragLeave, opts)
+    window.addEventListener('drop', onDrop, opts)
+    window.addEventListener('dragover', onWindowDragOver, opts)
+    window.addEventListener('drop', onWindowDrop, opts)
     return () => {
-      cancelled = true
-      unlisten?.()
+      window.removeEventListener('dragenter', onDragEnter, opts)
+      window.removeEventListener('dragover', onDragOver, opts)
+      window.removeEventListener('dragleave', onDragLeave, opts)
+      window.removeEventListener('drop', onDrop, opts)
+      window.removeEventListener('dragover', onWindowDragOver, opts)
+      window.removeEventListener('drop', onWindowDrop, opts)
     }
   }, [])
 
@@ -756,7 +738,7 @@ export function ChatInputBar({
                       const paths = result.paths || []
                       for (const path of paths) {
                         const name = path.split('\\').pop()?.split('/').pop() || path
-                        if (isImagePath(path)) {
+                        if (isImageName(name)) {
                           const raw = await invoke<{ base64: string; mime: string }>(
                             'read_image_base64',
                             { imagePath: path },
@@ -854,13 +836,26 @@ export function ChatInputBar({
                     const { open } = await import('@tauri-apps/plugin-dialog')
                     try {
                       const selected = await open({ multiple: true })
-                      if (selected && Array.isArray(selected)) {
-                        const paths = selected as string[]
-                        onInputChange(
-                          input + (input ? '\n' : '') + paths.map(p => `[附件: ${p}]`).join('\n'),
-                        )
-                      } else if (selected) {
-                        onInputChange(input + (input ? '\n' : '') + `[附件: ${selected}]`)
+                      if (!selected) return
+                      // 与拖拽/图片入口同一条通道：一律进引用栏，不再把 [附件: path] 拼进输入框
+                      const paths = Array.isArray(selected)
+                        ? (selected as string[])
+                        : [selected as string]
+                      for (const p of paths) {
+                        const name = p.split('\\').pop()?.split('/').pop() || p
+                        if (isImageName(name)) {
+                          const { invoke } = await import('@tauri-apps/api/core')
+                          const raw = await invoke<{ base64: string; mime: string }>(
+                            'read_image_base64',
+                            { imagePath: p },
+                          )
+                          onImageAttachRef.current({
+                            name,
+                            dataUrl: `data:${raw.mime || 'image/png'};base64,${raw.base64}`,
+                          })
+                        } else {
+                          onFileAttachRef.current?.({ path: p, name })
+                        }
                       }
                     } catch (e) {
                       console.error('文件选择失败:', e)

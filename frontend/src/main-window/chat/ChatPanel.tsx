@@ -49,6 +49,7 @@ import { friendlyIpcError } from '../lib/ipcError'
 import { orderProviderModels, readRecentModels, rememberRecentModel } from './modelPopupOrder'
 import { getProviderFavorites } from '../lib/favorites'
 import { buildQuoteRef } from './messageSelection'
+import { filesToAttachments } from './attachments'
 import { focusInputAtEnd } from './inputFocus'
 import { RefIcon } from './ReferenceBar'
 import { WelcomeScreen } from './WelcomeScreen'
@@ -1390,29 +1391,19 @@ export function ChatPanel({
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (file.type.startsWith('image/')) {
-      const reader = new FileReader()
-      reader.onload = () => {
-        const dataUrl = reader.result as string
-        setPendingImages(prev => [...prev, { dataUrl, name: file.name }])
-        setInput(prev => {
-          const indicator = `[图片 ${file.name}]`
-          return prev ? prev + '\n' + indicator : indicator
-        })
-        autoResize()
+    // 与拖拽同一条通道：图片/文档一律进引用栏，不再把非图片内容读成文本塞进输入框。
+    void (async () => {
+      try {
+        const { entries, failures } = await filesToAttachments([file])
+        for (const entry of entries) {
+          if (entry.kind === 'image') handleImageAttach(entry.image)
+          else handleFileAttach(entry.file)
+        }
+        if (failures.length > 0) hudUpdate(failures.join('; '), 'error')
+      } catch (e) {
+        hudUpdate(e instanceof Error ? e.message : String(e), 'error')
       }
-      reader.readAsDataURL(file)
-    } else {
-      // Non-image file → keep existing behavior: readAsText and append to input
-      const reader = new FileReader()
-      reader.onload = () => {
-        const content = reader.result as string
-        const header = `[${file.name}]\n`
-        setInput(prev => (prev ? prev + '\n' + header + content : header + content))
-        autoResize()
-      }
-      reader.readAsText(file)
-    }
+    })()
     e.target.value = ''
   }
 
