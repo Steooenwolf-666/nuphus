@@ -102,8 +102,25 @@ impl SkillRegistry {
             return Err(format!("source path does not exist: {}", source));
         }
 
-        let manifest: SkillManifest = Self::read_manifest(src)
-            .ok_or_else(|| format!("parse skill.json failed in {}", source))?;
+        // 与 git 安装同闸门：无（或损坏）skill.json 时，允许从 SKILL.md frontmatter /
+        // 目录名合成 manifest（本地目录名 = 真实技能名，兜底语义有意义，与 git 临时
+        // 目录名兜底不同）。source 是用户自己的目录，失败绝不 remove_dir_all。
+        let manifest: SkillManifest = match Self::read_manifest(src) {
+            Some(m) => m,
+            None => {
+                if !src.join("SKILL.md").exists() {
+                    return Err(format!(
+                        "无法从目录安装技能: {}\n\
+                         skill.json 缺失或无法解析，且技能目录根没有 SKILL.md 可用于合成。\
+                         Nuphus 要求 SKILL.md 位于技能目录根；若这是一个包含多个技能的仓库根\
+                         （如 Claude Code plugin 布局，技能在 skills/<分类>/<技能名>/ 下），\
+                         请先取出目标技能目录（连同其 SKILL.md 与 data/）再安装。",
+                        source
+                    ));
+                }
+                self.synthesize_manifest(src)?
+            }
+        };
 
         Self::validate_name(&manifest.name)?;
 
@@ -122,6 +139,18 @@ impl SkillRegistry {
 
         self.copy_dir(src, &dest)
             .map_err(|e| format!("copy skill dir failed: {}", e))?;
+
+        // 消费端探针：装完立即用读取路径读回一次（get_skill_md 不递归子目录，
+        // 是 skill_read / query 的唯一正文通道）。读不到 = 「列表可见但正文不可达」
+        // 的空壳（PR #102 修的那类病），当场回滚，不交付半成品。
+        if self.get_skill_md(&manifest.name).is_none() {
+            let _ = std::fs::remove_dir_all(&dest);
+            return Err(format!(
+                "技能 '{}' 安装后无法读取 SKILL.md（已回滚）。请检查技能目录结构：\
+                 SKILL.md 必须位于技能目录根。",
+                manifest.name
+            ));
+        }
 
         Ok(manifest)
     }
@@ -752,6 +781,62 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn install_from_path_synthesizes_from_skill_md() {
+        // 本地目录无 skill.json、仅 SKILL.md frontmatter → 合成 manifest 安装成功
+        //（git 安装的对应能力，本地入口此前缺失，PR #102 报错指引指的就是这条路）
+        let dir = std::env::temp_dir().join(format!("nuphus_local_synth_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("SKILL.md"),
+            "---\nname: local-synth-test\ndescription: From local dir\n---\n# body",
+        )
+        .unwrap();
+
+        let reg = SkillRegistry::new();
+        let m = reg
+            .install_from_path(dir.to_str().unwrap())
+            .expect("local dir with SKILL.md should synthesize and install");
+        assert_eq!(m.name, "local-synth-test");
+
+        let dest = SkillRegistry::community_dir().join("local-synth-test");
+        assert!(
+            dest.join("skill.json").exists(),
+            "synthesized skill.json should be copied"
+        );
+        assert!(dest.join("SKILL.md").exists());
+
+        let _ = reg.remove("local-synth-test");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn install_from_path_rejects_repo_root_without_skill_md() {
+        // Claude Code plugin 型布局的仓库根：无 skill.json 也无根 SKILL.md → 拒绝并引导。
+        // 同时断言：源目录是用户数据，失败路径绝不清理源目录。
+        let dir = std::env::temp_dir().join(format!("nuphus_local_reject_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let nested = dir.join("skills").join("engineering").join("thing");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("SKILL.md"), "---\nname: thing\n---\n# body").unwrap();
+
+        let reg = SkillRegistry::new();
+        let err = reg
+            .install_from_path(dir.to_str().unwrap())
+            .expect_err("repo root without SKILL.md must be rejected");
+        assert!(
+            err.contains("SKILL.md"),
+            "error should mention SKILL.md: {err}"
+        );
+        assert!(dir.exists(), "source dir must not be deleted on failure");
+        assert!(
+            !SkillRegistry::community_dir().join("thing").exists(),
+            "rejected install must not leave a half-installed skill"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 fn tokenize(text: &str) -> Vec<String> {

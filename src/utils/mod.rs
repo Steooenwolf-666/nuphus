@@ -2311,7 +2311,9 @@ mod tests {
             "只读资产表不应为空（build.rs 没收到资产？）"
         );
 
-        // 绝不能出现在表里的前缀：这些是用户/运行时生成的状态，git 也是忽略的
+        // 绝不能出现在表里的前缀：这些是用户/运行时生成的状态，git 也是忽略的。
+        // 注：knowledge/nuphus-self/ 是随包政策文档（git 跟踪），已从本清单移除——
+        // 它是允许内嵌的只读资产，Agent 提示词在发布版按锚点路径读它。
         const FORBIDDEN: &[&str] = &[
             "workflows/",
             "skills/community/",
@@ -2321,7 +2323,6 @@ mod tests {
             "ui-maps/im/",
             "ui-maps/media/",
             "ui-maps/terminal/",
-            "knowledge/nuphus-self/",
         ];
         for (rel, bytes) in assets {
             for bad in FORBIDDEN {

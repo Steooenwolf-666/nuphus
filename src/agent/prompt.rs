@@ -144,7 +144,7 @@ Constitution > Safety > Evidence > Goal > System > Efficiency > Style
 禁止"功能通了"当作"闭环完成"。
 
 ## 构建与验证
-验证 / 测试 前必读 `prompts/build-verification-policy.md`，重审任务指令需求，确认与设计意图对齐。
+验证 / 测试 前必读 `plugin/knowledge/nuphus-self/build-verification-policy.md`，重审任务指令需求，确认与设计意图对齐。
 **验证四原则**：必要性（待办任务继承依赖）· 最小化（只验证本次改动）· 时间成本（选轻量手段）· 无后续（不产生待办债务）。
 "#;
 
@@ -451,7 +451,7 @@ pub fn build_l2_leader() -> String {
 4. **反模式** — 禁止清单
 5. **输出要求** — 产物形态 + 验证证据
 
-首次使用某 goal_type 或审核不通过时，查阅 `prompts/task-templates.md`。
+首次使用某 goal_type 或审核不通过时，查阅 `plugin/knowledge/nuphus-self/task-templates.md`。
 
 ### 产出审核
 - 必须读关键路径代码验证，禁止仅凭编译通过接受
@@ -471,7 +471,7 @@ pub fn build_l2_leader() -> String {
 截图 / OCR 完成后立即删除 `$env:TEMP` 临时 BMP，禁止遗留临时文件。
 
 ## 8. 情绪响应
-用户明显不满 → 读 `prompts/emotion_guide.md` 按策略执行，禁止凭直觉应对；
+用户明显不满 → 读 `plugin/knowledge/nuphus-self/emotion_guide.md` 按策略执行，禁止凭直觉应对；
 **若文件缺失 → 声明盲区，按通用原则执行：认错从短，不重述过程。**认错简短，避免上下文噪声。
 "#
         .to_string()
@@ -1466,5 +1466,85 @@ mod tests {
         let missing = workflow_desktop_capabilities(&serde_json::to_string(&[mouse]).unwrap());
         assert!(missing.contains("当前未提供完整桌面语义工具链"));
         assert!(!missing.contains("当前桌面入口："));
+    }
+
+    /// 反引号路径引用提取：含 `/`、以 .md 结尾、无模板占位符的段。
+    /// 只认政策文档类引用（.md）；运行时生成态路径（workflows/*.json 等）是另一类契约，不在本测试范围。
+    fn extract_md_refs(text: &str) -> Vec<String> {
+        text.split('`')
+            .map(str::trim)
+            .filter(|seg| seg.contains('/') && seg.ends_with(".md") && !seg.contains('{'))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// 提示词中的政策文档引用必须真实可达：仓库文件存在，且 `plugin/` 前缀引用
+    /// 必须已进 build.rs 随包资产表（发布版二进制可达）。
+    ///
+    /// 历史事故（本测试的由来）：
+    /// - prompt.rs 引用的 `plugin/knowledge/nuphus-self/build-verification-policy.md`
+    ///   被删除后引用未同步，死链写进了每个 Agent 的系统提示词；
+    /// - `prompts/` 三个政策文档从未进资产表，发布版里相关引用一直断，
+    ///   只因发布版 Agent 没人真去读而长期未暴露。
+    /// 本测试把「删/移文档必须同步改引用 + 进资产表」从人记变成机查。
+    /// 覆盖面：L0_FRAMEWORK / L0_RUNTIME / build_l2_leader / WORKAGENT_L0 /
+    /// WORKAGENT_L2_COMMON / build_exec_prompt（build_workagent_prompt 无 .md 引用，
+    /// 其静态部分由 WORKAGENT_L0 / WORKAGENT_L2_COMMON 覆盖）。
+    #[test]
+    fn prompt_policy_doc_refs_resolve_in_dev_and_release() {
+        let templates = vec![
+            ("L0_FRAMEWORK", L0_FRAMEWORK.to_string()),
+            ("L0_RUNTIME", L0_RUNTIME.to_string()),
+            ("build_l2_leader", build_l2_leader()),
+            (
+                "build_exec_prompt",
+                build_exec_prompt(
+                    "test-model",
+                    None,
+                    None,
+                    "",
+                    GoalType::ScriptingExec,
+                    "",
+                    None,
+                    false,
+                    None,
+                ),
+            ),
+            ("WORKAGENT_L0", WORKAGENT_L0.to_string()),
+            ("WORKAGENT_L2_COMMON", WORKAGENT_L2_COMMON.to_string()),
+        ];
+
+        let mut refs: Vec<(String, String)> = Vec::new();
+        for (name, body) in &templates {
+            for r in extract_md_refs(body) {
+                refs.push((name.to_string(), r));
+            }
+        }
+        assert!(
+            !refs.is_empty(),
+            "未提取到任何 .md 引用——提取逻辑或模板结构变了，检查本测试"
+        );
+
+        let bundled: std::collections::HashSet<&str> = crate::utils::bundled_plugin_assets()
+            .iter()
+            .map(|(k, _)| *k)
+            .collect();
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("src/ 应有父目录（仓库根）");
+
+        for (tpl, r) in &refs {
+            if let Some(rel) = r.strip_prefix("plugin/") {
+                assert!(
+                    bundled.contains(rel),
+                    "提示词模板 {tpl} 引用的 {r} 不在随包资产表——发布版二进制读不到它（死链）"
+                );
+            } else {
+                assert!(
+                    repo_root.join(r).is_file(),
+                    "提示词模板 {tpl} 引用的 {r} 在仓库中不存在（死链）"
+                );
+            }
+        }
     }
 }

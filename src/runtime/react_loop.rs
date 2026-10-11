@@ -1666,4 +1666,4 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
 }
 
 // detect_frustration removed — replaced by LLM thinking-based emotion detection.
-// Trigger: src/agent/prompt.rs (build_l2_leader) instructs LLM to read prompts/emotion_guide.md when needed.
+// Trigger: src/agent/prompt.rs (build_l2_leader) instructs LLM to read plugin/knowledge/nuphus-self/emotion_guide.md when needed.
