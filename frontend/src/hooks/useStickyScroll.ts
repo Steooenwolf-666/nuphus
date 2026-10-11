@@ -9,8 +9,11 @@
 // 自动下拉也无法在流式下稳定跟住。新实现改为直接监听手势事件，跟随态只有手势一个入口：
 //
 //   1. 贴底跟随：followKey 变化（新消息 / 流式 delta / 执行步骤更新）且 followRef 为
-//      true → 瞬移到底（直接赋值 scrollTop）。**不用 smooth**：smooth 动画逐帧也会改
-//      scrollTop，在流式高频增长下必然与内容增长打架（「相互争抢」的一半根因）。
+//      true → 贴底。不用 CSS smooth：smooth 动画逐帧也会改 scrollTop，在流式高频增长下
+//      必然与内容增长打架（「相互争抢」的一半根因）。对话窗（smoothPull）改用 **rAF
+//      追踪循环**：每帧重测底部目标、按比例收拢剩余距离——内容边涨边追、永远追得上，
+//      流式「瞬移跳动」变连续滑移；任一帧用户手势解锁（B2/B3）后下一帧立即停。
+//      严格语义（执行追踪面板）与程序性回填仍瞬移。
 //   2. 手势 → 状态（唯一的状态改写入口）：
 //      · wheel deltaY < 0（鼠标上滚）→ 立即 follow=false —— 同步改写，不等 scroll 事件、
 //        不等任何计时器、不等防抖（B2）；
@@ -48,6 +51,18 @@ const AT_BOTTOM_EPS_PX = 4
 const GESTURE_END_DEBOUNCE_MS = 120
 
 /**
+ * 平滑贴底追踪（smoothPull，仅对话窗启用）参数。
+ *
+ * 为什么不用 `el.scrollTo({ behavior: 'smooth' })`：CSS smooth 动画由浏览器接管滚动，
+ * 动画期间逐帧写 scrollTop，与流式内容高频增长互相打架——目标每帧都在变而动画不重测
+ * （0.2.27「自动下拉丢失」的根因之一）。rAF 追踪每帧重测底部目标、按比例收拢剩余距离：
+ * 内容边涨边追、永远追得上；任意一帧都可被用户手势打断（B2/B3 语义不受影响）。
+ */
+const CHASE_RATE = 0.22
+/** 剩余距离低于此值直接落底收尾（免得无限逼近拖尾） */
+const CHASE_EPS_PX = 1.5
+
+/**
  * 「未经对冲的 scrollTop 下降」判定阈值（px）：作为方向噪声地板，抹掉亚像素抖动，
  * 避免把一次浮点舍入读成用户上滚。它是**方向**阈值，不是位置容差。
  */
@@ -75,6 +90,13 @@ export interface StickyScrollOptions {
    * 内容增长本身依旧不恢复跟随（向下滚动是唯一恢复入口），上滚依旧立即解锁。
    */
   bottomZonePx?: number
+  /**
+   * 平滑贴底（对话窗 UI 体验项）：true 时贴底跟随与回底按钮改走 rAF 追踪循环
+   * （每帧向底部收拢、目标每帧重测），流式增长的「瞬移跳动」变为连续滑移；
+   * 回底按钮点击也是平滑过渡。false / 缺省 = 瞬移（执行追踪面板等严格语义路径，
+   * 以及上方全部回归用例的既有行为，零改动）。
+   */
+  smoothPull?: boolean
 }
 
 export interface StickyScroll {
@@ -92,7 +114,7 @@ export interface StickyScroll {
    * 面板被顶离底部（2026-10-09 实测事故）。
    */
   onScroll: () => boolean
-  /** 点击回底按钮：立即恢复跟随并瞬移到底 */
+  /** 点击回底按钮：恢复跟随并平滑滑到当前底部（smoothPull 关闭时为瞬移） */
   jumpToBottom: () => void
   /** 立即恢复跟随并瞬移到底：新轮次 execution_started / 任务完成瞬间补拉 / 模式切换（程序调用方） */
   followReset: () => void
@@ -139,6 +161,8 @@ export function useStickyScroll(followKey: unknown, options?: StickyScrollOption
   const lastUserDirRef = useRef<'up' | 'down' | null>(null)
   /** 贴底区半径：0 = 严格语义（默认）；> 0 = 对话窗宽容语义（见 StickyScrollOptions） */
   const zonePx = options?.bottomZonePx ?? 0
+  /** 平滑贴底追踪：仅对话窗显式开启；关闭时全部贴底路径维持瞬移（既有行为） */
+  const smoothPull = options?.smoothPull ?? false
 
   /** 切换跟随态：state 与 ref 同步置位（单一入口，防两处漂移） */
   const setFollowingMode = useCallback((next: boolean) => {
@@ -224,6 +248,40 @@ export function useStickyScroll(followKey: unknown, options?: StickyScrollOption
       writeScrollTop(next, Math.max(0, next.scrollHeight - next.clientHeight))
     })
   }, [writeScrollTop])
+
+  // ── 平滑贴底追踪（smoothPull 专用）──────────────────────────────
+  // 每帧向底部收拢剩余距离的 CHASE_RATE 比例；目标每帧重测（scrollHeight 随流式增长，
+  // 追得上）；剩余 ≤ eps 直接落底收尾。用户手势解锁（B2/B3）后 followingRef=false，
+  // 下一帧自查退出——与手势语义零耦合。所有写入走 writeScrollTop（程序对冲照常生效）。
+  const chaseFrameRef = useRef(0)
+
+  const stopChase = useCallback(() => {
+    if (chaseFrameRef.current) {
+      cancelAnimationFrame(chaseFrameRef.current)
+      chaseFrameRef.current = 0
+    }
+  }, [])
+
+  const chaseToBottom = useCallback(() => {
+    stopChase()
+    const step = () => {
+      chaseFrameRef.current = 0
+      const el = scrollRef.current
+      if (!el || !followingRef.current) return
+      const target = Math.max(0, el.scrollHeight - el.clientHeight)
+      const remaining = target - el.scrollTop
+      if (remaining <= CHASE_EPS_PX) {
+        writeScrollTop(el, target)
+        return
+      }
+      writeScrollTop(el, el.scrollTop + remaining * CHASE_RATE)
+      chaseFrameRef.current = requestAnimationFrame(step)
+    }
+    chaseFrameRef.current = requestAnimationFrame(step)
+  }, [stopChase, writeScrollTop])
+
+  // 卸载时掐掉在途动画帧
+  useEffect(() => stopChase, [stopChase])
 
   // ── 手势监听：挂在 window 捕获阶段 + 按 target 归属过滤 ──
   // 不挂在元素上：消费方的 scrollRef 是稳定对象、容器元素可能延迟出现（执行面板先
@@ -323,11 +381,17 @@ export function useStickyScroll(followKey: unknown, options?: StickyScrollOption
     }
   }, [handleWheel, handlePointerDown, handleKeyDown, handlePointerUp, clearGestureEndTimer])
 
-  // followKey 变化（新消息 / 流式 delta / 执行步骤更新）：仅跟随态贴底，解锁态不拽回
+  // followKey 变化（新消息 / 流式 delta / 执行步骤更新）：仅跟随态贴底，解锁态不拽回。
+  // smoothPull：走 rAF 追踪（内容边涨边追，流式跳动变连续滑移）；瞬移路径保持原样
+  // （严格语义面板 + 全部既有回归用例行为零改动）。
   useEffect(() => {
     if (!followingRef.current) return
-    scrollToBottom()
-  }, [followKey, scrollToBottom])
+    if (smoothPull) {
+      chaseToBottom()
+    } else {
+      scrollToBottom()
+    }
+  }, [followKey, scrollToBottom, chaseToBottom, smoothPull])
 
   /** 返回值语义见 StickyScroll.onScroll：true = 这一帧按「用户操作」处理 */
   const onScroll = useCallback((): boolean => {
@@ -386,13 +450,31 @@ export function useStickyScroll(followKey: unknown, options?: StickyScrollOption
 
   /**
    * 立即恢复跟随并瞬移到底 —— 程序调用方出口（新轮次 / 任务完成补拉 / 模式切换 /
-   * 回底按钮 / 进场）。同一实现三个名字：jumpToBottom（点击）、followReset（事件）、
-   * enterPanel（进场），谁也别复制谁的逻辑。
+   * 进场）。同一实现三个名字，谁也别复制谁的逻辑。**保持瞬移**：这些是状态切换
+   * 的确定性落点（进场/新轮次用户预期直接到底），不引入动画。
    */
   const followReset = useCallback(() => {
+    // 程序性回填语义是「确定性落底」：先掐掉可能在途的平滑追踪帧，避免它带着旧目标
+    // 多写一帧（写入本身无害——writeScrollTop 同值早退——但语义上不该存在两条写路径并发）。
+    stopChase()
     setFollowingMode(true)
     scrollToBottom()
-  }, [scrollToBottom, setFollowingMode])
+  }, [scrollToBottom, setFollowingMode, stopChase])
+
+  /**
+   * 点击回底按钮：恢复跟随 + 平滑滑到当前底部（smoothPull 语义；非 smoothPull 时
+   * 与 followReset 同为瞬移）。与 followReset 分开成两个回调的理由：按钮点击是
+   * 用户可见的导航动作，平滑过渡是明确的体验预期；程序性回填（进场 / 新轮次 /
+   * 强制终止后的补拉）要的是确定性落点，不掺动画。
+   */
+  const jumpToBottom = useCallback(() => {
+    setFollowingMode(true)
+    if (smoothPull) {
+      chaseToBottom()
+    } else {
+      scrollToBottom()
+    }
+  }, [chaseToBottom, scrollToBottom, setFollowingMode, smoothPull])
 
   /**
    * 程序性调整 scrollTop：把当前视野锚回原处（内容在视野**上方**增删时）。
@@ -415,7 +497,7 @@ export function useStickyScroll(followKey: unknown, options?: StickyScrollOption
     scrollRef,
     showJumpButton,
     onScroll,
-    jumpToBottom: followReset,
+    jumpToBottom,
     followReset,
     enterPanel: followReset,
     nudgeScrollTop,

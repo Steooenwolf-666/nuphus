@@ -500,3 +500,120 @@ describe('bottomZonePx 对话窗宽容语义', () => {
     expect(result.current.showJumpButton).toBe(true) // 非用户手势：位置变化不得恢复
   })
 })
+
+/**
+ * smoothPull —— 平滑贴底追踪（2026-10-11，仅对话窗启用）
+ *
+ * rAF 追踪循环：每帧向底部收拢剩余距离的 CHASE_RATE、目标每帧重测。测试用 rAF stub
+ * 手动驱动帧（jsdom 无布局、也无渲染帧循环），断言的是「分帧收拢 + 可被手势打断 +
+ * 内容增长追得上」的状态机行为；顺滑观感本身只能真机验收。
+ */
+describe('smoothPull 平滑贴底追踪', () => {
+  /** rAF stub：帧回调挂到队列，测试里手动逐帧驱动 */
+  let rafQueue: FrameRequestCallback[]
+  let rafSeq: number
+
+  beforeEach(() => {
+    rafQueue = []
+    rafSeq = 0
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback): number => {
+      rafQueue.push(cb)
+      return ++rafSeq
+    })
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => {
+      // 队列只增不改位：id 与下标差 1（seq 从 1 起），直接删除即可
+      const idx = id - 1
+      if (rafQueue[idx]) delete rafQueue[idx]
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /** 驱动一帧（执行当前排队的回调）。cancel 用 delete 置洞，必须跳过稀疏洞。 */
+  function driveFrame(): void {
+    const queue = rafQueue.filter(f => typeof f === 'function')
+    rafQueue = []
+    for (const cb of queue) cb(performance.now())
+  }
+
+  /** 跟随态下 followKey 变化触发追踪后，驱动 n 帧 */
+  function chase(result: Result, el: HTMLDivElement, frames: number): void {
+    for (let i = 0; i < frames && rafQueue.length > 0; i++) driveFrame()
+    void result
+    void el
+  }
+
+  function setupSmooth() {
+    return renderHook((props: { n: number }) => useStickyScroll(props.n, { smoothPull: true }), {
+      initialProps: { n: 1 },
+    })
+  }
+
+  it('贴底跟随分帧收拢：多帧逐步逼近底部，而非一步瞬移', () => {
+    const { result, rerender } = setupSmooth()
+    const el = attachScroller(result.current.scrollRef)
+    bumpKey(rerender, 2)
+    // 第一帧只写入一次（消费掉 followKey 触发的首帧），后续帧由驱动产生
+    driveFrame()
+    const first = el.scrollTop
+    expect(first).toBeGreaterThan(200) // 已经开始向底部收拢
+    expect(first).toBeLessThan(600) // 但尚未到底（600 = max）
+
+    driveFrame()
+    driveFrame()
+    expect(el.scrollTop).toBeGreaterThan(first) // 单调递增
+    chase(result, el, 30) // 追踪收尾
+    expect(el.scrollTop).toBe(600) // 最终落底
+  })
+
+  it('内容增长期间追踪目标每帧重测：增长后仍追到新底部', () => {
+    const { result, rerender } = setupSmooth()
+    const el = attachScroller(result.current.scrollRef)
+    bumpKey(rerender, 2)
+    driveFrame()
+    driveFrame()
+
+    setScrollHeight(el, 2000) // 流式增长：新底部 = 1600
+    driveFrame()
+    driveFrame()
+    chase(result, el, 60)
+    expect(el.scrollTop).toBe(1600) // 追到新底部，不滞留在旧目标
+  })
+
+  it('回底按钮（jumpToBottom）平滑滑到底部而非瞬移', () => {
+    const { result } = setupSmooth()
+    const el = attachScroller(result.current.scrollRef)
+    // 构造解锁态（停在 200，距底 400）
+    wheelScroll(result, el, -1)
+    el.scrollTop = 200
+    scrollFrame(result)
+    expect(result.current.showJumpButton).toBe(true)
+
+    act(() => {
+      result.current.jumpToBottom()
+    })
+    expect(result.current.showJumpButton).toBe(false) // 立即恢复跟随
+    driveFrame()
+    const mid = el.scrollTop
+    expect(mid).toBeGreaterThan(200)
+    expect(mid).toBeLessThan(600) // 第一帧未到底 = 平滑
+    chase(result, el, 30)
+    expect(el.scrollTop).toBe(600)
+  })
+
+  it('手势上滚解锁后追踪立即停止（B2 不受影响），解锁态不拽回', () => {
+    const { result, rerender } = setupSmooth()
+    const el = attachScroller(result.current.scrollRef)
+    bumpKey(rerender, 2)
+    driveFrame()
+    driveFrame()
+
+    wheelScroll(result, el, -100) // 用户上滚 → 立即解锁
+    expect(result.current.showJumpButton).toBe(true)
+    const atUnlock = el.scrollTop
+    chase(result, el, 10) // 即使还有在途帧，也不得再动
+    expect(el.scrollTop).toBe(atUnlock) // 冻结
+  })
+})
