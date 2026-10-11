@@ -478,8 +478,9 @@ export function useEvents(h: EventHandlers) {
             h.setForceDraftForRefine?.(null)
             // 只提示、不落进对话流：这不是执行结果，而是一次即时说明，常驻气泡会把
             // 会话切碎；轻反馈通道自会分流（应用在前台 → island，后台 → HUD）。
-            // 注意别和模型侧的通知混为一谈：后端已经把「当前模型已切换至 …」注入了
-            // Agent 会话（config/llm.rs 的 push_system），那条必须留着。
+            // 注意别和模型侧的通知混为一谈：后端已把「当前模型已切换至 …」改为
+            // 一次性消费账本（config/llm.rs 只登记挂起，下次 LLM 请求 transient
+            // 注入一次、不驻留会话），那条必须留着。
             showAppFeedback('模型已切换，上下文提示已按新的上下文窗口重新计算。')
           }
           h.setModelName(event.model)

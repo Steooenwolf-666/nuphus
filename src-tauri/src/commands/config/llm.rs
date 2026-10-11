@@ -748,15 +748,15 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
     // 只在用户主动切换模型这一自然时机做，不引入定时器/轮询。
     notify_binding_issues(&app, &state.llm_config_path);
 
-    // Push notification if model or provider changed
+    // 模型切换提示改一次性消费账本：只登记挂起（双字段比对 + 切回撤销由
+    // agent.queue_model_notice 按「上次实际使用绑定」权威裁决），等用户下次发
+    // 消息后的首次 LLM 请求以 transient 形态注入一次——不再 push_system 永久
+    // 驻留会话（旧行为导致提示每轮重发，同 session 内可积十余条）。
     if let Some((prev_provider, prev_model)) = prev_binding {
         if prev_provider != resolved_provider || prev_model != resolved_model {
             let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
             if let Some(agent) = guard.leader_agent.as_mut() {
-                agent.session_mut().push_system(format!(
-                    "当前模型已切换至 {}（provider: {}）",
-                    resolved_model, resolved_provider
-                ));
+                agent.queue_model_notice(&resolved_provider, &resolved_model);
             }
         }
     }
@@ -974,12 +974,15 @@ pub async fn configure_llm(
         ));
     }
 
-    // Check if this is a model switch (re-config vs initial setup)
-    let prev_model = state
-        .runtime
-        .lock()
-        .ok()
-        .and_then(|g| g.llm_config.as_ref().map(|c| c.model.clone()));
+    // Check if this is a model switch (re-config vs initial setup) —
+    // (provider, model) 双字段：同名模型跨 provider 切换也算切换
+    // （旧实现只比 model，且 resolved_provider != cfg.provider 恒为假，
+    // provider 维度的切换被漏判）。
+    let prev_binding = state.runtime.lock().ok().and_then(|g| {
+        g.llm_config
+            .as_ref()
+            .map(|c| (c.provider.clone(), c.model.clone()))
+    });
 
     // 协议类型 = provider_kind_for_segment 的解析结果（自定义实例解析回 custom /
     // anthropic）。落盘（新建段）与内置默认模型都以此为准，只解析一次。
@@ -1063,15 +1066,14 @@ pub async fn configure_llm(
     }
     let generation = super::model_metadata::activate(&state, &cfg, context_window)?;
 
-    // Push system notification if model actually changed (re-config, not initial setup)
-    if let Some(prev) = prev_model {
-        if prev != resolved_model || resolved_provider != cfg.provider {
+    // 模型切换提示改一次性消费账本（同 switch_model_impl）：只登记挂起，
+    // 由 agent.queue_model_notice 按「上次实际使用绑定」双字段裁决（切回即撤销），
+    // 下次 LLM 请求 transient 注入一次。prev 为 None = 首次配置，不登记。
+    if let Some((prev_provider, prev_model)) = prev_binding {
+        if prev_provider != resolved_provider || prev_model != resolved_model {
             let mut guard = state.runtime.lock().map_err(|e| e.to_string())?;
             if let Some(agent) = guard.leader_agent.as_mut() {
-                agent.session_mut().push_system(format!(
-                    "当前模型已切换至 {}（provider: {}）",
-                    resolved_model, resolved_provider
-                ));
+                agent.queue_model_notice(&resolved_provider, &resolved_model);
             }
         }
     }
@@ -1437,6 +1439,40 @@ pub fn is_llm_configured(state: State<'_, AppState>) -> Result<bool, String> {
     }
 }
 
+/// 推理档位的三源解析（纯函数，`list_models` 与单测共用）。
+///
+/// 信任链：providers.toml 显式 > builtin ModelDef（provider 限定）> OpenRouter
+/// 聚合库兜底。**诚实显示**是硬规则：任一级为空数组即视为「该级无数据」，
+/// 绝不用空数组、更不用别家数据充数——上游取不到就不显示档位旋钮
+/// （自定义中转段尤其如此：relay 自己的 /v1/models 大多不暴露 effort 元数据，
+/// 能显示的只有聚合目录里的同名模型档位，取不到就不显示）。
+///
+/// default 继承：toml 显式 default 置信最高（发现链落盘过的），各级只在自己的
+/// efforts 非空时才贡献档位值；全空时保留 toml default（无档位时前端本就不
+/// 渲染旋钮，无副作用）。
+pub(crate) fn resolve_effort_tiers(
+    toml_efforts: &[String],
+    toml_default: Option<&str>,
+    builtin: Option<(&[&str], Option<&str>)>,
+    or_entry: Option<(&[String], Option<&str>)>,
+) -> (Vec<String>, Option<String>) {
+    if !toml_efforts.is_empty() {
+        return (toml_efforts.to_vec(), toml_default.map(String::from));
+    }
+    if let Some((efforts, default)) = builtin {
+        if !efforts.is_empty() {
+            let tiers = efforts.iter().map(|s| s.to_string()).collect();
+            return (tiers, toml_default.or(default).map(String::from));
+        }
+    }
+    if let Some((efforts, default)) = or_entry {
+        if !efforts.is_empty() {
+            return (efforts.to_vec(), toml_default.or(default).map(String::from));
+        }
+    }
+    (Vec::new(), toml_default.map(String::from))
+}
+
 #[tauri::command]
 pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::ModelInfo>, String> {
     use nuphus::config::ModelRegistry;
@@ -1468,32 +1504,16 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
             // 那是错贴不是兜底——miss 就 miss，effort 旋钮缺失好过贴错值。
             let builtin_meta =
                 builtin.find_model_for_provider(provider.provider_type.as_str(), &model.id);
-            let (mut reasoning_efforts, mut default_effort) = if !model.reasoning_efforts.is_empty()
-            {
-                (
-                    model.reasoning_efforts.clone(),
-                    model.default_effort.clone(),
-                )
-            } else {
-                match builtin_meta {
-                    Some(m) => (
-                        m.reasoning_efforts.iter().map(|s| s.to_string()).collect(),
-                        m.default_effort.map(|s| s.to_string()),
-                    ),
-                    None => (
-                        model.reasoning_efforts.clone(),
-                        model.default_effort.clone(),
-                    ),
-                }
-            };
-            if reasoning_efforts.is_empty() {
-                if let Some(entry) = &or_entry {
-                    if !entry.supported_efforts.is_empty() {
-                        reasoning_efforts = entry.supported_efforts.clone();
-                        default_effort = default_effort.or_else(|| entry.default_effort.clone());
-                    }
-                }
-            }
+            // 三源解析（纯函数 + 单测见 resolve_effort_tiers）：toml > builtin >
+            // OpenRouter 兜底，任一级空数组即「无数据」，绝不拿空数组充数。
+            let (reasoning_efforts, default_effort) = resolve_effort_tiers(
+                &model.reasoning_efforts,
+                model.default_effort.as_deref(),
+                builtin_meta.map(|m| (m.reasoning_efforts, m.default_effort)),
+                or_entry
+                    .as_ref()
+                    .map(|e| (e.supported_efforts.as_slice(), e.default_effort.as_deref())),
+            );
             // Cost（USD / 百万 tokens）：providers.toml 显式值优先（信任链最高层）；
             // 否则 OpenRouter 聚合库定价 ×1_000_000；均无 → None（未知，前端不展示）。
             let (cost_in, cost_out) = match (model.cost_per_million_in, model.cost_per_million_out)
@@ -2515,32 +2535,55 @@ pub fn get_capabilities(state: State<'_, AppState>) -> Result<serde_json::Value,
 
 /// Model capability metadata discovered from the provider's /models endpoint.
 /// Kimi additionally exposes per-model reasoning-effort capability
-/// (`think_efforts { valid_efforts, default_effort }`); providers that return
-/// bare id lists (DeepSeek/MiniMax) simply yield empty efforts.
+/// (`think_efforts { valid_efforts, default_effort }`); OpenAI-compatible
+/// gateways (OpenRouter 及其同族) 用 `reasoning { supported_efforts,
+/// default_effort }`；只返回裸 id 列表的（DeepSeek/MiniMax…）解析为空。
 pub(super) struct ModelApiMetadata {
     pub context_length: Option<usize>,
     pub reasoning_efforts: Vec<String>,
     pub default_effort: Option<String>,
 }
 
-/// Extract reasoning-effort capability from a /models model entry.
-/// Known shape: Kimi `think_efforts { valid_efforts[], default_effort }`.
-fn extract_reasoning_efforts(m: &serde_json::Value) -> (Vec<String>, Option<String>) {
-    if let Some(te) = m.get("think_efforts") {
-        let efforts = te
-            .get("valid_efforts")
-            .and_then(|v| v.as_array())
+/// 字符串数组提取（容忍单字符串写法）。
+fn efforts_from_array(v: Option<&serde_json::Value>) -> Vec<String> {
+    v.and_then(|v| {
+        v.as_array()
             .map(|a| {
                 a.iter()
                     .filter_map(|e| e.as_str().map(String::from))
                     .collect()
             })
-            .unwrap_or_default();
+            .or_else(|| v.as_str().map(|s| vec![s.to_string()]))
+    })
+    .unwrap_or_default()
+}
+
+/// Extract reasoning-effort capability from a /models model entry.
+/// 已知官方形状（按序探测，先命中先返回）：
+/// ① Kimi：`think_efforts { valid_efforts[], default_effort }`
+///    （platform.kimi.ai 官方 /models 扩展字段）；
+/// ② OpenAI 兼容族：`reasoning { supported_efforts[], default_effort }`
+///    （OpenRouter 模型目录每模型的 reasoning 对象，同族网关同形状）。
+fn extract_reasoning_efforts(m: &serde_json::Value) -> (Vec<String>, Option<String>) {
+    if let Some(te) = m.get("think_efforts") {
+        let efforts = efforts_from_array(te.get("valid_efforts"));
         let default = te
             .get("default_effort")
             .and_then(|v| v.as_str())
             .map(String::from);
-        return (efforts, default);
+        if !efforts.is_empty() || default.is_some() {
+            return (efforts, default);
+        }
+    }
+    if let Some(r) = m.get("reasoning") {
+        let efforts = efforts_from_array(r.get("supported_efforts"));
+        let default = r
+            .get("default_effort")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        if !efforts.is_empty() || default.is_some() {
+            return (efforts, default);
+        }
     }
     (Vec::new(), None)
 }
@@ -2822,6 +2865,102 @@ pub async fn startup_model_calibration(app: &tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 诚实显示：三源全空 → 空档位（custom 中转取不到就不显示旋钮）
+    #[test]
+    fn resolve_effort_tiers_empty_everywhere_is_empty() {
+        assert_eq!(
+            resolve_effort_tiers(&[], None, None, None),
+            (Vec::new(), None)
+        );
+        // 各级「有条目但空数组」同样不算数据
+        assert_eq!(
+            resolve_effort_tiers(&[], None, Some((&[], None)), Some((&[], None))),
+            (Vec::new(), None)
+        );
+        // 仅 OR 有条目但空数组（无推理能力模型）→ 不采纳
+        let or_empty: Vec<String> = Vec::new();
+        assert_eq!(
+            resolve_effort_tiers(&[], None, None, Some((&or_empty, Some("high")))),
+            (Vec::new(), None)
+        );
+    }
+
+    /// 信任链：toml > builtin > OR；各级空数组不阻断下一级
+    #[test]
+    fn resolve_effort_tiers_trust_chain_and_skips_empty_levels() {
+        let or_efforts = vec!["max".to_string(), "high".into(), "low".into()];
+        // toml 优先（含 toml default 胜出）
+        let (t, d) = resolve_effort_tiers(
+            &["high".into(), "max".into()],
+            Some("high"),
+            Some((&["low", "medium"], Some("low"))),
+            Some((&or_efforts, Some("max"))),
+        );
+        assert_eq!(t, vec!["high", "max"]);
+        assert_eq!(d.as_deref(), Some("high"));
+        // toml 空 + builtin 非空 → builtin
+        let (t, d) = resolve_effort_tiers(
+            &[],
+            None,
+            Some((&["low", "medium", "high"], Some("medium"))),
+            Some((&or_efforts, Some("max"))),
+        );
+        assert_eq!(t, vec!["low", "medium", "high"]);
+        assert_eq!(d.as_deref(), Some("medium"));
+        // toml 空 + builtin 空数组 + OR 非空 → OR（空数组级被跳过）
+        let (t, d) = resolve_effort_tiers(
+            &[],
+            Some("medium"),
+            Some((&[], None)),
+            Some((&or_efforts, Some("max"))),
+        );
+        assert_eq!(t, vec!["max", "high", "low"]);
+        assert_eq!(
+            d.as_deref(),
+            Some("medium"),
+            "toml 显式 default 优先于 OR default"
+        );
+    }
+
+    /// /models 条目的 effort 能力提取：两种官方形状 + 裸列表。
+    /// ① Kimi `think_efforts`；② OpenAI 兼容族 `reasoning.supported_efforts`。
+    #[test]
+    fn extract_reasoning_efforts_both_official_shapes() {
+        // Kimi 形状（platform.kimi.ai 官方 /models 扩展）
+        let kimi = serde_json::json!({
+            "id": "kimi-k3",
+            "think_efforts": {"valid_efforts": ["low", "high", "max"], "default_effort": "max"},
+        });
+        assert_eq!(
+            extract_reasoning_efforts(&kimi),
+            (
+                vec!["low".to_string(), "high".into(), "max".into()],
+                Some("max".into())
+            )
+        );
+
+        // OpenAI 兼容族形状（OpenRouter 目录的 reasoning 对象）
+        let or_style = serde_json::json!({
+            "id": "grok-4.6",
+            "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"], "default_effort": "high"},
+        });
+        assert_eq!(
+            extract_reasoning_efforts(&or_style),
+            (
+                vec!["low".into(), "medium".into(), "high".into(), "xhigh".into()],
+                Some("high".into())
+            )
+        );
+
+        // 裸 id 列表（DeepSeek/MiniMax…）：解析为空，交由 builtin/聚合库兜底
+        let bare = serde_json::json!({"id": "deepseek-flash"});
+        assert_eq!(extract_reasoning_efforts(&bare), (Vec::new(), None));
+
+        // think_efforts 存在但字段畸形 → 落 ② 形状；两者皆无 → 空
+        let broken = serde_json::json!({"think_efforts": {"default_effort": null}});
+        assert_eq!(extract_reasoning_efforts(&broken), (Vec::new(), None));
+    }
 
     /// 上游 /models 条目的上下文字段解析：只认**输入侧**窗口字段。
     /// 钉子：`max_tokens`（输出上限）绝不可能是上下文窗口。
