@@ -32,18 +32,6 @@ use std::io::Write;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-/// 长任务阈值（秒）。
-///
-/// `timeout_secs` 超过此值的调用被视为长任务（Release 构建 / 全量测试 /
-/// 大下载）：超时后**不终止**进程，因为杀掉会让已完成的编译产物与测试
-/// 进度全部作废，下次从零重跑。
-///
-/// 未超过的按原行为杀掉止损 —— 卡死的短命令继续跑只会占资源。
-///
-/// 取 300s（5 分钟）的依据：普通命令的合理上限远低于此；而 `tool_timeout`
-/// 给 system_shell 的桶是 1800s，真正需要"不杀"的长任务必然远超 300s。
-const LONG_TASK_THRESHOLD_SECS: u64 = 300;
-
 /// Execute system_shell with line-by-line streaming, pushing stdout/stderr to frontend in real-time
 pub fn stream_shell_blocking(
     command: &str,
@@ -196,11 +184,6 @@ pub fn stream_shell_blocking(
     let mut line_buf: Vec<(String, bool)> = Vec::new();
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
-    // 超过这个时长的调用方意图是长任务（构建 / 全量测试 / 大下载），
-    // 超时后不终止进程；短命令仍按原行为杀掉，避免卡死的命令泄漏。
-    // 判据用调用方自己传的 timeout_secs：传 180（默认）是普通命令，
-    // 传 600+ 说明调用方明知这是长任务。
-    let is_long_task = timeout_secs > LONG_TASK_THRESHOLD_SECS;
 
     loop {
         let now = std::time::Instant::now();
@@ -240,8 +223,10 @@ pub fn stream_shell_blocking(
 
         if now >= deadline {
             flush_output_lines(emitter, call_id, &mut line_buf);
-            if !is_long_task {
-                // 短命令：杀掉止损。卡死的命令继续跑只会占资源。
+            // 超时：**按显式声明分流**（与 leader 路径 system_shell 同一条规则）。
+            // - background=false（默认）：终止，卡死的命令不该占资源。
+            // - background=true（调用方声明长任务）：不杀，登记保留 + 到点看门狗兜底。
+            if !background {
                 let _ = child.kill();
                 registry.unregister(&task.id);
                 bg::discard_log(&task);
@@ -249,13 +234,13 @@ pub fn stream_shell_blocking(
                     success: false,
                     output: Some(full_stdout),
                     error: Some(format!(
-                        "命令超时 ({}s)，已终止。可增加 timeout 参数重试。",
+                        "命令已超过等待上限 ({}s)，已终止。如需长任务请显式声明 background=true，或增大 timeout 参数重试。",
                         timeout_secs
                     )),
                     exit_code: None,
                 };
             }
-            // 长任务：**不杀**。杀掉会让已完成的编译产物/测试进度全部作废，
+            // 显式保留：**不杀**。杀掉会让已完成的编译产物/测试进度全部作废，
             // 下次从零重跑 —— 一次 5-6 分钟的活被切成无数段，每段都从零开始。
             //
             // 安全性：`child` 是局部变量，函数返回时 drop，但 std Child 的 drop
@@ -268,14 +253,16 @@ pub fn stream_shell_blocking(
                 success: false,
                 output: Some(full_stdout),
                 error: Some(format!(
-                    "命令已超过等待上限 ({}s)，**仍在后台继续运行**（未终止）。\n\
+                    "命令已超过等待上限 ({}s)，**仍在后台继续运行**（未终止，因为调用方声明了 background=true）。\n\
                      进程 PID {}（任务 {}）已登记为保留的后台任务。\n\
                      输出持续追加到：{}\n\
+                     最长存活 {} 分钟，到点由系统兜底结束；期间可随时结束它（面板，或 Agent 侧 process_kill 按 PID 结束）。\n\
                      勿重复执行同一命令 —— 重复触发会让长任务从零重跑。",
                     timeout_secs,
                     task.pid,
                     task.id,
-                    task.output_path.as_deref().unwrap_or("(未开启输出文件)")
+                    task.output_path.as_deref().unwrap_or("(未开启输出文件)"),
+                    bg::MAX_TASK_LIFETIME_SECS / 60
                 )),
                 exit_code: None,
             };

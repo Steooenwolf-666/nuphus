@@ -20,12 +20,15 @@
 //!
 //! # 契约（调用点勿私自改写）
 //!
-//! - **`retain` 是显式意图**：调用方声明后台保留才置 `true`。默认（前台）`false`，
-//!   取消时按 pid 杀进程树。保留项**任何自动路径都不许杀**
-//!   （[`BackgroundTaskRegistry::kill_foreground`] 只碰 `retain == false`），
-//!   只能由用户/Agent 显式按 id 结束——不替用户杀保留项。
-//! - **超时不杀**：长任务超时后进程保留 ⇒ 此时必须登记为 `retain = true`，
-//!   并把 pid 与输出文件位置一并告诉 Agent。
+//! - **进程存亡 = 显式声明，不由超时隐式决定**：`background` / `retain` 的语义是
+//!   「这次调用的进程是否允许活过等待」。`false`（默认）→ 超时或取消都按 pid 杀
+//!   进程树；`true`（显式声明）→ 超时与取消都不杀，登记保留并把 pid 与输出文件
+//!   位置一并告诉 Agent，由它或用户决定保留还是结束。
+//! - **取消不碰保留项**：取消路径（[`BackgroundTaskRegistry::kill_foreground`]）
+//!   只碰 `retain == false`；保留项只能由用户/Agent 显式结束。
+//! - **两条兜底路径到点即杀**（**含保留项**）：超过 [`MAX_TASK_LIFETIME_MS`] 由
+//!   看门狗接管强杀（最后的保障）；应用退出时 [`BackgroundTaskRegistry::kill_all`]
+//!   全量清算——账本随进程消失，留在系统里的子进程就成了无人可管的孤儿。
 //! - **取消事实必须结构化**：见 [`CancellationNotice`] 与 [`CANCELLED_MARKER`]。
 //!
 //! # 存活探测的开销
@@ -45,6 +48,16 @@ use std::sync::{Mutex, OnceLock};
 
 /// 清单里命令文本的最大字符数。**仅展示用**，不是执行内容。
 const COMMAND_PREVIEW_CHARS: usize = 160;
+
+/// 后台任务最长存活时限（**最后的保障**）：到点不论前台/保留，一律强杀。
+///
+/// 取值理由：`system_shell` 的等待上限是 1800s（30 分钟），任何「还在跑」的进程
+/// 超过 30 分钟都超出了工具契约允许的等待窗口；给到 2× 余量覆盖构建 / 全量测试 /
+/// 大下载的真实长尾，同时保证账本与进程不会无期限积累。可由用户显式结束提前。
+pub const MAX_TASK_LIFETIME_SECS: u64 = 3600;
+
+/// 看门狗扫描周期：每分钟检查一次（一次遍历 + 若干次存活探测，开销可忽略）。
+pub const WATCHDOG_TICK_SECS: u64 = 60;
 
 /// 取消事实标记。与「本批不改 `ToolResult` 结构」一致，采用文本约定编码 ——
 /// 先例见 `lib.rs` 的 `__EXIT_CODE:{code}__`。
@@ -531,7 +544,7 @@ impl BackgroundTaskRegistry {
     /// 按 id 结束某个后台任务（**含保留项**——这是显式意图，允许）。
     ///
     /// 成功终止（或发现已自行退出）时向输出日志附加终止事实
-    /// （[`append_manual_kill_note`]）：等待该命令输出的 Agent 能读到明确结局，
+    /// （[`append_kill_note`]）：等待该命令输出的 Agent 能读到明确结局，
     /// 不会把面板操作误判成命令失败而重跑。杀失败则不动日志——条目仍在账上，
     /// 面板会拿到 Err 呈现给用户。
     pub fn kill_one(&self, id: &str) -> std::result::Result<KillOutcome, String> {
@@ -540,7 +553,7 @@ impl BackgroundTaskRegistry {
         };
         match self.control.kill_tree(task.pid) {
             Ok(()) => {
-                append_manual_kill_note(&task, false);
+                append_kill_note(&task, KillReason::ManualByUser);
                 self.unregister(id);
                 Ok(KillOutcome {
                     task,
@@ -549,7 +562,7 @@ impl BackgroundTaskRegistry {
             }
             Err(_e) if !self.control.is_alive(task.pid) => {
                 // 进程已自行退出：下刀失败不是失败，只是无事可做
-                append_manual_kill_note(&task, true);
+                append_kill_note(&task, KillReason::AlreadyExited);
                 self.unregister(id);
                 Ok(KillOutcome {
                     task,
@@ -589,6 +602,68 @@ impl BackgroundTaskRegistry {
         report.retained = self.retained_count();
         report
     }
+
+    /// 逐个终止目标：杀成功写终止报告；发现已自行退出则照样清账并补写结局。
+    fn kill_targets(
+        &self,
+        targets: Vec<BackgroundTask>,
+        reason: KillReason,
+    ) -> Vec<BackgroundTask> {
+        let mut killed = Vec::new();
+        for task in targets {
+            match self.control.kill_tree(task.pid) {
+                Ok(()) => {
+                    append_kill_note(&task, reason);
+                    self.unregister(&task.id);
+                    killed.push(task);
+                }
+                Err(e) => {
+                    if self.control.is_alive(task.pid) {
+                        // 杀不掉（权限 / 已脱离进程树）：条目留在账上，下次再收
+                        tracing::error!("[BG] 终止失败 {} (PID {}): {e}", task.id, task.pid);
+                    } else {
+                        append_kill_note(&task, KillReason::AlreadyExited);
+                        self.unregister(&task.id);
+                        killed.push(task);
+                    }
+                }
+            }
+        }
+        killed
+    }
+
+    /// **超期强杀（最后的保障）**：存活时间达到 [`MAX_TASK_LIFETIME_SECS`] 的条目
+    /// （**含保留项**）一律终止并写终止报告。
+    ///
+    /// 与 [`BackgroundTaskRegistry::kill_foreground`] 的分工：那个是「用户取消 →
+    /// 只收前台、保留项不碰」；这个是「没有用户在场也要收」——进程不能无期限占资源，
+    /// 账本不能无期限膨胀。返回被终止的条目。
+    pub fn kill_expired(&self, now_ms: u64) -> Vec<BackgroundTask> {
+        let max_ms = MAX_TASK_LIFETIME_SECS.saturating_mul(1000);
+        let targets: Vec<BackgroundTask> = {
+            let tasks = self.lock();
+            tasks
+                .values()
+                .filter(|t| now_ms.saturating_sub(t.started_at_ms) >= max_ms)
+                .cloned()
+                .collect()
+        };
+        self.kill_targets(targets, KillReason::LifetimeExpired)
+    }
+
+    /// **退出清算**：终止并清空账本里的**全部**条目（含保留项）。
+    ///
+    /// 为什么退出必须清算：账本是进程级单例，随进程消失；不清算的话子进程会变成
+    /// 无人可管、无处可见的孤儿（重启后既不在面板里，也没人知道它还在跑）。
+    /// 账本与进程都不绑定会话——会话切换（runtime 重建）不影响这里，
+    /// 清理只锚定「进程还在不在」这一个事实。
+    pub fn kill_all(&self) -> Vec<BackgroundTask> {
+        let targets: Vec<BackgroundTask> = {
+            let tasks = self.lock();
+            tasks.values().cloned().collect()
+        };
+        self.kill_targets(targets, KillReason::AppExit)
+    }
 }
 
 // ============================================================================
@@ -604,6 +679,46 @@ static GLOBAL: OnceLock<BackgroundTaskRegistry> = OnceLock::new();
 /// 「谁拥有账本」变成构造顺序问题。账本本身是纯进程级事实，一份即可。
 pub fn global() -> &'static BackgroundTaskRegistry {
     GLOBAL.get_or_init(BackgroundTaskRegistry::new)
+}
+
+/// 看门狗线程是否已启动（幂等：应用启动时调用一次，重复调用无副作用）。
+static WATCHDOG_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 启动后台任务看门狗（定时任务）——**最后的保障的执行者**。
+///
+/// 职责：每个 [`WATCHDOG_TICK_SECS`] 扫一次账本，把存活超过 [`MAX_TASK_LIFETIME_SECS`]
+/// 的条目（含保留项）强杀并写终止报告。为什么不放在「读面板时顺带做」：面板不开
+/// 就没人读账本，超期进程会一直挂着——保障必须是**时间驱动**的，不能依赖用户动作。
+///
+/// 幂等：进程内只启动一次线程；失败（线程起不来）不阻断应用，只是退回「读时清理」。
+pub fn start_watchdog() {
+    use std::sync::atomic::Ordering;
+    if WATCHDOG_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
+        .name("bg-task-watchdog".to_string())
+        .spawn(|| loop {
+            std::thread::sleep(std::time::Duration::from_secs(WATCHDOG_TICK_SECS));
+            let killed = global().kill_expired(now_ms());
+            if !killed.is_empty() {
+                tracing::warn!(
+                    "[BG] 看门狗强杀超期任务 {} 个（最长存活 {}s）：{:?}",
+                    killed.len(),
+                    MAX_TASK_LIFETIME_SECS,
+                    killed.iter().map(|t| &t.id).collect::<Vec<_>>()
+                );
+            }
+            // 顺带清死条目：没有面板读取时，账本里的死条目也应及时消失
+            let pruned = global().prune_dead();
+            if pruned > 0 {
+                tracing::info!("[BG] 看门狗清理已自行退出的条目 {pruned} 个");
+            }
+        });
+    if let Err(e) = spawned {
+        WATCHDOG_STARTED.store(false, Ordering::SeqCst);
+        tracing::error!("[BG] 看门狗线程启动失败（退回读时清理）: {e}");
+    }
 }
 
 /// 后台任务输出日志目录（`<data_dir>/background_tasks/`）
@@ -645,6 +760,22 @@ pub fn discard_log(task: &BackgroundTask) {
     }
 }
 
+/// 终止原因——决定写入输出日志的终止事实文本。
+///
+/// 对 Agent 的意义各不相同：手动结束是**用户显式操作**、已退出是**自然结束**、
+/// 超期与应用退出是**系统兜底**。三者都不能被读成「命令失败」，也都不许重跑。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KillReason {
+    /// 用户在「后台任务」面板手动结束
+    ManualByUser,
+    /// 下刀时进程已自行退出（不算失败，无需重跑）
+    AlreadyExited,
+    /// 超过最长存活时限，看门狗强制结束
+    LifetimeExpired,
+    /// 应用退出清算
+    AppExit,
+}
+
 /// 手动结束后，向该任务的输出日志**追加终止事实**。
 ///
 /// 为什么写在日志里：等待该命令的 Agent 被明确告知「输出持续追加到 <路径>，
@@ -654,20 +785,28 @@ pub fn discard_log(task: &BackgroundTask) {
 /// 读到结局。
 ///
 /// 写失败仅 debug 日志：日志是尽力而为的附加物，不能反过来让结束动作失败。
-pub fn append_manual_kill_note(task: &BackgroundTask, already_gone: bool) {
+pub fn append_kill_note(task: &BackgroundTask, reason: KillReason) {
     let Some(ref path) = task.output_path else {
         return;
     };
-    let body = if already_gone {
-        format!(
+    let body = match reason {
+        KillReason::AlreadyExited => format!(
             "该命令的进程（PID {}）在你读取此文件前已自行退出；「后台任务」面板尝试结束它时已无进程，账本条目一并清理。**无需重新执行**，以上输出即该命令的最终产出。",
             task.pid
-        )
-    } else {
-        format!(
+        ),
+        KillReason::ManualByUser => format!(
             "该命令的进程树（PID {}）已被用户在「后台任务」面板中手动结束——这是用户的显式操作，不是命令失败或超时。此后不会再有新输出。**不要重新执行该命令**；若任务目标仍需要它的结果，请基于以上已有输出继续，或与用户确认。",
             task.pid
-        )
+        ),
+        KillReason::LifetimeExpired => format!(
+            "该命令的进程树（PID {}）已超过最长存活时限（{} 分钟）被系统强制结束——这是资源兜底，不是命令失败。此后不会再有新输出。**不要重新执行该命令**；若任务目标仍需要它的结果，请基于以上已有输出继续，或改用更短的等待窗口分步执行。",
+            task.pid,
+            MAX_TASK_LIFETIME_SECS / 60
+        ),
+        KillReason::AppExit => format!(
+            "该命令的进程树（PID {}）因应用退出已被系统清算结束。此后不会再有新输出。**不要重新执行该命令**；若任务目标仍需要它的结果，请在下次需要时重新发起。",
+            task.pid
+        ),
     };
     let note = format!(
         "\n\n---- [NUPHUS 后台任务账本] 任务 {} 终止报告 ----\n{}\n",
@@ -678,7 +817,7 @@ pub fn append_manual_kill_note(task: &BackgroundTask, already_gone: bool) {
         .open(path)
         .and_then(|mut f| std::io::Write::write_all(&mut f, note.as_bytes()));
     if let Err(e) = write {
-        tracing::debug!("[BG] 追加手动结束说明到输出日志失败 {}: {e}", path);
+        tracing::debug!("[BG] 追加终止说明到输出日志失败 {}: {e}", path);
     }
 }
 
@@ -754,6 +893,14 @@ mod tests {
             started_at_ms: 1_000,
             retain,
             output_path: Some(format!("C:/tmp/{id}.log")),
+        }
+    }
+
+    /// 指定启动时刻的条目（用于超期判定）。
+    fn task_started_at(id: &str, pid: u32, retain: bool, started_at_ms: u64) -> BackgroundTask {
+        BackgroundTask {
+            started_at_ms,
+            ..task(id, pid, retain)
         }
     }
 
@@ -945,6 +1092,125 @@ mod tests {
         let reg = BackgroundTaskRegistry::with_control(Box::new(FakeControl::default()));
         let report = reg.kill_foreground();
         assert_eq!(report, KillReport::default());
+    }
+
+    // ── 超期强杀：最后保障（含保留项，不看 retain）────────────────────
+
+    #[test]
+    fn kill_expired_kills_only_tasks_past_max_lifetime() {
+        let ctl = FakeControl::new(&[100, 200], &[]);
+        let observer = ctl.observer();
+        let reg = BackgroundTaskRegistry::with_control(Box::new(ctl));
+        let max_ms = MAX_TASK_LIFETIME_SECS * 1000;
+        // 超期项（保留项！也必须被杀）与未超期项各一
+        reg.register(task_started_at("old", 100, true, 1_000));
+        reg.register(task_started_at("fresh", 200, false, 1_000 + max_ms));
+
+        let killed = reg.kill_expired(1_000 + max_ms);
+
+        assert_eq!(killed.len(), 1);
+        assert_eq!(killed[0].id, "old", "刚好到点的项必须被强杀");
+        assert_eq!(observer.kill_calls(), vec![100], "未超期项不得被触碰");
+        assert!(reg.get("old").is_none());
+        assert!(reg.get("fresh").is_some(), "未超期项必须留在账上");
+    }
+
+    #[test]
+    fn kill_expired_is_noop_before_deadline() {
+        let ctl = FakeControl::new(&[100], &[]);
+        let observer = ctl.observer();
+        let reg = BackgroundTaskRegistry::with_control(Box::new(ctl));
+        reg.register(task_started_at("t", 100, false, 1_000));
+
+        let killed = reg.kill_expired(1_000 + MAX_TASK_LIFETIME_SECS * 1000 - 1);
+
+        assert!(killed.is_empty());
+        assert!(observer.kill_calls().is_empty(), "差 1ms 也不许提前杀");
+        assert!(reg.get("t").is_some());
+    }
+
+    #[test]
+    fn kill_expired_writes_lifetime_note_and_keeps_entry_clean() {
+        let log = std::env::temp_dir().join(format!("bg_expire_{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&log);
+        std::fs::write(&log, "still working\n").unwrap();
+
+        let ctl = FakeControl::new(&[555], &[]);
+        let reg = BackgroundTaskRegistry::with_control(Box::new(ctl));
+        let mut t = task_started_at("bg-old", 555, true, 1_000);
+        t.output_path = Some(log.to_string_lossy().to_string());
+        reg.register(t);
+
+        let killed = reg.kill_expired(1_000 + MAX_TASK_LIFETIME_SECS * 1000);
+        assert_eq!(killed.len(), 1);
+
+        let content = std::fs::read_to_string(&log).unwrap();
+        assert!(content.contains("still working"), "原输出必须保留");
+        assert!(
+            content.contains("超过最长存活时限"),
+            "必须写明超期原因: {content}"
+        );
+        assert!(content.contains("不要重新执行"), "必须给出防重跑指令");
+        assert!(reg.get("bg-old").is_none());
+        let _ = std::fs::remove_file(&log);
+    }
+
+    #[test]
+    fn kill_expired_keeps_unkillable_entry_for_retry() {
+        let reg = BackgroundTaskRegistry::with_control(Box::new(FakeControl::new(&[777], &[777])));
+        reg.register(task_started_at("stuck", 777, true, 1_000));
+
+        let killed = reg.kill_expired(1_000 + MAX_TASK_LIFETIME_SECS * 1000);
+
+        assert!(killed.is_empty(), "杀不掉不得谎报成功");
+        assert!(reg.get("stuck").is_some(), "杀不掉的条目必须留账，下轮再收");
+    }
+
+    // ── 退出清算：清空全部（含保留项）──────────────────────────────────
+
+    #[test]
+    fn kill_all_terminates_everything_including_retained() {
+        let ctl = FakeControl::new(&[11, 22, 33], &[]);
+        let observer = ctl.observer();
+        let reg = BackgroundTaskRegistry::with_control(Box::new(ctl));
+        reg.register(task("fg", 11, false));
+        reg.register(task("keep-1", 22, true));
+        reg.register(task("keep-2", 33, true));
+
+        let killed = reg.kill_all();
+
+        assert_eq!(killed.len(), 3, "退出清算必须含保留项");
+        let mut pids = observer.kill_calls();
+        pids.sort_unstable();
+        assert_eq!(pids, vec![11, 22, 33]);
+        assert_eq!(reg.retained_count(), 0, "账本必须清空");
+    }
+
+    #[test]
+    fn kill_all_writes_app_exit_note() {
+        let log = std::env::temp_dir().join(format!("bg_exit_{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&log);
+        std::fs::write(&log, "partial\n").unwrap();
+
+        let ctl = FakeControl::new(&[66], &[]);
+        let reg = BackgroundTaskRegistry::with_control(Box::new(ctl));
+        let mut t = task("bg-exit", 66, true);
+        t.output_path = Some(log.to_string_lossy().to_string());
+        reg.register(t);
+
+        let killed = reg.kill_all();
+        assert_eq!(killed.len(), 1);
+
+        let content = std::fs::read_to_string(&log).unwrap();
+        assert!(content.contains("应用退出"), "必须写明退出清算: {content}");
+        assert!(content.contains("不要重新执行"), "必须给出防重跑指令");
+        let _ = std::fs::remove_file(&log);
+    }
+
+    #[test]
+    fn kill_all_on_empty_registry_is_noop() {
+        let reg = BackgroundTaskRegistry::with_control(Box::new(FakeControl::default()));
+        assert!(reg.kill_all().is_empty());
     }
 
     #[test]

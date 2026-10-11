@@ -1091,12 +1091,31 @@ fn main() {
             // 强行显示主窗 + 关 splash，用户永远不会被锁在 splash 上。
             crate::startup_guard::spawn(app.handle().clone());
 
+            // ── 后台任务看门狗（最后的保障）──
+            // 每个周期强杀存活超过 MAX_TASK_LIFETIME_SECS 的后台任务（含保留项）：
+            // 保障是时间驱动的，不依赖用户打开面板。
+            nuphus::tools::background_tasks::start_watchdog();
+
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
+        // ── 退出清算：任何退出路径（窗口关闭 / 托盘退出 / 系统会话结束）都要清账 ──
+        // 账本是进程级单例，随进程消失；不清算的话子进程会变成无人可管、无处可见的
+        // 孤儿（重启后既不在面板里，也没有任何东西知道它还在跑）。会话切换
+        // （runtime 重建）不触发这里——清理只锚定「应用是否退出」。
+        if matches!(event, tauri::RunEvent::Exit) {
+            let killed = nuphus::tools::background_tasks::global().kill_all();
+            if !killed.is_empty() {
+                tracing::info!(
+                    "[BG] 退出清算：终止 {} 个后台任务（含保留项）：{:?}",
+                    killed.len(),
+                    killed.iter().map(|t| &t.id).collect::<Vec<_>>()
+                );
+            }
+        }
         if let tauri::RunEvent::WindowEvent {
             label,
             event: win_event,

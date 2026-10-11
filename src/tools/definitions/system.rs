@@ -190,8 +190,8 @@ impl ToolRegistry {
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "PowerShell command on Windows, sh on Unix. On Windows use ; not &&" },
-                    "timeout": { "type": "integer", "minimum": 1, "maximum": 1800, "default": 180, "description": "Timeout in seconds. On timeout the process is NOT killed — it keeps running, is registered as a retained background task (pid + output file are reported back); read its output file instead of re-running." },
-                    "background": { "type": "boolean", "default": false, "description": "true = the whole process tree survives a user cancel (use only for long jobs whose progress must not be thrown away); false = default foreground, cancelled by killing the process tree." },
+                    "timeout": { "type": "integer", "minimum": 1, "maximum": 1800, "default": 180, "description": "Max seconds this call waits for the command. On timeout: default (background=false) kills the process tree; with background=true the process is kept running as a retained background task (pid + output file are reported back) — read its output file instead of re-running." },
+                    "background": { "type": "boolean", "default": false, "description": "true = the whole process tree survives a timeout or a user cancel (long jobs whose progress must not be thrown away); it is reported back with pid + output file and is auto-terminated by the system after a max lifetime. false = default: killed on timeout or cancel." },
                     "cwd": { "type": "string", "description": "Working directory for the command" }
                 },
                 "required": ["command"]
@@ -541,22 +541,67 @@ pub fn run_system_shell(request: &ShellRequest, ctx: &ToolCtx) -> Result<ToolRes
             }
         }
 
-        // 超时：**不杀**。进程继续跑 ⇒ 转为保留项，把 pid + 输出位置交给 Agent。
+        // 超时：**按显式声明分流**——进程存亡不由超时隐式决定。
+        // - background=true（调用方显式声明长任务）：不杀，登记保留 + 到点由
+        //   看门狗兜底，把 pid / 输出位置 / 可直接结束交给 Agent。
+        // - background=false（默认前台）：按契约终止（同取消路径），返回明确事实。
         ShellOutcome::Timeout => {
-            registry.set_retain(&task.id, true);
             let produced = stderr.map(|d| d.snapshot()).unwrap_or_default();
             let produced = stdout.map(|d| d.snapshot()).unwrap_or(produced);
-            let message = format!(
-                "命令已超过等待上限 ({}s)，**仍在后台继续运行**（未终止）。\n\
-                 进程 PID {}（任务 {}）已登记为保留的后台任务。\n\
-                 输出持续追加到：{}\n\
-                 **勿重复执行同一命令** —— 重复触发会让长任务从零重跑。",
-                request.timeout_secs,
-                pid,
+            if request.background {
+                registry.set_retain(&task.id, true);
+                let message = format!(
+                    "命令已超过等待上限 ({}s)，**仍在后台继续运行**（未终止，因为调用方声明了 background=true）。\n\
+                     进程 PID {}（任务 {}）已登记为保留的后台任务。\n\
+                     输出持续追加到：{}\n\
+                     最长存活 {} 分钟，到点由系统兜底结束；期间可随时结束它（面板，或 Agent 侧 process_kill 按 PID 结束）。\n\
+                     **勿重复执行同一命令** —— 重复触发会让长任务从零重跑。",
+                    request.timeout_secs,
+                    pid,
+                    task.id,
+                    output_path.as_deref().unwrap_or("(未开启输出文件)"),
+                    bg::MAX_TASK_LIFETIME_SECS / 60
+                );
+                tracing::info!("[BG] system_shell 超时转后台: pid={pid} id={}", task.id);
+                return Ok(ToolResult {
+                    success: false,
+                    output: if produced.trim().is_empty() {
+                        None
+                    } else {
+                        Some(produced)
+                    },
+                    error: Some(message),
+                    exit_code: None,
+                });
+            }
+            // 前台：超时即终止（与取消同一收尾路径）
+            let killed = bg::kill_process_tree(pid);
+            for _ in 0..20 {
+                if matches!(child.try_wait(), Ok(Some(_))) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            registry.unregister(&task.id);
+            bg::discard_log(&task);
+            let message = if killed.is_ok() {
+                format!(
+                    "命令已超过等待上限 ({}s)，已终止（含子孙进程）。\n\
+                     如需长时间运行：显式声明 background=true（超时后转入后台、由系统兜底），或增大 timeout 参数后重试。",
+                    request.timeout_secs
+                )
+            } else {
+                format!(
+                    "命令已超过等待上限 ({}s)，但终止失败（进程可能仍在运行，PID {}）。\n\
+                     请检查该进程，或改用 background=true / 增大 timeout 重试。",
+                    request.timeout_secs, pid
+                )
+            };
+            tracing::info!(
+                "[BG] system_shell 超时（前台，已终止）: pid={pid} id={} ok={}",
                 task.id,
-                output_path.as_deref().unwrap_or("(未开启输出文件)")
+                killed.is_ok()
             );
-            tracing::info!("[BG] system_shell 超时转后台: pid={pid} id={}", task.id);
             Ok(ToolResult {
                 success: false,
                 output: if produced.trim().is_empty() {
@@ -770,6 +815,16 @@ mod tests {
         }
     }
 
+    /// 带唯一标记的长睡命令：测试并行共享进程级账本，命令串必须可区分，
+    /// 否则两条超时用例会互相数到对方的条目（实测翻车）。
+    fn marked_sleep_command(marker: &str) -> String {
+        if cfg!(target_os = "windows") {
+            format!("Start-Sleep -Seconds 6 # {marker}")
+        } else {
+            format!("sleep 6 # {marker}")
+        }
+    }
+
     fn request(command: &str, background: bool, timeout_secs: u64) -> ShellRequest {
         ShellRequest {
             command: command.to_string(),
@@ -875,30 +930,67 @@ mod tests {
         let _ = bg::global().kill_one(&entry.id);
     }
 
-    /// 结局三：超时**不杀**（既有对外契约），但必须登记为保留项并交出 pid/输出位置。
+    /// 结局三（新契约）：默认前台超时 ⇒ **终止**，并给出改用 background=true 的指引。
     #[test]
-    fn system_shell_timeout_keeps_process_and_reports_pid_and_output() {
-        let r = run_system_shell(&request(&long_sleep_command(), false, 1), &ctx_with(None))
-            .expect("超时不报错");
+    fn system_shell_timeout_kills_foreground_by_default() {
+        let marker = "nuphus-test-fg-timeout";
+        let r = run_system_shell(
+            &request(&marked_sleep_command(marker), false, 1),
+            &ctx_with(None),
+        )
+        .expect("超时不报错");
+
+        assert!(!r.success);
+        let err = r.error.clone().expect("超时必须有说明");
+        assert!(
+            err.contains("已终止"),
+            "默认前台超时必须终止并如实说明: {err}"
+        );
+        assert!(
+            err.contains("background=true"),
+            "必须给出长任务的正确用法: {err}"
+        );
+        // 该进程不得留在账本里（前台超时不转保留）；只数本用例标记的条目
+        let leftover = bg::global()
+            .list()
+            .into_iter()
+            .filter(|t| t.command.contains(marker))
+            .count();
+        assert_eq!(leftover, 0, "前台超时不得留下后台条目");
+    }
+
+    /// 结局四（新契约）：显式 background=true 超时 ⇒ **不杀**，登记保留并交出 pid/输出位置。
+    #[test]
+    fn system_shell_timeout_keeps_explicit_background_and_reports_pid() {
+        let marker = "nuphus-test-bg-timeout";
+        let r = run_system_shell(
+            &request(&marked_sleep_command(marker), true, 1),
+            &ctx_with(None),
+        )
+        .expect("超时不报错");
 
         assert!(!r.success);
         let err = r.error.clone().expect("超时必须有说明");
         assert!(
             err.contains("仍在后台继续运行"),
-            "超时不杀是既有对外契约，文案不得改口: {err}"
+            "显式保留必须如实报告「仍在跑」: {err}"
         );
         assert!(err.contains("PID"), "必须交出 pid: {err}");
         assert!(err.contains("bg-"), "必须交出任务 id: {err}");
         assert!(err.contains("勿重复执行"), "必须劝阻重跑: {err}");
+        assert!(
+            err.contains("最长存活"),
+            "必须告知系统兜底的存活上限: {err}"
+        );
 
-        // 该进程被保留 ⇒ 必须在清单里且标记 retain（命令 6s 后自退，届时自动清理）
+        // 该进程被保留 ⇒ 必须在清单里且标记 retain；测试收尾显式结束它
         let entry = bg::global()
             .list()
             .into_iter()
-            .filter(|t| t.command.contains("Start-Sleep") || t.command.contains("sleep"))
+            .filter(|t| t.command.contains(marker))
             .max_by_key(|t| t.started_at_ms);
-        if let Some(entry) = entry {
-            assert!(entry.retain, "超时保留的条目必须标记为 retain");
-        }
+        let entry = entry.expect("显式保留的条目必须留在清单里");
+        assert!(entry.retain, "显式保留的条目必须标记为 retain");
+        let _ = bg::global().kill_one(&entry.id);
     }
 }
