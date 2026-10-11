@@ -255,11 +255,11 @@
   display: flex;
   flex-direction: column;
   border-radius: 20px;
-  background: var(--glass-bg-soft, rgba(10, 10, 18, 0.82));
+  /* 主题弹窗背景（--modal-bg，与主窗弹窗族同键、受「界面不透明度」滑块管辖）。
+     此前用 --glass-bg-soft + blur(24px) 磨砂玻璃，与主窗弹窗视觉脱节（2026-10-11）。 */
+  background: var(--modal-bg);
   border: 1px solid var(--glass-4, rgba(255, 255, 255, 0.08));
   box-shadow: var(--shadow-modal, 0 8px 48px rgba(0, 0, 0, 0.6));
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
   animation: toolbarFadeIn 0.12s ease-out;
   overflow: hidden;
 }

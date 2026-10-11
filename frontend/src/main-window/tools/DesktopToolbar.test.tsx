@@ -2,12 +2,17 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DesktopToolbar } from './DesktopToolbar'
 
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
+const { invoke, showAppFeedback } = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  showAppFeedback: vi.fn(),
+}))
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
+vi.mock('../../ui/islandChannel', () => ({ showAppFeedback }))
 
 describe('user-selected desktop application registration', () => {
   beforeEach(() => {
     invoke.mockReset()
+    showAppFeedback.mockClear()
     localStorage.clear()
   })
   afterEach(cleanup)
@@ -16,8 +21,9 @@ describe('user-selected desktop application registration', () => {
     invoke.mockResolvedValue({ name: 'Portable Editor', app_ref: 'app:local' })
     render(<DesktopToolbar />)
     fireEvent.click(screen.getByRole('button', { name: '登记应用' }))
-    expect(await screen.findByText('应用已登记')).toBeTruthy()
-    expect(screen.getByText(/Portable Editor/)).toBeTruthy()
+    // 登记成功走 island 轻提示（2026-10-11：信息类提示不再弹窗，免点关闭）
+    await waitFor(() => expect(showAppFeedback).toHaveBeenCalled())
+    expect(showAppFeedback).toHaveBeenCalledWith(expect.stringContaining('Portable Editor'), 'success')
     expect(invoke).toHaveBeenCalledExactlyOnceWith('desktop_register_application', undefined)
   })
 
@@ -26,7 +32,7 @@ describe('user-selected desktop application registration', () => {
     render(<DesktopToolbar />)
     fireEvent.click(screen.getByRole('button', { name: '登记应用' }))
     await waitFor(() => expect(screen.getByRole('button', { name: '登记应用' })).not.toBeDisabled())
-    expect(screen.queryByText('应用已登记')).toBeNull()
+    expect(showAppFeedback).not.toHaveBeenCalled()
     expect(invoke).toHaveBeenCalledTimes(1)
   })
 })

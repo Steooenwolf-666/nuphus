@@ -463,6 +463,18 @@ export function CaptureOverlay() {
     }).catch(console.error)
   }, [])
 
+  // 「保存」= 把已落盘的 PNG **复制一份到桌面**（「✓ 确认」才会把截图回传主窗进对话）。
+  // 原件留在截图目录，确认 / 重新选择链路不受影响；saved_only 标记经 take_capture_result
+  // 轮询回主窗：DesktopToolbar 温和收尾（提示桌面路径），UserInputPrompt 的截图输入按
+  // 取消同形静默收尾，OcrDictionary 不可达（其 ocr 模式无预览确认条）。
+  const handleSaveOnly = useCallback(() => {
+    const cr = captureResultRef.current
+    if (!cr) return
+    invoke('overlay_capture_save_only', { path: cr.path }).catch(e =>
+      console.error('保存到桌面失败:', e),
+    )
+  }, [])
+
   // ── 非截图模式（选区/模板/OCR）：确认后自动完成，跳过预览 ──
   useEffect(() => {
     if (captureResult && !SHOW_PREVIEW) {
@@ -470,13 +482,17 @@ export function CaptureOverlay() {
     }
   }, [captureResult, handleDone])
 
-  // ── 预览态快捷键：Enter 确认（预览仅截图模式出现）──
+  // ── 预览态快捷键：Enter 确认 / S 保存（预览仅截图模式出现）──
   useEffect(() => {
     if (!SHOW_PREVIEW) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && captureResultRef.current) {
+      if (!captureResultRef.current) return
+      if (e.key === 'Enter') {
         e.preventDefault()
         handleDone()
+      } else if (e.key === 's' || e.key === 'S') {
+        e.preventDefault()
+        handleSaveOnly()
       }
     }
     window.addEventListener('keydown', onKey, true)
@@ -485,7 +501,7 @@ export function CaptureOverlay() {
       window.removeEventListener('keydown', onKey, true)
       document.removeEventListener('keydown', onKey, true)
     }
-  }, [SHOW_PREVIEW, handleDone])
+  }, [SHOW_PREVIEW, handleDone, handleSaveOnly])
 
   const handleReselect = useCallback(() => {
     captureResultRef.current = null
@@ -654,12 +670,15 @@ export function CaptureOverlay() {
             <Button variant="default" onClick={handleReselect}>
               重新选择
             </Button>
+            <Button variant="default" onClick={handleSaveOnly}>
+              💾 保存到桌面
+            </Button>
             <Button variant="primary" onClick={handleDone}>
               ✓ 确认
             </Button>
           </div>
           <div className="capture-confirm-hint">
-            <kbd>Enter</kbd> 确认 · <kbd>Esc</kbd> 取消
+            <kbd>Enter</kbd> 确认 · <kbd>S</kbd> 保存 · <kbd>Esc</kbd> 取消
           </div>
         </div>
       )}

@@ -430,6 +430,49 @@ pub async fn overlay_capture_done(
     Ok(())
 }
 
+/// User picked「保存」on the capture confirm bar — copy the PNG to the Desktop.
+///
+/// 语义（2026-10-11 用户定案）：「✓ 确认」= 截图进对话（引用栏）；「保存」= 留一份
+/// 在**桌面**方便用户其它用途（分享 / 拖进别的应用）。PNG 原件在
+/// overlay_capture_confirm 时已落盘截图目录，这里只是**复制**一份到
+/// `Desktop/Nuphus截图_<时间戳>.png`——原件不动，确认 / 重新选择链路不受影响。
+/// 不写 CAPTURE_RESULT（与 done / save_only 的收尾一样清现场 + 恢复主窗）。
+#[tauri::command]
+pub async fn overlay_capture_save_only(app: AppHandle, path: String) -> Result<String, String> {
+    // 源文件必须存在：confirm 落盘失败时前端拿不到 captureResult，正常到不了这里；
+    // 真遇到（手工清了截图目录等）就明确报错，不静默。
+    let src = std::path::PathBuf::from(&path);
+    if !src.is_file() {
+        return Err(format!("截图文件不存在: {path}"));
+    }
+
+    let desktop = dirs::desktop_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| "无法定位桌面目录".to_string())?;
+    std::fs::create_dir_all(&desktop).map_err(|e| format!("创建桌面目录失败: {e}"))?;
+    let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f");
+    let dest = desktop.join(format!("Nuphus截图_{ts}.png"));
+
+    std::fs::copy(&src, &dest).map_err(|e| format!("保存到桌面失败: {e}"))?;
+    let dest_str = dest.display().to_string();
+
+    *CAPTURE_RESULT.lock().expect("store saved-only flag") =
+        Some(serde_json::json!({ "saved_only": true, "path": dest_str }));
+
+    *PRE_SCREENSHOT
+        .lock()
+        .expect("clear pre-screenshot after save-only") = None;
+
+    hide_overlay(&app);
+
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+
+    Ok(dest_str)
+}
+
 /// Pick color — read specified pixel color from pre-screenshot, store directly in CAPTURE_RESULT and hide overlay
 #[tauri::command]
 pub async fn overlay_pick_color(app: AppHandle, x: i32, y: i32) -> Result<(), String> {

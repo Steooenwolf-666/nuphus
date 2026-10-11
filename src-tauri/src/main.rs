@@ -429,6 +429,7 @@ fn main() {
             commands::overlay_magnifier_region,
             commands::overlay_capture_confirm,
             commands::overlay_capture_done,
+            commands::overlay_capture_save_only,
             commands::overlay_capture_cancel,
             commands::overlay_pick_color,
             commands::take_capture_result,

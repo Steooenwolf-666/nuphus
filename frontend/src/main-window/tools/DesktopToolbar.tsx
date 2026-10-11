@@ -5,6 +5,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { invoke as bridgeInvoke } from '../../core/bridge'
+import { showAppFeedback } from '../../ui/islandChannel'
 
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -156,17 +157,27 @@ export function DesktopToolbar() {
           stopPolling()
           setLoading(false)
 
-          // Process result
+          // Process result —— 取消 / 保存到桌面走 island 轻提示，不弹窗（用户少一次
+          // 点击关闭）；弹窗只留给「成功且可能要复制」的场景（见下方 picker 分支）。
           if (raw.cancelled) {
             if (pickingSlotIndexRef.current !== null) {
               // Color picker cancelled: return to panel
               setPickingSlotIndex(null)
               pickingSlotIndexRef.current = null
               setLoading(false)
+              showAppFeedback('已取消取色', 'info')
               return
             }
             setActiveTool(null)
-            setResult({ type: 'info', title: '已取消', content: '已取消' })
+            showAppFeedback('已取消', 'info')
+            return
+          }
+
+          // 保存到桌面（不注入对话）：截图复制一份到桌面方便用户其它用途。
+          // 不派发 capture-result 事件（「确认」= 进对话的出口）。
+          if (raw.saved_only) {
+            setActiveTool(null)
+            showAppFeedback(`截图已保存到桌面：${raw.path || ''}`, 'success')
             return
           }
 
@@ -215,7 +226,7 @@ export function DesktopToolbar() {
           setLoading(false)
           if (pickingSlotIndexRef.current === null) {
             setActiveTool(null)
-            setResult({ type: 'info', title: '轮询错误', content: String(e) })
+            showAppFeedback(`轮询错误：${String(e)}`, 'error')
           } else {
             // Color picker polling error: return to panel
             setPickingSlotIndex(null)
@@ -280,7 +291,7 @@ export function DesktopToolbar() {
       await tauriInvoke<any>('start_overlay_mask', { mode })
       startPolling(mode)
     } catch (e: any) {
-      setResult({ type: 'info', title: '操作失败', content: String(e) })
+      showAppFeedback(`操作失败：${String(e)}`, 'error')
       setLoading(false)
       setActiveTool(null)
     }
@@ -356,13 +367,12 @@ export function DesktopToolbar() {
                 'desktop_register_application',
               )
               if (registered)
-                setResult({
-                  type: 'info',
-                  title: '应用已登记',
-                  content: `${registered.name}\n现在可在工作流中按应用名称选择，不需要提供启动脚本。`,
-                })
+                showAppFeedback(
+                  `应用「${registered.name}」已登记，可在工作流中按应用名称选择。`,
+                  'success',
+                )
             } catch (error) {
-              setResult({ type: 'info', title: '应用登记失败', content: String(error) })
+              showAppFeedback(`应用登记失败：${String(error)}`, 'error')
             } finally {
               setLoading(false)
             }
