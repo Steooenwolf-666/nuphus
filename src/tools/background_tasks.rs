@@ -529,12 +529,18 @@ impl BackgroundTaskRegistry {
     }
 
     /// 按 id 结束某个后台任务（**含保留项**——这是显式意图，允许）。
+    ///
+    /// 成功终止（或发现已自行退出）时向输出日志附加终止事实
+    /// （[`append_manual_kill_note`]）：等待该命令输出的 Agent 能读到明确结局，
+    /// 不会把面板操作误判成命令失败而重跑。杀失败则不动日志——条目仍在账上，
+    /// 面板会拿到 Err 呈现给用户。
     pub fn kill_one(&self, id: &str) -> std::result::Result<KillOutcome, String> {
         let Some(task) = self.get(id) else {
             return Err(format!("后台任务 {id} 不存在或已结束"));
         };
         match self.control.kill_tree(task.pid) {
             Ok(()) => {
+                append_manual_kill_note(&task, false);
                 self.unregister(id);
                 Ok(KillOutcome {
                     task,
@@ -543,6 +549,7 @@ impl BackgroundTaskRegistry {
             }
             Err(_e) if !self.control.is_alive(task.pid) => {
                 // 进程已自行退出：下刀失败不是失败，只是无事可做
+                append_manual_kill_note(&task, true);
                 self.unregister(id);
                 Ok(KillOutcome {
                     task,
@@ -635,6 +642,43 @@ pub fn discard_log(task: &BackgroundTask) {
         if e.kind() != std::io::ErrorKind::NotFound {
             tracing::debug!("[BG] 删除输出日志失败 {}: {e}", path);
         }
+    }
+}
+
+/// 手动结束后，向该任务的输出日志**追加终止事实**。
+///
+/// 为什么写在日志里：等待该命令的 Agent 被明确告知「输出持续追加到 <路径>，
+/// 用 Read 读取」。超时转后台后它多半还在等这个文件出新内容——面板把进程杀了，
+/// 日志若无下文，Agent 只会看到「输出停了」，分不清是命令卡死、失败还是被人为
+/// 终止，最坏会重跑整条长命令。追加分隔线 + 明文事实，让它的下一次 Read 直接
+/// 读到结局。
+///
+/// 写失败仅 debug 日志：日志是尽力而为的附加物，不能反过来让结束动作失败。
+pub fn append_manual_kill_note(task: &BackgroundTask, already_gone: bool) {
+    let Some(ref path) = task.output_path else {
+        return;
+    };
+    let body = if already_gone {
+        format!(
+            "该命令的进程（PID {}）在你读取此文件前已自行退出；「后台任务」面板尝试结束它时已无进程，账本条目一并清理。**无需重新执行**，以上输出即该命令的最终产出。",
+            task.pid
+        )
+    } else {
+        format!(
+            "该命令的进程树（PID {}）已被用户在「后台任务」面板中手动结束——这是用户的显式操作，不是命令失败或超时。此后不会再有新输出。**不要重新执行该命令**；若任务目标仍需要它的结果，请基于以上已有输出继续，或与用户确认。",
+            task.pid
+        )
+    };
+    let note = format!(
+        "\n\n---- [NUPHUS 后台任务账本] 任务 {} 终止报告 ----\n{}\n",
+        task.id, body
+    );
+    let write = std::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, note.as_bytes()));
+    if let Err(e) = write {
+        tracing::debug!("[BG] 追加手动结束说明到输出日志失败 {}: {e}", path);
     }
 }
 
@@ -757,6 +801,74 @@ mod tests {
         assert_eq!(outcome.task.pid, 777);
         assert_eq!(observer.kill_calls(), vec![777]);
         assert!(reg.get("bg-9").is_none());
+    }
+
+    #[test]
+    fn kill_one_appends_manual_kill_note_to_output_log() {
+        // 面板结束 ≠ 命令失败：日志里必须有明确的「被手动结束」事实，
+        // 等待该命令输出的 Agent 读到结局，不会误判重跑。
+        let log = std::env::temp_dir().join(format!("bg_kill_note_{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&log);
+        std::fs::write(&log, "partial output line\n").unwrap();
+
+        let ctl = FakeControl::new(&[777], &[]);
+        let reg = BackgroundTaskRegistry::with_control(Box::new(ctl));
+        let mut t = task("bg-note", 777, true);
+        t.output_path = Some(log.to_string_lossy().to_string());
+        reg.register(t);
+
+        let outcome = reg.kill_one("bg-note").expect("显式结束应成功");
+        assert!(!outcome.already_gone);
+
+        let content = std::fs::read_to_string(&log).unwrap();
+        assert!(content.contains("partial output line"), "原输出必须保留");
+        assert!(
+            content.contains("已被用户在「后台任务」面板中手动结束"),
+            "必须写明是面板手动结束: {content}"
+        );
+        assert!(content.contains("不要重新执行"), "必须给出防重跑指令");
+        assert!(reg.get("bg-note").is_none());
+        let _ = std::fs::remove_file(&log);
+    }
+
+    #[test]
+    fn kill_one_appends_already_gone_note_without_lying_about_kill() {
+        // 进程已自行退出：说明必须是「已自行退出」，不得冒充「已终止」
+        let log =
+            std::env::temp_dir().join(format!("bg_kill_note_gone_{}.log", std::process::id()));
+        let _ = std::fs::remove_file(&log);
+        std::fs::write(&log, "done output\n").unwrap();
+
+        let ctl = FakeControl::new(&[888], &[]);
+        let observer = ctl.observer();
+        let reg = BackgroundTaskRegistry::with_control(Box::new(ctl));
+        let mut t = task("bg-gone", 888, false);
+        t.output_path = Some(log.to_string_lossy().to_string());
+        reg.register(t);
+        observer.mark_dead(888);
+
+        let outcome = reg.kill_one("bg-gone").expect("进程已死不算失败");
+        assert!(outcome.already_gone);
+
+        let content = std::fs::read_to_string(&log).unwrap();
+        assert!(content.contains("已自行退出"));
+        assert!(!content.contains("已被用户在「后台任务」面板中手动结束"));
+        assert!(content.contains("无需重新执行"));
+        let _ = std::fs::remove_file(&log);
+    }
+
+    #[test]
+    fn kill_one_without_output_path_still_succeeds() {
+        // output_path 为 None（日志未开启）时跳过追加，不得影响结束本身
+        let ctl = FakeControl::new(&[999], &[]);
+        let reg = BackgroundTaskRegistry::with_control(Box::new(ctl));
+        let mut t = task("bg-nolog", 999, true);
+        t.output_path = None;
+        reg.register(t);
+
+        let outcome = reg.kill_one("bg-nolog").expect("无日志也应成功");
+        assert!(!outcome.already_gone);
+        assert!(reg.get("bg-nolog").is_none());
     }
 
     #[test]
