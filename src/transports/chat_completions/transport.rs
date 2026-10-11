@@ -18,6 +18,19 @@ use std::time::Duration;
 const FIRST_CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
 const CHUNK_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// 内容级静默告警阈值：连接活着（chunk 持续到达——心跳/保活字节也算），
+/// 但**没有任何真实内容**（文本 / 推理 / 工具调用 / 图片）超过该时长时，
+/// 向前端推送「上游模型 N 秒无内容输出」提示。到点只告警、不杀流。
+/// 首次告警后每过一个阈值时长重复一次——持续等待时用户需要周期性确认
+/// 「系统还在等」而不是「又死了」。
+///
+/// 为什么不能只靠 `CHUNK_TIMEOUT`：它按**字节**计时，而中转网关普遍每秒
+/// 发 keep-alive 空行保活——每个字节都重置 idle 计时器。线上实测（2026-10-11）：
+/// 上游 19 分钟不发一个内容块，60s idle 超时一次都没触发，用户侧只见
+/// 「执行中」、无任何反馈。本阈值按**内容**计时，心跳 reset 不了它；
+/// 真正的断流判定仍归 `CHUNK_TIMEOUT`（字节无流动 60s 才杀）。
+const CONTENT_STALL_WARN: Duration = Duration::from_secs(60);
+
 /// finish_reason 之后等待 usage 尾帧的容差。
 ///
 /// 协议依据（OpenAI 兼容 / 阿里云百炼文档，2026-09-18 版）：
@@ -95,6 +108,18 @@ fn silence_retry_notice(timeout: Duration, attempt: usize) -> String {
     )
 }
 
+/// 内容级静默（连接活着、字节在走，但没有真实内容）的前端提示文案。
+///
+/// 措辞面向普通用户：说「上游模型」而非 provider / 网关 / host，
+/// 并 explicitly 说明「连接保持中，仍在等待」——这是等待提示不是故障警报，
+/// 不能让人以为应用死了而手动终止。
+fn content_stall_notice(idle: Duration) -> String {
+    format!(
+        "上游模型 {} 秒无内容输出（连接保持中，仍在等待）…",
+        idle.as_secs()
+    )
+}
+
 /// Read cache hit tokens from usage JSON, using provider-specific field name.
 /// Falls back to OpenAI standard `prompt_tokens_details.cached_tokens` when field is empty.
 fn read_cache_hit(usage: &serde_json::Value, field: &str) -> u32 {
@@ -166,11 +191,17 @@ impl SseByteBuffer {
 #[derive(Debug, Clone)]
 pub struct ChatCompletionsTransport {
     config: ChatCompletionsConfig,
+    /// 内容静默告警阈值覆写——仅测试注入小值用；生产恒为 `None`
+    /// （取常量 `CONTENT_STALL_WARN`）。
+    content_stall_warn_override: Option<Duration>,
 }
 
 impl ChatCompletionsTransport {
     pub fn new(config: ChatCompletionsConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            content_stall_warn_override: None,
+        }
     }
 
     pub fn with_model(mut self, model: &str) -> Self {
@@ -197,6 +228,20 @@ impl ChatCompletionsTransport {
     /// idle 阈值（已开流 → 下一个 chunk）
     fn idle_chunk_timeout(&self) -> Duration {
         CHUNK_TIMEOUT
+    }
+
+    /// 内容级静默告警阈值（见 `CONTENT_STALL_WARN` 文档）。
+    /// 测试可经 `with_content_stall_warn` 覆写为小值。
+    fn content_stall_warn(&self) -> Duration {
+        self.content_stall_warn_override
+            .unwrap_or(CONTENT_STALL_WARN)
+    }
+
+    /// 测试专用：覆写内容静默阈值（生产路径不调用）。
+    #[cfg(test)]
+    pub(crate) fn with_content_stall_warn(mut self, warn: Duration) -> Self {
+        self.content_stall_warn_override = Some(warn);
+        self
     }
 
     /// 判断错误是否为网络连接层错误（TCP/DNS/TLS），而非 HTTP 服务端错误
@@ -661,6 +706,8 @@ impl ChatCompletionsTransport {
                     );
                     tracing::error!(
                         timeout_s = self.first_chunk_timeout().as_secs(),
+                        provider = %self.config.name,
+                        url = %self.config.endpoint(),
                         "LLM API first response timeout"
                     );
                     if will_retry {
@@ -711,6 +758,12 @@ impl ChatCompletionsTransport {
             // 后续只按这个值分流：Clean → 正常收尾；Interrupted → salvage 决策。
             // 取代原先「last_error 是否为空」+「stream_was_silent」两套隐式判断。
             let mut stream_end = StreamEnd::Clean;
+            // 内容时钟：最后一次收到**真实内容**（文本/推理/工具/图片）的时刻。
+            // 与字节时钟分开——心跳保活只推进字节，内容时钟到点即向前端告警
+            // （content_stall_notice）。流打开即起算：首内容前的等待由
+            // FIRST_CHUNK_TIMEOUT 负责兜底，这里覆盖的是「开了流却不出内容」。
+            let mut last_content_at = std::time::Instant::now();
+            let mut stall_last_notice: Option<std::time::Instant> = None;
 
             {
                 use futures_util::StreamExt;
@@ -721,6 +774,28 @@ impl ChatCompletionsTransport {
                         if flag.load(Ordering::SeqCst) {
                             return Err(crate::NuphusError::LLM(crate::LLMError::Cancelled));
                         }
+                    }
+
+                    // 内容级静默巡检（每圈一次，成本 = 两次 Instant 比较）：
+                    // 连接活着但不出内容超过阈值 → 推送等待提示；此后每过一个
+                    // 阈值时长重复一次（生产 60s/次）。只告警、不杀流——
+                    // 断流判定仍归下面的 idle_chunk_timeout（字节 60s 无流动）。
+                    let content_idle = last_content_at.elapsed();
+                    let stall_warn = self.content_stall_warn();
+                    if content_idle >= stall_warn
+                        && saw_finish == false
+                        && stall_last_notice.map_or(true, |t| t.elapsed() >= stall_warn)
+                    {
+                        stall_last_notice = Some(std::time::Instant::now());
+                        tracing::warn!(
+                            content_idle_s = content_idle.as_secs(),
+                            model = %self.config.model,
+                            url = %self.config.endpoint(),
+                            "[STREAM] content stall: connection alive, no content — notifying frontend"
+                        );
+                        emitter(AssistantEvent::ConnectionStatus(content_stall_notice(
+                            content_idle,
+                        )));
                     }
 
                     // saw_finish 之后只需等协议指定的最后一个 usage 块，
@@ -755,15 +830,21 @@ impl ChatCompletionsTransport {
                                 break;
                             }
                             // 无 finish_reason 的空闲才是真断流。
+                            // error 串带 provider/url：归因「哪家抽风」不能只靠
+                            // 请求日志的时间线对齐（线上事故的教训）。
                             stream_end = StreamEnd::Interrupted {
                                 error: format!(
-                                    "Chunk read timeout after {}s",
-                                    self.idle_chunk_timeout().as_secs()
+                                    "Chunk read timeout after {}s (provider={}, url={})",
+                                    self.idle_chunk_timeout().as_secs(),
+                                    self.config.name,
+                                    self.config.endpoint()
                                 ),
                                 silent: true,
                             };
                             tracing::error!(
                                 timeout_s = self.idle_chunk_timeout().as_secs(),
+                                provider = %self.config.name,
+                                url = %self.config.endpoint(),
                                 "LLM stream chunk timeout"
                             );
                             break;
@@ -821,6 +902,7 @@ impl ChatCompletionsTransport {
                             {
                                 if !r.is_empty() {
                                     current_reasoning.push_str(r);
+                                    last_content_at = std::time::Instant::now();
                                     emitter(AssistantEvent::Reasoning(r.to_string()));
                                 }
                             }
@@ -830,6 +912,7 @@ impl ChatCompletionsTransport {
                             if let Some(text) = delta.get("content").and_then(|c| c.as_str()) {
                                 if !text.is_empty() {
                                     current_text.push_str(text);
+                                    last_content_at = std::time::Instant::now();
                                     emitter(AssistantEvent::TextDelta(text.to_string()));
                                 }
                             } else if let Some(parts) =
@@ -845,6 +928,7 @@ impl ChatCompletionsTransport {
                                                 {
                                                     if !txt.is_empty() {
                                                         current_text.push_str(txt);
+                                                        last_content_at = std::time::Instant::now();
                                                         emitter(AssistantEvent::TextDelta(
                                                             txt.to_string(),
                                                         ));
@@ -861,6 +945,7 @@ impl ChatCompletionsTransport {
                                                             "[IMAGE] model generated image: {}",
                                                             url
                                                         );
+                                                        last_content_at = std::time::Instant::now();
                                                         emitter(AssistantEvent::ImageAttachment {
                                                             url: url.to_string(),
                                                         });
@@ -874,6 +959,7 @@ impl ChatCompletionsTransport {
                             } else if let Some(text) = delta.get("text").and_then(|c| c.as_str()) {
                                 if !text.is_empty() {
                                     current_text.push_str(text);
+                                    last_content_at = std::time::Instant::now();
                                     emitter(AssistantEvent::TextDelta(text.to_string()));
                                 }
                             }
@@ -905,13 +991,21 @@ impl ChatCompletionsTransport {
                                         tool_id_order.push(index);
                                         (String::new(), String::new(), String::new())
                                     });
+                                    // 工具调用的 id / name / args 增量都是真实内容
+                                    // （参数流常被网关拆成几十个小帧）——推进内容时钟，
+                                    // 别把"正在吐参数"误报成无内容。
                                     if !id.is_empty() {
                                         entry.0 = id.to_string();
+                                        last_content_at = std::time::Instant::now();
                                     }
                                     if !name.is_empty() {
                                         entry.1 = name.to_string();
+                                        last_content_at = std::time::Instant::now();
                                     }
-                                    entry.2.push_str(args);
+                                    if !args.is_empty() {
+                                        entry.2.push_str(args);
+                                        last_content_at = std::time::Instant::now();
+                                    }
                                 }
                             }
                         }
@@ -921,6 +1015,7 @@ impl ChatCompletionsTransport {
                         if let Some(msg) = json.pointer("/choices/0/message") {
                             if let Some(r) = msg.get("reasoning_content").and_then(|c| c.as_str()) {
                                 if current_reasoning.is_empty() {
+                                    last_content_at = std::time::Instant::now();
                                     emitter(AssistantEvent::Reasoning(r.to_string()));
                                 }
                                 current_reasoning.push_str(r);
@@ -1253,9 +1348,11 @@ impl ChatCompletionsTransport {
         // Reasoning depth — effort control for providers that accept it.
         // Gated by quirks.supports_reasoning_effort so the other Providers never
         // receive an unknown field; the value comes from `config.toml
-        // [[providers]] reasoning_effort`. Providers with effort_excludes_tools
-        // (DeepSeek) additionally suppress the field on tool-carrying requests;
-        // others (Kimi k3 — verified live) receive it with or without tools.
+        // [[providers]] reasoning_effort`. effort_excludes_tools (no builtin
+        // provider sets it now — DeepSeek officially accepts tools +
+        // reasoning_effort together, Thinking Mode · Tool Calls sample) would
+        // additionally suppress the field on tool-carrying requests; Kimi k3
+        // verified live with tools.
         if self.config.quirks.supports_reasoning_effort
             && (request.tools.is_none() || !self.config.quirks.effort_excludes_tools)
         {
@@ -1322,9 +1419,11 @@ impl super::super::Transport for ChatCompletionsTransport {
     ) -> Result<()> {
         let body = self.build_request_body(&request);
         tracing::info!(
-            "[REQ-STREAMING] model={}, {} messages",
+            "[REQ-STREAMING] provider={}, model={}, {} messages, url={}",
+            self.config.name,
             self.config.model,
-            body["messages"].as_array().map(|a| a.len()).unwrap_or(0)
+            body["messages"].as_array().map(|a| a.len()).unwrap_or(0),
+            self.config.endpoint()
         );
         self.send_chat_request_streaming(body, Some(cancel_flag), emitter)
             .await
@@ -2179,6 +2278,112 @@ mod salvage_tests {
                 .any(|e| matches!(e, AssistantEvent::MessageStop)),
             "零产出不得发 MessageStop"
         );
+    }
+
+    /// 内容级静默的提示文案：普通用户措辞（「上游模型」而非 provider/网关），
+    /// 且必须显式说明「连接保持中，仍在等待」——这是等待提示，不是故障警报。
+    #[test]
+    fn content_stall_notice_uses_plain_language() {
+        let notice = content_stall_notice(Duration::from_secs(60));
+        assert!(
+            notice.contains("上游模型"),
+            "必须用普通用户能看懂的「上游模型」措辞: {notice}"
+        );
+        assert!(
+            notice.contains("60 秒无内容输出"),
+            "必须报告无内容时长: {notice}"
+        );
+        assert!(
+            notice.contains("连接保持中") && notice.contains("仍在等待"),
+            "必须说明连接未断、仍在等待，避免被误判为卡死: {notice}"
+        );
+    }
+
+    /// 心跳保活下的内容级静默：上游只发 SSE 注释帧（`: keep-alive`，解析层
+    /// 静默丢弃）拖延时间，**一个内容块都不发**——字节在走，60s idle 被
+    /// 反复重置（线上事故：19 分钟无内容也不触发）。期望：
+    /// 内容时钟独立计时，到点向前端推送「上游模型 N 秒无内容输出」，
+    /// 并按重复间隔持续提醒；不误发 TextDelta、不中断流。
+    #[tokio::test]
+    async fn heartbeat_only_stream_warns_content_stall() {
+        // 每 300ms 一个心跳帧，共发 10 个（约 3s）后关闭连接。
+        let (port, _hits) = spawn_heartbeat_server(10, 300).await;
+        let transport = ChatCompletionsTransport::new(test_config(port))
+            .with_content_stall_warn(Duration::from_millis(700));
+        let (events, emitter) = collect_events();
+
+        // 整体 10s 上限：即便断言写错也必须是「失败」而不是「挂住」。
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            transport.send_chat_request_streaming(request_body(), None, emitter),
+        )
+        .await
+        .expect("heartbeat stream must terminate (server closes) — test would hang");
+
+        // 对端最终关闭连接 = 协议允许的正常结束点。
+        assert!(result.is_ok(), "clean close 应 Ok: {:?}", result.err());
+        let events = events.lock().unwrap();
+
+        let stall_notices: Vec<&String> = events
+            .iter()
+            .filter_map(|e| match e {
+                AssistantEvent::ConnectionStatus(m) if m.contains("上游模型") => Some(m),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            stall_notices.len() >= 2,
+            "内容静默须至少告警两次（首次 + 一次重复），实际 {} 次: {:?}",
+            stall_notices.len(),
+            stall_notices
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AssistantEvent::TextDelta(_))),
+            "纯心跳流不得产生任何内容事件"
+        );
+    }
+
+    /// 启动一次性假服务器：只发 SSE **注释帧**（`: keep-alive`）保活——
+    /// 对 SSE 解析层是空行（`data:` 前缀都没有），一个内容帧都不发。
+    /// `rounds × interval_ms` 后以 chunked 终止块**干净关闭**（正常结束点），
+    /// 避免非干净断连把测试拖进重试路径。
+    async fn spawn_heartbeat_server(rounds: usize, interval_ms: u64) -> (u16, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits2 = hits.clone();
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                hits2.fetch_add(1, AtomicOrdering::SeqCst);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 8192];
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        sock.read(&mut buf),
+                    )
+                    .await;
+                    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n";
+                    let _ = sock.write_all(head.as_bytes()).await;
+                    for _ in 0..rounds {
+                        tokio::time::sleep(std::time::Duration::from_millis(interval_ms)).await;
+                        // SSE 注释帧：以 ':' 开头，协议规定忽略；且不带 data: 前缀，
+                        // 解析层 continue——客户端收到字节（重置 idle 计时器）但零内容。
+                        let frame = ": keep-alive\n\n";
+                        let chunk = format!("{:x}\r\n{}\r\n", frame.len(), frame);
+                        let _ = sock.write_all(chunk.as_bytes()).await;
+                        let _ = sock.flush().await;
+                    }
+                    // chunked 合法终止块 → 客户端 Ok(None) = Clean 结束点
+                    // （非干净断连会走读错误 → 零内容重试路径，把测试拖超时）
+                    let _ = sock.write_all(b"0\r\n\r\n").await;
+                    let _ = sock.flush().await;
+                    drop(sock);
+                });
+            }
+        });
+        (port, hits)
     }
 
     /// 启动一次性假服务器：写完整 SSE 流后**真正挂起**——body 用 chunked 编码
