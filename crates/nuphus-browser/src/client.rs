@@ -3870,7 +3870,70 @@ impl BrowserClient {
     }
 
     /// New tab
+    ///
+    /// 先收编已有的 about:blank 孤儿页（有则导航/复用，不再新开）：外链每点一次都
+    /// new_page 会在历史标签外再开一张 blank——每张新页 = 新 renderer 进程（启动
+    /// 耗时 + 常驻内存），孤儿收编是打开耗时与资源占用的双重收益。无孤儿才真正
+    /// 新开。认领页与新建页同一套一次性配置（见 get_or_create_page 的注释）。
     pub async fn new_tab(&mut self, url: Option<&str>) -> Result<String, BrowserError> {
+        let requested = url.unwrap_or("about:blank").to_string();
+
+        // 无参数（= 要一张 blank）：等价于「拿一张可用页」，直接走认领逻辑。
+        if requested == "about:blank" {
+            self.get_or_create_page().await?;
+            return Ok("New tab opened: about:blank".to_string());
+        }
+
+        // 带参数：先看有没有 blank 孤儿可收编（导航过去），没有才 new_page。
+        // pages() 只读（fetch_targets 会杀死存活 Page 的命令通道，见
+        // is_connection_alive ⚠ 注释）；本会话自己的页被 self.page 持有、不在孤儿之列。
+        // 读取块只做只读扫描——self.browser 的不可变借用随块结束归还，
+        // 后面的 self 变更（page 赋值 / ensure_download_behavior）才不冲突。
+        let orphan: Option<Page> = {
+            let browser = self.browser.as_ref().ok_or(BrowserError::NotStarted)?;
+            let browser_guard = browser.lock().await;
+            let pages = tokio::time::timeout(
+                std::time::Duration::from_secs(NEW_PAGE_TIMEOUT_SECS),
+                browser_guard.pages(),
+            )
+            .await
+            .map_err(|_| {
+                BrowserError::Connection(
+                    "timed out reading browser targets (CDP unresponsive)".into(),
+                )
+            })?
+            .map_err(cdp_err)?;
+
+            let mut found: Option<Page> = None;
+            for p in &pages {
+                let u = p
+                    .url()
+                    .await
+                    .unwrap_or_default()
+                    .unwrap_or_else(|| "about:blank".to_string());
+                if u == "about:blank" {
+                    found = Some(p.clone());
+                    break;
+                }
+            }
+            found
+        };
+
+        if let Some(p) = orphan {
+            let page_arc = Arc::new(Mutex::new(p));
+            self.page = Some(page_arc.clone());
+            // New page, new backendNodeId space — stale @N refs must not carry over.
+            self.snapshot_refs.clear();
+            {
+                let page_guard = page_arc.lock().await;
+                let _ = page_guard.execute(DOMEnable::default()).await;
+                let _ = Self::inject_anti_detection(&page_guard).await;
+            }
+            self.ensure_download_behavior().await;
+            // 认领的页此刻是 about:blank，与「新开一张再导航」终态一致：navigate
+            // 会走 get_or_create_page 命中 self.page，由它完成真正的 URL 加载。
+            return Ok(format!("Reused blank tab for: {requested}"));
+        }
         // Scope the browser borrow + guard: ensure_download_behavior below
         // takes &mut self and must run after they drop.
         let page_arc = {
@@ -3880,7 +3943,8 @@ impl BrowserClient {
             // browser going away) must fail fast with a readable error.
             let page = tokio::time::timeout(
                 std::time::Duration::from_secs(NEW_PAGE_TIMEOUT_SECS),
-                browser_guard.new_page(url.unwrap_or("about:blank")),
+                // 此分支 requested != "about:blank"（blank 已提前返回）
+                browser_guard.new_page(requested.as_str()),
             )
             .await
             .map_err(|_| {
@@ -3917,8 +3981,7 @@ impl BrowserClient {
         // it, so downloads landed in Chrome's default folder. Heal here.
         self.ensure_download_behavior().await;
 
-        let url_str = url.unwrap_or("about:blank");
-        Ok(format!("New tab opened: {}", url_str))
+        Ok(format!("New tab opened: {requested}"))
     }
 
     /// Get all tabs info
@@ -4043,18 +4106,69 @@ impl BrowserClient {
         let browser = self.browser.as_ref().ok_or(BrowserError::NotStarted)?;
 
         let browser_guard = browser.lock().await;
-        // Bounded: same rationale as `new_tab` — fail fast, readable error.
-        let page = tokio::time::timeout(
+
+        // ── 认领已有 about:blank target（孤儿收编）──
+        //
+        // blank 页孤儿是「每次打开/重连都多一张 blank」的根因（2026-10-11 定位）：
+        //   - attach 复用已运行的 Chrome（Nuphus 重启 / 上次会话遗留）→ 直接 new_page
+        //     会在历史标签之外再开一张新 blank，旧页全部变孤儿；
+        //   - 硬启动的 Chrome 自带一张初始 about:blank target，此前同样被跳过再开一张；
+        //   - reconnect 的恢复页同理。
+        // 每张新页 = 一个新 renderer 进程（~100-300ms 启动 + 常驻内存）；认领复用的
+        // 是已在运行的 renderer——打开耗时与资源占用双收益。blank 语义上就是自动化
+        // 闲置页，认领它不碰用户的工作标签（非 blank 页一律不认领）。
+        //
+        // ## 为什么用 `pages()` 而不是 `fetch_targets`
+        // `fetch_targets` 的响应处理会 re-create 每个 target 并丢弃存活 Page 的命令
+        // 通道（见 `is_connection_alive` 的 ⚠ 注释）——本函数被调用时可能还有其它
+        // 存活页，绝不能调它。`pages()` 只读 handler 内部 map，无副作用；attach 路径
+        // 的 target 可见性已由 try_attach 的显式 fetch_targets 保证。
+        //
+        // 认领页必然从未被本会话配置过：配置过的页始终被 self.page 持有，不会走到
+        // 本函数——所以认领分支与 new_page 分支做同一套一次性配置，无重复注册。
+        let pages = tokio::time::timeout(
             std::time::Duration::from_secs(NEW_PAGE_TIMEOUT_SECS),
-            browser_guard.new_page("about:blank"),
+            browser_guard.pages(),
         )
         .await
         .map_err(|_| {
-            BrowserError::Launch(format!(
-                "Timed out after {NEW_PAGE_TIMEOUT_SECS}s creating a browser page (CDP unresponsive)"
-            ))
+            BrowserError::Connection("timed out reading browser targets (CDP unresponsive)".into())
         })?
-        .map_err(|e| BrowserError::Launch(e.to_string()))?;
+        .map_err(cdp_err)?;
+
+        let mut claimed: Option<Page> = None;
+        for p in &pages {
+            let url = p
+                .url()
+                .await
+                .unwrap_or_default()
+                .unwrap_or_else(|| "about:blank".to_string());
+            if url == "about:blank" {
+                claimed = Some(p.clone());
+                break;
+            }
+        }
+
+        let page = match claimed {
+            Some(p) => p,
+            None => {
+                // Bounded: same rationale as `new_tab` — fail fast, readable error.
+                // 超时/失败标 Connection（连接层）而非 Launch：标错会让
+                // is_connection_error 认不出，bring_to_front / run_op_with_reconnect
+                // 失去自愈（new_tab 同类问题已修，本函数此前漏改）。
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(NEW_PAGE_TIMEOUT_SECS),
+                    browser_guard.new_page("about:blank"),
+                )
+                .await
+                .map_err(|_| {
+                    BrowserError::Connection(format!(
+                        "Timed out after {NEW_PAGE_TIMEOUT_SECS}s creating a browser page (CDP unresponsive)"
+                    ))
+                })?
+                .map_err(cdp_err)?
+            }
+        };
 
         let page_arc = Arc::new(Mutex::new(page));
         self.page = Some(page_arc.clone());
