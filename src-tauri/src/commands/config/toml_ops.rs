@@ -2430,9 +2430,11 @@ supports_vision = false
                 .unwrap()
                 .as_array()
                 .unwrap()
-                .len(),
-            2,
-            "权威链声明的 reasoning_efforts 覆写落盘"
+                .iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>(),
+            vec!["low", "high", "max"],
+            "权威链声明的 reasoning_efforts 覆写落盘（官方三档，见 deepseek.rs）"
         );
 
         // 证据输出：`cargo test … -- --nocapture` 直接看到同步后的段内容。
@@ -2609,7 +2611,7 @@ api_key = "sk-test"
 [[providers.models]]
 id = "deepseek-flash"
 context_window = 1000000
-reasoning_efforts = ["high", "max"]
+reasoning_efforts = ["low", "high", "max"]
 default_effort = "high"
 supports_streaming = true
 supports_audio = false
@@ -2667,7 +2669,7 @@ api_key = "sk-test"
 [[providers.models]]
 id = "deepseek-flash"
 context_window = 1000000
-reasoning_efforts = ["high", "max"]
+reasoning_efforts = ["low", "high", "max"]
 default_effort = "high"
 supports_streaming = true
 supports_audio = false

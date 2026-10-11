@@ -96,7 +96,15 @@ async fn resolve_references(refs: &[ChatReference]) -> String {
             "quote" => r.label.clone(),
             _ => format!("[Unknown reference type: {}]", r.ref_type),
         };
-        if !content.is_empty() {
+        if content.is_empty() {
+            continue;
+        }
+        // quote 的 label 即原文全文（该类型没有独立显示名）：若套用下面
+        // 「[类型] label:」的通用格式，会把同一段文本注入两次
+        // （[quote] 原文:\n原文）。该类型只发类型标记 + 原文。
+        if r.ref_type == "quote" {
+            parts.push(format!("[quote]\n{}", content));
+        } else {
             parts.push(format!("[{}] {}:\n{}", r.ref_type, r.label, content));
         }
     }
@@ -1626,6 +1634,44 @@ fn persist_leader_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── quote 引用注入格式回归 ──
+    // 事故：resolve_references 曾对 quote 套用「[类型] label:」通用格式，而 quote 的
+    // label 即原文全文（无独立显示名）→ 同一段文本注入两遍（[quote] 原文:\n原文）。
+    #[tokio::test]
+    async fn quote_reference_injects_original_text_exactly_once() {
+        let text = "顺带记录一个附带发现：模型切换提示曾永久驻留会话。";
+        let refs = vec![ChatReference {
+            ref_type: "quote".into(),
+            id: "q1".into(),
+            label: text.into(),
+        }];
+        let out = resolve_references(&refs).await;
+        assert_eq!(
+            out.matches(text).count(),
+            1,
+            "quote 原文只许出现一次: {out}"
+        );
+        assert!(
+            out.starts_with("[quote]\n"),
+            "quote 只发类型标记 + 原文: {out}"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_quote_references_keep_label_header_format() {
+        // 其他类型 label 是短名、content 是文件内容，头部格式不变
+        let refs = vec![ChatReference {
+            ref_type: "skill".into(),
+            id: "nonexistent-skill".into(),
+            label: "我的技能".into(),
+        }];
+        let out = resolve_references(&refs).await;
+        assert_eq!(
+            out,
+            "[skill] 我的技能:\n[Skill not found: nonexistent-skill]"
+        );
+    }
 
     // ── dedup 防线纯函数回归 ──
     // 历史事故：追加指令重复注入（busy 路径）与刷新重试重复提交（非 busy 路径）。
