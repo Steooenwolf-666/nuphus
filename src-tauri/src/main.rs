@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 // Shelf 退出持久化经 commands::process::shelf::persist_and_mirror（元数据行+镜像一并落盘）
+use nuphus::agent::events::EventEmitter;
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -418,6 +419,7 @@ fn main() {
             commands::dict_ocr::dict_remove_char,
             commands::dict_ocr::save_temp_image,
             commands::dict_ocr::read_image_base64,
+            commands::dropped_files::save_dropped_file,
             commands::dict_ocr::dict_list,
             commands::dict_ocr::dict_load,
             commands::dict_ocr::dict_delete,
@@ -1094,7 +1096,26 @@ fn main() {
             // ── 后台任务看门狗（最后的保障）──
             // 每个周期强杀存活超过 MAX_TASK_LIFETIME_SECS 的后台任务（含保留项）：
             // 保障是时间驱动的，不依赖用户打开面板。
-            nuphus::tools::background_tasks::start_watchdog();
+nuphus::tools::background_tasks::start_watchdog();
+
+            // ── 账本变更 → 双推事件（事件驱动的显示链路，2026-10-11）──
+            // lib crate 的账本不能依赖 bin crate 的发射器（反向依赖会成环），
+            // 故在此注入闭包：账本结构一变就广播 BackgroundTasksChanged，
+            // 桌面面板与手机端各自重拉清单。重复注入以首次为准（幂等）。
+{
+                let app_handle = app.handle().clone();
+                nuphus::tools::background_tasks::set_ledger_change_notifier(Box::new(
+                    move || {
+                        // State 借用 app_handle，故在闭包体内现取现用（不能提到闭包外
+                        // 再 move handle —— 借用与移动互斥）。每次通知都重新构造
+                        // CompoundEmitter：mobile_ws_tx 可能在这之后才启动，
+                        // 构造期读取才能拿到手机端通道。
+                        let state = app_handle.state::<state::AppState>();
+                        crate::emitter::CompoundEmitter::new(app_handle.clone(), &state)
+                            .emit(nuphus::agent::events::NuphusEvent::BackgroundTasksChanged);
+                    },
+                ));
+            }
 
             Ok(())
         })

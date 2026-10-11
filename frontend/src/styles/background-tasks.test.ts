@@ -87,4 +87,16 @@ describe('后台任务面板样式契约（不透明度体系 + 无新 token）'
     expect(panel).toMatch(/position:\s*absolute/)
     expect(panel).toMatch(/right:\s*calc\(100%\s*\+\s*10px\)/)
   })
+
+  it('锚点 right=20px：入口胶囊不位移（大王钦定）；位移真源唯一', () => {
+    // 2026-10-11 大王钦定：入口胶囊保持 right:20px 不动。面板向左展开、
+    // 右缘 = 胶囊左缘 - 10px，整块天然避开 .desktop-toolbar-dock 命中列
+    //（fixed right:20px / 30px 宽）的关闭按钮区域。锚点 right 是这块定位的
+    // **唯一真源**（面板 absolute 于锚点内、随锚点移动），故禁止面板自己写 fixed。
+    const anchor = ruleBody('.bgt-anchor')
+    expect(anchor).toMatch(/right:\s*20px/)
+    // 位移真源唯一：面板不得脱离锚点改写自己的 fixed/right
+    const panel = ruleBody('.bgt-panel')
+    expect(panel).not.toMatch(/position:\s*fixed/)
+  })
 })

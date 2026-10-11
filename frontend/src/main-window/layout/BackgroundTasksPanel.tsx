@@ -14,6 +14,7 @@
 // 不引新颜色键、不写死 rgba（回归测试 frontend/src/styles/opacity-system.test.ts）。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { listen } from '../../core/bridge'
 import type { BackgroundTaskView } from '../../core/types'
 import { useLanguage } from '../../locales'
 // 图标一律经 ui/Icons.tsx 出口（eslint no-restricted-imports：新代码零违规）
@@ -72,13 +73,26 @@ export function BackgroundTasksPanel({ executionStage }: BackgroundTasksPanelPro
     }
   }, [])
 
-  /** 拉列表。`silent` 时（轮询）不置 loading，避免每 2s 闪一次骨架。 */
+  /** 拉列表。`silent` 时（轮询）不置 loading，避免每 2s 闪一次骨架。
+   *
+   *  轮询顺带把**保留项数字对齐到列表**（2026-10-11 修复）：数字与列表此前是
+   *  两路独立真相——`count_retained_background_tasks` 只在事件驱动点刷新，而列表
+   *  每 2s 刷新一次。结果：任务自然结束 / 被看门狗强杀时列表条目消失了，胶囊数字
+   *  却停在旧值，面板也不会自动关（自动关判的是 `retainedCount`）。这里用刚拉回来
+   *  的列表直接派生数字：与列表同源，不新增命令或事件通道，也不会有第二处口径。 */
   const refreshList = useCallback(async (silent = false) => {
     if (!silent) setLoading(true)
     try {
       const rows = await listBackgroundTasks()
-      setTasks(Array.isArray(rows) ? rows : [])
+      const list = Array.isArray(rows) ? rows : []
+      setTasks(list)
       setListError(null)
+      // 轮询顺带**把保留项数字对齐到列表**（2026-10-11 修复）：数字与列表此前是
+      // 两路独立真相——`count_retained_background_tasks` 只在事件驱动点刷新，而
+      // 列表每 2s 刷新一次。结果：任务自然结束 / 被看门狗强杀时列表条目消失了，
+      // 胶囊数字却停在旧值，面板也不会自动关（自动关判的是 `retainedCount`）。
+      // 这里用刚拉回来的列表直接派生数字：与列表同源，不新增命令或事件通道。
+      setRetainedCount(list.filter(t => t.retain).length)
     } catch (e) {
       // 后端不可达就明说，不能静默成一个空列表（空列表会被读成「没有后台任务」）
       setListError(backendErrorMessage(e))
@@ -103,6 +117,31 @@ export function BackgroundTasksPanel({ executionStage }: BackgroundTasksPanelPro
   }, [executionStage, refreshCount])
 
   useEffect(() => subscribeBackgroundTasksChanged(() => void refreshCount()), [refreshCount])
+
+  // ── 后端账本变更事件（2026-10-11，事件驱动的显示链路）──
+  // 根因：retain 翻转（超时/取消转后台）发生在**工具执行中**，而「执行转空闲」
+  // 信号往往在其后才到；两者一旦错过或颠倒，保留项数字就永远停在 0，直到用户
+  // 刷新页面——那正是「发起后台任务后看不见胶囊，刷新才出现」的症状。
+  // 后端在 register / set_retain 翻转 / unregister（含看门狗强杀、退出清算、
+  // 面板手动结束）时广播本事件；载荷为空，收到后走既有 IPC 重拉，不冗余快照。
+  //
+  // 只拉数字不拉列表：面板关着时无需列表（列表轮询本就只在打开时跑）；
+  // 面板开着时 refreshList 的 2s 轮询会把数字与列表重新对齐。
+  useEffect(() => {
+    let unlisten: (() => void) | null = null
+    let cancelled = false
+    void listen<{ seq: number; event: { type: string } }>('nuphus-event', ({ event }) => {
+      if (event?.type === 'background_tasks_changed') void refreshCount()
+    }).then(fn => {
+      // 卸载竞态：listen 是异步的，组件可能已卸载才拿到取消函数
+      if (cancelled) fn()
+      else unlisten = fn
+    })
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [refreshCount])
 
   // ── 列表轮询：仅面板打开时 ──
   useEffect(() => {

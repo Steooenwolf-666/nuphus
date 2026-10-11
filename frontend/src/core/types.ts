@@ -851,6 +851,9 @@ export type NuphusEvent =
   /** 新建对话纯意图广播（手机 /new-chat 触发）：后端不创建任何 session，
    *  桌面端收到执行本地 handleNewChat（清聊天区回欢迎页）；手机端本机已先行清视图 */
   | { type: 'new_chat_broadcast' }
+  /** 后台任务账本结构变化（登记/保留翻转/注销）：重拉清单与保留项数字。
+   *  载荷为空——账本是后端唯一真相，收到后走既有 IPC 重拉，不冗余快照 */
+  | { type: 'background_tasks_changed' }
   | {
       type: 'workflow_event'
       /** WorkflowEvent 子类型（run_started / step_run_started / step_run_completed /

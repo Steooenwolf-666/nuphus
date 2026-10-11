@@ -72,6 +72,35 @@ pub const CANCELLED_MARKER: &str = "__CANCELLED__";
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 // ============================================================================
+// 账本变更通知（2026-10-11，事件驱动显示链路）
+// ============================================================================
+
+/// 账本变更回调：注册/取消保留/注销（含看门狗与退出清算）时触发，通知前端重拉清单。
+///
+/// **为什么用全局回调而不是直接持有 emitter**：本模块在 lib crate（`src/`），
+/// 而双推发射器（桌面 Tauri + 手机 WS）在 bin crate（`src-tauri/src/emitter.rs`）
+/// ——lib 不能依赖 bin。反向注入（bin 在 setup 时把发射器包成闭包塞进来）是唯一
+/// 不产生循环依赖的方向。看门狗跑在独立线程，故回调要求 `Send + Sync`。
+///
+/// **失败模式一律静默**：通知只是「账本变了，去看一眼」的提示，漏发只会退化成
+/// 旧行为（用户刷新页面仍能看到），绝不能反过来让记账/终止动作失败。
+pub type LedgerChangeNotifier = Box<dyn Fn() + Send + Sync + 'static>;
+
+static LEDGER_CHANGE_HOOK: OnceLock<LedgerChangeNotifier> = OnceLock::new();
+
+/// 注入账本变更回调（由 bin crate 在 setup 期调用；重复注入以首次为准）。
+pub fn set_ledger_change_notifier(notifier: LedgerChangeNotifier) {
+    let _ = LEDGER_CHANGE_HOOK.set(notifier);
+}
+
+/// 账本变更通知：账本结构真的变了才发（**不是每次读写都发**）。
+fn notify_ledger_changed() {
+    if let Some(hook) = LEDGER_CHANGE_HOOK.get() {
+        hook();
+    }
+}
+
+// ============================================================================
 // 条目
 // ============================================================================
 
@@ -485,22 +514,35 @@ impl BackgroundTaskRegistry {
     /// 登记一个后台进程。**子进程一启动就必须登记**——否则没人知道该杀谁。
     pub fn register(&self, task: BackgroundTask) {
         self.lock().insert(task.id.clone(), task);
+        notify_ledger_changed();
     }
 
     /// 注销。返回被移除的条目（不存在则 `None`）。
     pub fn unregister(&self, id: &str) -> Option<BackgroundTask> {
-        self.lock().remove(id)
+        let removed = self.lock().remove(id);
+        if removed.is_some() {
+            notify_ledger_changed();
+        }
+        removed
     }
 
     /// 更新 retain 意图（超时转后台 / 取消时保留都会走这里）
+    ///
+    /// 返回值语义不变：**条目存在并已写入**为 true，不存在为 false（调用方按「找没找到」
+    /// 使用）。账本通知只在 retain **真的翻转**时发——幂等置位不值得惊动前端。
     pub fn set_retain(&self, id: &str, retain: bool) -> bool {
-        match self.lock().get_mut(id) {
+        let (existed, flipped) = match self.lock().get_mut(id) {
             Some(task) => {
+                let was = task.retain;
                 task.retain = retain;
-                true
+                (true, was != retain)
             }
-            None => false,
+            None => (false, false),
+        };
+        if flipped {
+            notify_ledger_changed();
         }
+        existed
     }
 
     /// 取条目快照

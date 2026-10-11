@@ -23,10 +23,11 @@
      两枚胶囊在同一竖列上自然叠放，互不遮挡。
    · z-index 52（原 .bgt-panel 的层）：胶囊与面板同属锚点的堆叠上下文，
      一起压过 .wfst-panel（z 50）——用户主动打开的面板不能被压住。
-   · 面板在锚点内 absolute 定位（right: calc(100% + 10px)）向左展开，
-     右缘 = 胶囊左缘 - 10px 间距：桌面工具条（.desktop-toolbar-dock，
-     fixed right:20px / z 9999 / 30px 宽命中列）从此碰不到面板右上的
-     关闭按钮——那是 v4 时期面板与胶囊同 right:20px 时的真实事故。 */
+   · 胶囊保持 right:20px（大王钦定：入口不位移）。面板在锚点内 absolute
+     定位（right: calc(100% + 10px)）向左展开，右缘 = 胶囊左缘 - 10px：
+     桌面工具条（.desktop-toolbar-dock，fixed right:20px / z 9999 /
+     30px 宽命中列）碰不到面板右上角的关闭按钮——那是 v4 时期面板与
+     胶囊同 right:20px 时的真实事故。 */
 .bgt-anchor {
   position: fixed;
   right: 20px;
