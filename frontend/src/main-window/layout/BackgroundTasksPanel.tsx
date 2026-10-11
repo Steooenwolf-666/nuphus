@@ -153,21 +153,24 @@ export function BackgroundTasksPanel({ executionStage }: BackgroundTasksPanelPro
 
   return (
     <>
-      <button
-        className="bgt-entry"
-        onClick={handleToggle}
-        aria-expanded={open}
-        // 无障碍名不能只靠可见文本——按钮里只有图标 + 数字，读屏会把它念成「2」。
-        // 显式给 label：控件名 + 数量都在，语义与视觉一致。
-        aria-label={t('backgroundTasks.entryLabel', String(retainedCount))}
-        title={t('backgroundTasks.entryTitle')}
-      >
-        <IconTerminal size={13} />
-        <span className="bgt-entry-count">{retainedCount}</span>
-      </button>
+      {/* 锚点：唯一 fixed 元素，接管胶囊的定位与堆叠职责（见 background-tasks.css）。
+          面板在锚点内向左展开，右缘对齐胶囊左缘——避开桌面工具条的命中区。 */}
+      <div className="bgt-anchor">
+        <button
+          className="bgt-entry"
+          onClick={handleToggle}
+          aria-expanded={open}
+          // 无障碍名不能只靠可见文本——按钮里只有图标 + 数字，读屏会把它念成「2」。
+          // 显式给 label：控件名 + 数量都在，语义与视觉一致。
+          aria-label={t('backgroundTasks.entryLabel', String(retainedCount))}
+          title={t('backgroundTasks.entryTitle')}
+        >
+          <IconTerminal size={13} />
+          <span className="bgt-entry-count">{retainedCount}</span>
+        </button>
 
-      {open && (
-        <div className="bgt-panel" role="dialog" aria-label={t('backgroundTasks.title')}>
+        {open && (
+          <div className="bgt-panel" role="dialog" aria-label={t('backgroundTasks.title')}>
           <div className="bgt-header">
             <div className="bgt-header-left">
               {/* IconTerminal 是手绘 SVG，只接 size；着色类挂外层 span */}
@@ -235,6 +238,7 @@ export function BackgroundTasksPanel({ executionStage }: BackgroundTasksPanelPro
           </div>
         </div>
       )}
+      </div>
 
       <CompactModal
         open={confirmTask !== null}

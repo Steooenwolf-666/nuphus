@@ -18,13 +18,25 @@
 /* ═══════════════════════════════════════
    入口胶囊（仅在确有保留任务时由组件渲染）
    ═══════════════════════════════════════ */
-/* 纵向位置刻意排在 .wfst-restore-pill（bottom:160px）之上 44px：
-   两枚胶囊在同一竖列上自然叠放，互不遮挡；面板则从胶囊上方展开。 */
-.bgt-entry {
+/* 锚点 = 组件里唯一的 fixed 元素，接管定位与堆叠职责：
+   · 纵向位置刻意排在 .wfst-restore-pill（bottom:160px）之上 44px：
+     两枚胶囊在同一竖列上自然叠放，互不遮挡。
+   · z-index 52（原 .bgt-panel 的层）：胶囊与面板同属锚点的堆叠上下文，
+     一起压过 .wfst-panel（z 50）——用户主动打开的面板不能被压住。
+   · 面板在锚点内 absolute 定位（right: calc(100% + 10px)）向左展开，
+     右缘 = 胶囊左缘 - 10px 间距：桌面工具条（.desktop-toolbar-dock，
+     fixed right:20px / z 9999 / 30px 宽命中列）从此碰不到面板右上的
+     关闭按钮——那是 v4 时期面板与胶囊同 right:20px 时的真实事故。 */
+.bgt-anchor {
   position: fixed;
   right: 20px;
   bottom: 204px;
-  z-index: 51;
+  z-index: 52;
+  /* 只包住胶囊：面板 absolute 不占布局，锚点尺寸 = 胶囊尺寸 */
+  width: fit-content;
+}
+.bgt-entry {
+  position: static;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -49,12 +61,12 @@
    面板
    ═══════════════════════════════════════ */
 .bgt-panel {
-  position: fixed;
-  right: 20px;
-  bottom: 244px;
-  /* 压过 .wfst-panel（z-index 50）：两个浮层可能同时在场（长任务后台跑 +
-     工作流步骤面板展开），用户主动打开的这份必须在上层，不能被压住。 */
-  z-index: 52;
+  position: absolute;
+  /* 右缘 = 锚点（胶囊）左缘 - 10px：向左展开，整块避开右侧工具条命中区 */
+  right: calc(100% + 10px);
+  bottom: 0;
+  /* 堆叠在锚点上下文内解决（锚点 z 52 已压过 .wfst-panel z 50） */
+  z-index: 1;
   width: 340px;
   max-height: 380px;
   display: flex;

@@ -71,8 +71,20 @@ describe('后台任务面板样式契约（不透明度体系 + 无新 token）'
     expect(panel).toMatch(/border-radius:\s*\d+px/)
   })
 
-  it('入口胶囊压在工作流胶囊之上、面板压过工作流面板（z-index 显式且不重复）', () => {
-    expect(ruleBody('.bgt-entry')).toMatch(/z-index:\s*51/)
-    expect(ruleBody('.bgt-panel')).toMatch(/z-index:\s*52/)
+  it('锚点压过工作流面板（z 52）；胶囊与面板同属锚点堆叠上下文', () => {
+    expect(ruleBody('.bgt-anchor')).toMatch(/z-index:\s*52/)
+    expect(ruleBody('.bgt-entry')).not.toMatch(/z-index/)
+    expect(ruleBody('.bgt-panel')).toMatch(/z-index:\s*1\b/)
+  })
+
+  it('面板向左展开、右缘对齐胶囊左缘（避开桌面工具条命中区，用户钦定契约）', () => {
+    // 锚点是唯一 fixed 元素（含工具条重叠事故背景的定位职责移交）
+    const anchor = ruleBody('.bgt-anchor')
+    expect(anchor).toMatch(/position:\s*fixed/)
+    expect(anchor).toMatch(/width:\s*fit-content/)
+    // 面板 absolute 于锚点内：右缘 = 胶囊左缘 - 10px 间距
+    const panel = ruleBody('.bgt-panel')
+    expect(panel).toMatch(/position:\s*absolute/)
+    expect(panel).toMatch(/right:\s*calc\(100%\s*\+\s*10px\)/)
   })
 })
