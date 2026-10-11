@@ -1160,74 +1160,73 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                         );
                         continue;
                     }
-                    if !matches!(alert, ProtectionAlert::SameFileReadOveruse { .. }) {
+
+                    // ── 死循环预警级（连续 3 次同参重复）─────────────────────────
+                    // 只提醒、不拦截：exec 流给用户看，reminder 给模型下一轮看。
+                    // 本次工具照常执行（预警 ≠ 终止），到第 5 次重复才由终止块处理。
+                    if matches!(alert, ProtectionAlert::DeadLoopWarning { .. }) {
                         self.agent.emit_exec(&format!(
                             "// WARN: {}: {}",
                             alert.label(),
                             alert.to_session_warning()
                         ));
-                    }
-                    if let Some(reminder) = alert.to_force_output_reminder() {
-                        if !has_used_write_file && user_wants_file {
+                        if let Some(reminder) = alert.to_force_output_reminder() {
                             self.agent.reminders.enqueue(
                                 reminder.to_string(),
                                 3,
                                 ReminderPriority::Critical,
                                 ReminderCategory::DeviationCorrect,
                             );
-                            self.agent.emit_exec("// forcing LLM to produce output now");
-                            // Check if this is a repeat — DeadLoop means we've already warned
-                            if matches!(alert, ProtectionAlert::DeadLoop { .. }) {
-                                continue;
+                        }
+                        // 不 continue：落到下方照常执行本次工具（预警 ≠ 终止）
+                    } else {
+                        // ── 终止路径（DeadLoop：连续 5 次同参重复）────────────────
+                        // 唯一例外：用户要文件但尚未产出文件 → 给模型最后一轮机会
+                        // 产文件（原有语义，保留）。
+                        self.agent.emit_exec(&format!(
+                            "// WARN: {}: {}",
+                            alert.label(),
+                            alert.to_session_warning()
+                        ));
+                        if let Some(reminder) = alert.to_force_output_reminder() {
+                            if !has_used_write_file && user_wants_file {
+                                self.agent.reminders.enqueue(
+                                    reminder.to_string(),
+                                    3,
+                                    ReminderPriority::Critical,
+                                    ReminderCategory::DeviationCorrect,
+                                );
+                                self.agent.emit_exec("// forcing LLM to produce output now");
+                                if matches!(alert, ProtectionAlert::DeadLoop { .. }) {
+                                    continue;
+                                }
                             }
                         }
-                    }
-                    self.agent.session.push_assistant_internal(vec![
-                        crate::session::ContentBlock::Text {
-                            text: format!("任务完成（共执行 {} 步）", self.agent.steps.len()),
-                            reasoning: None,
-                        },
-                    ]);
-                    // Leader completion: emit HudUpdate done + ExecutionCompleted + LeaderDone
-                    if let Some(ref emitter) = self.agent.exec_emitter {
-                        let total_duration = loop_start.elapsed().as_millis() as u64;
-                        let tool_calls_count = self.agent.steps.len();
-                        let result_msg = format!("任务完成（共执行 {} 步）", tool_calls_count);
-                        emitter.emit(NuphusEvent::HudUpdate {
-                            text: "任务完成".into(),
-                            phase: "done".into(),
-                            step_kind: None,
-                        });
-                        emitter.emit(NuphusEvent::ExecutionCompleted {
-                            step_index: 0,
-                            output: crate::agent::events::StepOutput {
+                        // 诚实失败：这是被保护机制强制终止，不是任务完成——旧文案
+                        // 「任务完成」会同时误导用户与上游台账。
+                        let dead_loop_msg = alert.to_session_warning();
+                        self.agent.emit_exec(&format!("// {}", dead_loop_msg));
+                        // 终止必须发收敛事件（与用户中断路径同一模式）：前端 useEvents
+                        // 依赖 execution_error 复位 isProcessing/completed/mood；仅
+                        // emit_exec 是纯日志，UI 会永久停在执行中态。
+                        if let Some(ref emitter) = self.agent.exec_emitter {
+                            emitter.emit(NuphusEvent::HudUpdate {
+                                text: "已终止：防死循环机制介入".into(),
+                                phase: "error".into(),
+                                step_kind: None,
+                            });
+                            emitter.emit(NuphusEvent::ExecutionError {
                                 step_index: 0,
-                                result_message: result_msg,
-                                artifacts: vec![],
-                                tool_calls_count,
-                            },
-                            total_duration_ms: total_duration,
-                            total_calls: tool_calls_count,
-                            meta: Some({
-                                let mut m = self.agent.turn_meta.clone();
-                                m.finish(
-                                    total_duration,
-                                    tool_calls_count,
-                                    self.agent.session.context_occupancy(),
-                                );
-                                m
-                            }),
-                        });
-                        emitter.emit(NuphusEvent::LeaderDone {
-                            message: "任务完成".into(),
+                                error: dead_loop_msg.clone(),
+                            });
+                        }
+                        return Ok(crate::AgentOutput {
+                            message: dead_loop_msg,
+                            success: false,
+                            steps: self.agent.steps.clone(),
+                            retry_session: None,
                         });
                     }
-                    return Ok(crate::AgentOutput {
-                        message: format!("任务完成（共执行 {} 步）", self.agent.steps.len()),
-                        success: true,
-                        steps: self.agent.steps.clone(),
-                        retry_session: None,
-                    });
                 }
 
                 self.agent.emit_exec(&format!(
