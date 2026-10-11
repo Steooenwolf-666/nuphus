@@ -18,6 +18,16 @@
   显式按钮防误触）。
 
 ### Fixed
+- **browser_snapshot 不再丢掉 iframe：嵌套 frame 全部纳入，采不到的显式披露**：此前快照
+  只取主文档的 AX 树，iframe 内的标题/输入框/按钮一条都不返回，而返回结果看起来像完整
+  页面——支付回调、OAuth、中转站等以 iframe 承载主要交互的页面上，Agent 拿到的是残缺
+  视图且毫无察觉（`browser_evaluate` 里 `window.frames` 可读反而加重了「能读到却没采集」
+  的错觉）。现在：`Page.getFrameTree` 枚举全部 frame，对会话可直达的子 frame 逐一以其
+  frameId 采集 AX 树——主文档 refs 保持原编号在前，嵌套 frame refs 追加在后，并以
+  「── 嵌套 frame：… ──」头行标明归属；click / type / exec 的 @N 解析随 frame 归属路由，
+  iframe 内元素可直接点击、输入（实测：点击 iframe 内按钮，动作落在子文档里）。
+  采不到的 frame（跨进程 / 跨源沙箱，或 AX 树为空）在快照末尾以「⚠ … 未包含在上方快照中」
+  逐条披露，残缺视图从此是显式的；frame 树枚举失败时退化为原主文档行为，不阻断。
 - **技能安装不再产出空壳**：从 GitHub 安装技能时，若仓库根目录没有 `SKILL.md`（Claude Code
   plugin 型布局，技能位于 `skills/<分类>/<技能名>/` 下）或未提供任何名称元数据，此前会
   「安装成功」却得到一个列表里可见、`skill_read` 却读不到正文的空壳，名称还会退化成

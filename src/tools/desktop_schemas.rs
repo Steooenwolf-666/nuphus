@@ -411,7 +411,7 @@ impl ToolRegistry {
                 },
                 &["url"]),
             tool_def("browser_snapshot",
-                "Interactable-element map of the current page as '@N [role] \"name\"'. Use @N refs as selectors in click/type/exec. This is the tool for LOCATING page elements; it is not a content extractor (use web_extract for known-URL content, browser_extract for raw page text). Supports selector= to scope to a subtree.",
+                "Interactable-element map of the current page as '@N [role] \"name\"'. Use @N refs as selectors in click/type/exec. This is the tool for LOCATING page elements; it is not a content extractor (use web_extract for known-URL content, browser_extract for raw page text). Supports selector= to scope to a subtree. Nested iframes that this session can reach are included under '── 嵌套 frame：… ──' headers (refs from those frames work in click/type/exec); iframes it cannot read (cross-process/cross-origin) are listed in a final '⚠ … 未包含在上方快照中' disclosure — never assume the page has only what you see when that line is present.",
                 json_props! {
                     "full" => obj!("type"="boolean","default"=false,"description"="Include hidden elements too"),
                     "selector" => obj!("type"="string","description"="Scope snapshot to this subtree")
