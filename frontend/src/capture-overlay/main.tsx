@@ -26,7 +26,11 @@ import { CaptureOverlay } from './CaptureOverlay'
     const raw = localStorage.getItem('nuphus_custom_themes')
     const activeId = localStorage.getItem('nuphus_custom_active')
     if (raw && activeId) {
-      const parsed = JSON.parse(raw) as { id?: string; base?: ThemeId; overrides?: Record<string, string> }[]
+      const parsed = JSON.parse(raw) as {
+        id?: string
+        base?: ThemeId
+        overrides?: Record<string, string>
+      }[]
       const active = Array.isArray(parsed) ? parsed.find(t => t.id === activeId) : undefined
       if (active) {
         if (active.base === 'dark' || active.base === 'light' || active.base === 'tech') {

@@ -23,7 +23,10 @@ describe('user-selected desktop application registration', () => {
     fireEvent.click(screen.getByRole('button', { name: '登记应用' }))
     // 登记成功走 island 轻提示（2026-10-11：信息类提示不再弹窗，免点关闭）
     await waitFor(() => expect(showAppFeedback).toHaveBeenCalled())
-    expect(showAppFeedback).toHaveBeenCalledWith(expect.stringContaining('Portable Editor'), 'success')
+    expect(showAppFeedback).toHaveBeenCalledWith(
+      expect.stringContaining('Portable Editor'),
+      'success',
+    )
     expect(invoke).toHaveBeenCalledExactlyOnceWith('desktop_register_application', undefined)
   })
 

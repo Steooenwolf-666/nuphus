@@ -171,73 +171,73 @@ export function BackgroundTasksPanel({ executionStage }: BackgroundTasksPanelPro
 
         {open && (
           <div className="bgt-panel" role="dialog" aria-label={t('backgroundTasks.title')}>
-          <div className="bgt-header">
-            <div className="bgt-header-left">
-              {/* IconTerminal 是手绘 SVG，只接 size；着色类挂外层 span */}
-              <span className="bgt-header-icon">
-                <IconTerminal size={14} />
-              </span>
-              <span className="bgt-title">{t('backgroundTasks.title')}</span>
-            </div>
-            <button
-              className="bgt-close-btn"
-              onClick={() => setOpen(false)}
-              aria-label={t('backgroundTasks.close')}
-              title={t('backgroundTasks.close')}
-            >
-              <IconX size={12} />
-            </button>
-          </div>
-
-          <div className="bgt-list">
-            {listError ? (
-              <div className="bgt-error" role="alert">
-                {listError}
+            <div className="bgt-header">
+              <div className="bgt-header-left">
+                {/* IconTerminal 是手绘 SVG，只接 size；着色类挂外层 span */}
+                <span className="bgt-header-icon">
+                  <IconTerminal size={14} />
+                </span>
+                <span className="bgt-title">{t('backgroundTasks.title')}</span>
               </div>
-            ) : loading && tasks.length === 0 ? (
-              <div className="bgt-empty">{t('backgroundTasks.loading')}</div>
-            ) : tasks.length === 0 ? (
-              <div className="bgt-empty">{t('backgroundTasks.empty')}</div>
-            ) : (
-              tasks.map(task => (
-                <div className="bgt-row" key={task.id}>
-                  <div className="bgt-row-main">
-                    <div className="bgt-cmd" title={task.command}>
-                      {task.command}
-                    </div>
-                    <div className="bgt-meta">
-                      <span className="bgt-pid">PID {task.pid}</span>
-                      <span className="bgt-dot">·</span>
-                      <span className="bgt-elapsed">
-                        <IconClock3 size={10} /> {formatElapsed(task.elapsed_ms)}
-                      </span>
-                      {task.retain && (
-                        <span className="bgt-badge">{t('backgroundTasks.badgeRetained')}</span>
+              <button
+                className="bgt-close-btn"
+                onClick={() => setOpen(false)}
+                aria-label={t('backgroundTasks.close')}
+                title={t('backgroundTasks.close')}
+              >
+                <IconX size={12} />
+              </button>
+            </div>
+
+            <div className="bgt-list">
+              {listError ? (
+                <div className="bgt-error" role="alert">
+                  {listError}
+                </div>
+              ) : loading && tasks.length === 0 ? (
+                <div className="bgt-empty">{t('backgroundTasks.loading')}</div>
+              ) : tasks.length === 0 ? (
+                <div className="bgt-empty">{t('backgroundTasks.empty')}</div>
+              ) : (
+                tasks.map(task => (
+                  <div className="bgt-row" key={task.id}>
+                    <div className="bgt-row-main">
+                      <div className="bgt-cmd" title={task.command}>
+                        {task.command}
+                      </div>
+                      <div className="bgt-meta">
+                        <span className="bgt-pid">PID {task.pid}</span>
+                        <span className="bgt-dot">·</span>
+                        <span className="bgt-elapsed">
+                          <IconClock3 size={10} /> {formatElapsed(task.elapsed_ms)}
+                        </span>
+                        {task.retain && (
+                          <span className="bgt-badge">{t('backgroundTasks.badgeRetained')}</span>
+                        )}
+                      </div>
+                      {task.output_path && (
+                        <div className="bgt-output" title={task.output_path}>
+                          <IconFile size={10} />
+                          <span className="bgt-output-path">{task.output_path}</span>
+                        </div>
                       )}
                     </div>
-                    {task.output_path && (
-                      <div className="bgt-output" title={task.output_path}>
-                        <IconFile size={10} />
-                        <span className="bgt-output-path">{task.output_path}</span>
-                      </div>
-                    )}
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      className="bgt-kill-btn"
+                      loading={killingId === task.id}
+                      onClick={() => setConfirmTask(task)}
+                    >
+                      <IconSquare size={11} />
+                      {t('backgroundTasks.kill')}
+                    </Button>
                   </div>
-                  <Button
-                    variant="danger"
-                    size="sm"
-                    className="bgt-kill-btn"
-                    loading={killingId === task.id}
-                    onClick={() => setConfirmTask(task)}
-                  >
-                    <IconSquare size={11} />
-                    {t('backgroundTasks.kill')}
-                  </Button>
-                </div>
-              ))
-            )}
+                ))
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
       </div>
 
       <CompactModal
