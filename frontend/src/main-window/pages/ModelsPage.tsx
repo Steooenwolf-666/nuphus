@@ -77,6 +77,7 @@ import {
 } from '../lib/customProvider'
 import { friendlyIpcError } from '../lib/ipcError'
 import { selectableModels } from '../lib/modelCapability'
+import { HOT_MODELS } from '../lib/hotModels'
 import { JevSettings } from './JevSettings'
 // 页内反馈与 island 共用同一套胶囊视觉（组件自带共享层 app-pill.css）
 import { AppPill } from '../../ui/AppPill'
@@ -179,6 +180,7 @@ function makeTXT(t: TFunc) {
     saveNoKeySuccess: (m: string) => t('models.saveNoKeySuccess', m),
     saveKeyFail: tr(t, 'models.saveKeyFail', '保存密钥失败'),
     filterPlaceholder: tr(t, 'models.filterPlaceholder', '筛选模型…'),
+    hotModelsTitle: tr(t, 'models.hotModelsTitle', '热门模型'),
     baseUrlLabel: tr(t, 'models.baseUrlLabel', '接口地址'),
     baseUrlPlaceholder: 'https://your-relay.com/v1',
     baseUrlHelp: tr(t, 'models.baseUrlHelp', '中转站或网关的接口地址，通常以 /v1 结尾'),
@@ -3153,6 +3155,27 @@ export function ModelsPage({
                       onChange={e => setFilterInput(e.target.value)}
                       placeholder={TXT.filterPlaceholder}
                     />
+                    {/* 热门模型快捷区：点击 = 把该 chip 的片段填进筛选框，
+                        复用列表既有的分词 OR 筛选，不引入第二套过滤状态。
+                        is-active 以「筛选框内容恰等于该 chip 的片段串」判定。 */}
+                    <div className="models-hot-row">
+                      <span className="models-hot-label">{TXT.hotModelsTitle}</span>
+                      {HOT_MODELS.map(chip => {
+                        const chipQuery = chip.matches.join(' ')
+                        return (
+                          <button
+                            type="button"
+                            key={chip.label}
+                            className={`models-hot-chip${
+                              filterInput.trim().toLowerCase() === chipQuery ? ' is-active' : ''
+                            }`}
+                            onClick={() => setFilterInput(chipQuery)}
+                          >
+                            {chip.label}
+                          </button>
+                        )
+                      })}
+                    </div>
                     {addOpen && (
                       <div className="models-add-row">
                         <input
@@ -3235,15 +3258,20 @@ export function ModelsPage({
                       const display = Array.from(
                         new Set([...detectedModels.map(d => d.id), ...configured]),
                       )
-                      const q = filterInput.trim().toLowerCase()
-                      const filtered = q
-                        ? display.filter(m => m.toLowerCase().includes(q))
+                      // 空格分词 OR：多个关键词任一命中即显示（热门 chip 的
+                      // 多片段就此复用同一条路径）；单关键词时等价于原先的 includes(q)。
+                      const tokens = filterInput.trim().toLowerCase().split(/\s+/).filter(Boolean)
+                      const filtered = tokens.length
+                        ? display.filter(m => {
+                            const l = m.toLowerCase()
+                            return tokens.some(tk => l.includes(tk))
+                          })
                         : display
                       if (detectedModels.length === 0 && configured.length === 0 && !detecting) {
                         return (
                           <div className="models-empty">
                             <div className="models-empty-title">
-                              {q
+                              {tokens.length > 0
                                 ? TXT.emptyFiltered(filterInput)
                                 : isAnthropicInstance
                                   ? TXT.emptyNeedManual

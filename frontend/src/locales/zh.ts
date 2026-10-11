@@ -1077,6 +1077,7 @@ const zh: Record<string, string> = {
   'models.voiceSaved': '语音克隆模型已保存',
   // ── 自定义标头 / 订阅账号（OAuth）──
   'models.filterPlaceholder': '筛选模型…',
+  'models.hotModelsTitle': '热门模型',
   'models.baseUrlLabel': '接口地址',
   'models.baseUrlHelp': '中转站或网关的接口地址，通常以 /v1 结尾',
   'models.headerSectionLabel': '自定义标头',
