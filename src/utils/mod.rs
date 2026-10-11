@@ -1814,7 +1814,10 @@ mod log_collapse_tests {
         let t0 = Instant::now();
         assert!(c.admit(1, t0), "窗口内首条必须放行");
         for _ in 0..5 {
-            assert!(!c.admit(1, t0 + Duration::from_secs(1)), "窗口内重复必须折叠");
+            assert!(
+                !c.admit(1, t0 + Duration::from_secs(1)),
+                "窗口内重复必须折叠"
+            );
         }
         // 窗口边界：刚好到期即放行。
         assert!(
