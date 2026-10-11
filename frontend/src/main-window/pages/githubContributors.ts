@@ -47,6 +47,12 @@
  * 全为仓库所有者直推，按既定口径以 **commit 出处**收录重要功能（`pr: null` + `commit: 短 sha`）；
  * 纯格式 / lint / 发版杂务提交不收录。
  *
+ * `0.2.28` 轮次取证：2026-10-12 经 `/pulls?state=closed` API 核对，v0.2.27（2026-10-10）之后
+ * 唯一合并 PR 为 #104（zhoupeiyu515-ui，热门模型快捷 chip + 筛选框多关键词，2026-10-11 合并，
+ * merge commit 3dc1dd4b）——作者已在头像墙，**无新提交者**。`git log v0.2.27..HEAD` 区间
+ * 其余提交全为仓库所有者直推，按既定口径以 **commit 出处**收录重要功能；纯格式 / lint /
+ * 发版杂务提交不收录。
+ *
  * ⛔ 新增记录前必须先在上面的三处找到出处；不得凭印象补充贡献者或贡献内容。
  */
 
@@ -107,6 +113,47 @@ export interface GithubRound {
 
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
+  {
+    version: '0.2.28',
+    date: '2026-10-12',
+    contributors: [
+      {
+        user: 'zhoupeiyu515-ui',
+        contributions: [
+          {
+            pr: 104,
+            summary: '热门模型快捷 chip + 筛选框多关键词（空格 OR）',
+          },
+        ],
+      },
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: 'e7c14c26',
+            summary: '流式错误体截断改字符边界安全，修复中文错误响应打死 IPC 的 panic',
+          },
+          {
+            pr: null,
+            commit: '68c7f424',
+            summary: 'webview 假死可检测、可降级、可恢复——界面失联不再静默刷屏',
+          },
+          {
+            pr: null,
+            commit: 'bc4d7a32',
+            summary: '死循环守卫分级：3 次重复预警不拦截，5 次失败终止并说明原因',
+          },
+          {
+            pr: null,
+            commit: '2e3bc511',
+            summary:
+              '后台任务生命周期闭环：超时按 background 显式声明分流，看门狗强杀超期，退出必清算',
+          },
+        ],
+      },
+    ],
+  },
   {
     version: '0.2.27',
     date: '2026-10-10',
