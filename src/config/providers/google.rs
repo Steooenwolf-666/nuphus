@@ -39,7 +39,12 @@ impl Provider for GoogleProvider {
             cost_per_million_in: 0.0,
             cost_per_million_out: 0.0,
             reasoning_field: "",
-            reasoning_efforts: &[],
+            // 官方依据（ai.google.dev · OpenAI compatibility，2026-10 核对）：
+            // 兼容端点接受 reasoning_effort，映射表 minimal/low→low、
+            // medium→medium、high→high（2.5 系再映射到 thinking_budget）。
+            // gemini-2.5-pro **不允许** "none"（思考不可关）→ 只列三档；不指定
+            // 时用模型官方默认，故 default_effort 留空。
+            reasoning_efforts: &["low", "medium", "high"],
             default_effort: None,
         }]
     }
@@ -47,7 +52,8 @@ impl Provider for GoogleProvider {
     fn quirks(&self) -> ProviderQuirks {
         ProviderQuirks {
             requires_reasoning_echo: false,
-            supports_reasoning_effort: false,
+            // 官方 OpenAI 兼容端点接受 reasoning_effort（见 models() 注释的依据）。
+            supports_reasoning_effort: true,
             effort_excludes_tools: false,
             sanitize_tools: None,
             extra_headers: vec![],

@@ -236,8 +236,10 @@ mod tests {
 
     #[test]
     fn test_build_request_body_reasoning_effort_skipped_with_tools() {
-        // Same tool gate as the thinking toggle: tool-calling requests must stay
-        // byte-identical to current behavior (no reasoning_effort).
+        // Escape-hatch 语义钉死：quirk 显式 effort_excludes_tools: true 时，
+        // 带工具请求必须抑制 reasoning_effort（思考开关 thinking 同样抑制）。
+        // 注意 DeepSeek 真实 quirks 已为 false（官方 Tool Calls 示例同发正常，
+        // 见 deepseek.rs）——本测试只钉 `true` 这一档的传输层行为。
         let config = ChatCompletionsConfig {
             name: "deepseek".into(),
             provider_segment: String::new(), // 测试/直构：无段绑定
@@ -269,6 +271,49 @@ mod tests {
         assert!(
             body.get("thinking").is_none(),
             "thinking toggle must not be sent when tools are present"
+        );
+    }
+
+    #[test]
+    fn test_build_request_body_reasoning_effort_sent_with_tools_deepseek() {
+        // DeepSeek 实际 quirks（effort_excludes_tools: false）：Agent 主循环永远
+        // 带 tools，档位必须实际下发，否则 UI 换档零行为差异（服务端恒走默认
+        // high）。官方依据：thinking_mode 页 Tool Calls 示例 tools +
+        // reasoning_effort 同发正常。
+        // thinking 开关闸门未变：requires_reasoning_echo 的 providers 带 tools
+        // 时仍不下发 thinking（思考模式默认开启，开关只在不带工具时显式置位）。
+        let config = ChatCompletionsConfig {
+            name: "deepseek".into(),
+            provider_segment: String::new(), // 测试/直构：无段绑定
+            api_key: "sk-test".into(),
+            base_url: "https://api.deepseek.com".into(),
+            model: "deepseek-v4-flash".into(),
+            timeout_secs: 30,
+            auth_header: "authorization".into(),
+            auth_prefix: "Bearer ".into(),
+            provider_kind: Some(crate::api::ProviderKind::DeepSeek),
+            quirks: crate::config::provider::ProviderQuirks {
+                requires_reasoning_echo: true,
+                supports_reasoning_effort: true,
+                effort_excludes_tools: false,
+                ..Default::default()
+            },
+            reasoning_effort: Some("low".to_string()),
+        };
+        let transport = ChatCompletionsTransport::new(config);
+        let request =
+            crate::api::MessageRequest::new("deepseek-v4-flash", vec![]).with_tools(vec![
+                crate::api::ToolDefinition::new("get_weather", serde_json::json!({})),
+            ]);
+        let body = transport.build_request_body(&request);
+        assert_eq!(
+            body["reasoning_effort"],
+            serde_json::json!("low"),
+            "effort must accompany tools when the quirk allows it (DeepSeek)"
+        );
+        assert!(
+            body.get("thinking").is_none(),
+            "thinking toggle gate unchanged: no thinking toggle on tool-carrying requests"
         );
     }
 

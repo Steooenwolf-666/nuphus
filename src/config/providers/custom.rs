@@ -62,7 +62,7 @@ impl Provider for CustomProvider {
             // 直接交付 1-token 结果；带上才按 effort 档位思考（已实测 low/high/max
             // 均 200，且与 tools 同发不冲突 —— 故 effort_excludes_tools 保持 false）。
             supports_reasoning_effort: true,
-            // 与 DeepSeek 的 effort_excludes_tools: true 相反：custom 中转（如上）
+            // 与 DeepSeek 一致（同为 false；其依据见 deepseek.rs 注释）：custom 中转
             // 实测带工具 + reasoning_effort 仍 200 且 reasoning_tokens > 0。
             effort_excludes_tools: false,
             sanitize_tools: None,

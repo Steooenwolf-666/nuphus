@@ -116,9 +116,10 @@ pub struct ProviderQuirks {
     /// the other 11 Providers' request bodies unchanged.
     pub supports_reasoning_effort: bool,
     /// Whether the provider rejects `reasoning_effort` on requests that carry
-    /// tools (DeepSeek: effort only valid without tools — transport suppresses
-    /// it on tool-carrying requests). False = effort may accompany tools
-    /// (verified for Kimi k3 against the live API).
+    /// tools — the transport then suppresses it on tool-carrying requests.
+    /// No builtin Provider sets this: DeepSeek officially accepts tools +
+    /// `reasoning_effort` together (Thinking Mode · Tool Calls sample) and
+    /// Kimi k3 was verified live. Kept as a per-provider escape hatch.
     pub effort_excludes_tools: bool,
     /// Optional tool-schema sanitizer hook. Takes the provider's tool
     /// definitions and returns sanitised copies (some providers e.g. Kimi /

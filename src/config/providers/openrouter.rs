@@ -47,7 +47,12 @@ impl Provider for OpenRouterProvider {
     fn quirks(&self) -> ProviderQuirks {
         ProviderQuirks {
             requires_reasoning_echo: false,
-            supports_reasoning_effort: false,
+            // 官方（openrouter.ai · API Parameters）：Chat Completions 接受
+            // OpenAI 风格顶层 `reasoning_effort`（xhigh/high/medium/low/minimal/none，
+            // SDK 另含 max）。每模型实际档位由 /api/v1/models 的
+            // `reasoning.supported_efforts` 声明 —— 内置表故留空，运行时经
+            // 聚合库（list_models / 激活发现）逐模型补全。
+            supports_reasoning_effort: true,
             effort_excludes_tools: false,
             sanitize_tools: None,
             extra_headers: vec![],
