@@ -435,6 +435,7 @@ fn main() {
             commands::take_capture_result,
             // -- HUD overlay --
             commands::hud::hud_update,
+            commands::ui_link::ui_heartbeat,
             commands::hud::hud_hide,
             commands::hud::hud_pause,
             commands::hud::hud_resume,

@@ -17,6 +17,7 @@ pub mod dict_ocr;
 pub mod export_log;
 pub mod external;
 pub mod hud;
+pub mod ui_link;
 pub mod knowledge;
 pub mod mcp;
 pub mod memory;
