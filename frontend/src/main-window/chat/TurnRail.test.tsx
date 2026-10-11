@@ -1,4 +1,4 @@
-﻿/**
+/**
  * TurnRail 组件测试 —— 渲染门、刻度语义、预览气泡、跳转落点。
  * 只断言组件自身契约；切轮/激活推断的纯逻辑由 turnRailModel.test.ts 覆盖。
  */
@@ -69,8 +69,8 @@ describe('TurnRail', () => {
   it('轨道带确定高度（模块不为 0：刻度全绝对定位，无高度会整体塌陷）', () => {
     render(<HostStub messages={three} />)
     const track = document.querySelector('.turn-rail-track') as HTMLElement
-    // RAIL_INSET_PX*2 + (count-1)*TURN_PITCH_PX = 6*2 + 2*10 = 32
-    expect(track.style.height).toBe('32px')
+    // RAIL_INSET_PX*2 + (count-1)*TURN_PITCH_PX = 14*2 + 2*10 = 48
+    expect(track.style.height).toBe('48px')
   })
 
   it('悬停刻度弹出预览气泡（提问一行 + 答复三行）', async () => {

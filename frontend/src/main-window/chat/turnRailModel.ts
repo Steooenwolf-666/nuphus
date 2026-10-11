@@ -90,8 +90,9 @@ export function isAtBottom(
 /** 相邻刻度的固定节距（px）—— 与 TurnRail.module.css 的同名常量保持一致。 */
 export const TURN_PITCH_PX = 10
 
-/** 轨首尾留白（px）—— 与 TurnRail.module.css 的同名常量保持一致。 */
-export const RAIL_INSET_PX = 6
+/** 轨首尾留白（px）—— 同时是刻度命中区的上下安全边距：指针从消息区靠近轨道
+ *  时不会在第一/最后一枚刻度上反复进出触发 hover 动画抖动。 */
+export const RAIL_INSET_PX = 14
 
 /** 两端渐隐带宽度（px）—— 与 TurnRail.module.css 的同名常量保持一致。 */
 export const FADE_BAND_PX = 20

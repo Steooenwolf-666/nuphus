@@ -14,24 +14,28 @@
    同名规则注释），轮次轨 absolute 挂在它里面才能浮在视口上而不随内容滚动。
    ═══════════════════════════════════════════════════════════════ */
 
-/* 定位壳：**底边**固定在距包含块（.chat-messages-wrap，即消息视口）底 188px 处，
-   模块向上生长；顶边 auto —— 高度由内容（刻度数）决定，上限见 viewport 的
-   max-height。贴**左**缘 20px。窄窗（≤720px）整轨隐藏。 */
+/* 定位壳：**垂直居中**于包含块（.chat-messages-wrap，即消息视口）——
+   top: 50% + translateY(-50%) 让模块高度随内容增减时始终保持视口居中，
+   不再是「底边锚定、向上生长」的旧几何（旧版长对话会把轨顶出视口上缘）。
+   贴**左**缘 20px。窄窗（≤720px）整轨隐藏。 */
 .turn-rail {
   position: absolute;
-  top: auto;
+  top: 50%;
   left: 20px;
-  bottom: 188px;
+  bottom: auto;
+  transform: translateY(-50%);
   z-index: 25;
   pointer-events: none;
 }
 
 /* 滚动视口：高度 = min(轨道内容高, max-height)。轨道内容高由 JS 内联给定
-   （刻度全绝对定位，CSS 无法自持高度），因此这里只封顶不加底。 */
+   （刻度全绝对定位，CSS 无法自持高度），因此这里只封顶不加底。
+   上限相对「居中几何」设计：轨道居中后上下各留 (100dvh-400px)/2，
+   保证最长状态的下缘也不侵入输入区上方 200px 的保护带。 */
 .turn-rail-viewport {
   position: relative;
   width: 24px;
-  max-height: min(calc(100dvh - 220px), 420px);
+  max-height: min(calc(100dvh - 400px), 420px);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: none;
