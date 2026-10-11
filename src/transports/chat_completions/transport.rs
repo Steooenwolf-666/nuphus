@@ -108,6 +108,17 @@ fn silence_retry_notice(timeout: Duration, attempt: usize) -> String {
     )
 }
 
+/// 按**字符边界**截断展示文本（至多 `max` 字节）。
+///
+/// 为什么存在：`&s[..s.len().min(N)]` 的字节切片在 N 落在多字节字符中间时直接
+/// panic。线上事故（2026-10-11）：上游 429 错误响应体含中文，`[..500]` 正好切在
+/// 「或」字中间（bytes 499..502）→ task panic → `send_message_cmd` 整条 IPC 失败，
+/// 前端只看到 "Task panicked: end byte index 500 is not a char boundary"。
+/// 错误体 / 日志摘要 / 展示位的一切截断必须走这里，不得再裸切字节。
+fn truncate_display(s: &str, max: usize) -> &str {
+    &s[..crate::utils::floor_char_boundary(s, max)]
+}
+
 /// 内容级静默（连接活着、字节在走，但没有真实内容）的前端提示文案。
 ///
 /// 措辞面向普通用户：说「上游模型」而非 provider / 网关 / host，
@@ -727,13 +738,13 @@ impl ChatCompletionsTransport {
                     last_error = format!(
                         "API error {}: {}",
                         status,
-                        &body_text[..body_text.len().min(200)]
+                        truncate_display(&body_text, 200)
                     );
                     continue;
                 }
                 return Err(crate::NuphusError::LLM(crate::LLMError::ApiError {
                     status,
-                    body: body_text[..body_text.len().min(500)].to_string(),
+                    body: truncate_display(&body_text, 500).to_string(),
                 }));
             }
 
@@ -783,8 +794,8 @@ impl ChatCompletionsTransport {
                     let content_idle = last_content_at.elapsed();
                     let stall_warn = self.content_stall_warn();
                     if content_idle >= stall_warn
-                        && saw_finish == false
-                        && stall_last_notice.map_or(true, |t| t.elapsed() >= stall_warn)
+                        && !saw_finish
+                        && stall_last_notice.is_none_or(|t| t.elapsed() >= stall_warn)
                     {
                         stall_last_notice = Some(std::time::Instant::now());
                         tracing::warn!(
@@ -2297,6 +2308,108 @@ mod salvage_tests {
             notice.contains("连接保持中") && notice.contains("仍在等待"),
             "必须说明连接未断、仍在等待，避免被误判为卡死: {notice}"
         );
+    }
+
+    /// 展示截断不得切坏 UTF-8：`&s[..n]` 落在多字节字符中间会 panic。
+    /// 线上事故（2026-10-11）：上游 429 中文错误体，`[..500]` 切在「或」字
+    /// 中间（bytes 499..502）→ task panic → send_message_cmd IPC 失败。
+    #[test]
+    fn truncate_display_never_splits_utf8() {
+        // 构造字节边界必定落点在汉字中间的中文串：>500 字节、且第 500 字节不是边界。
+        let mut zh =
+            String::from("{\"code\":14003,\"msg\":\"too many requests\",\"displayMsg\":{\"zh\":\"");
+        while zh.len() < 600 {
+            zh.push('或'); // 3 字节字符，把 500 钉进字符内部
+        }
+        zh.push_str("\"}");
+        assert!(zh.len() > 500);
+        assert!(!zh.is_char_boundary(500), "用例前提：500 必须落在字符中间");
+
+        let cut = truncate_display(&zh, 500);
+        assert!(
+            cut.len() < 500 + 3,
+            "截断结果不得越过字符边界: len={}",
+            cut.len()
+        );
+        assert!(zh.starts_with(cut), "截断必须是原串前缀");
+        assert!(zh.is_char_boundary(cut.len()), "切口必须是字符边界");
+        // 短串 / 边界正好：原样返回
+        assert_eq!(truncate_display("短错误", 500), "短错误");
+    }
+
+    /// 事故本体重放：流式请求收到 **429 + 长中文错误体**，必须正常收敛为
+    /// ApiError（含前缀 body），而不是在截断处 panic 把 IPC 打挂。
+    #[tokio::test]
+    async fn http_error_with_chinese_body_does_not_panic() {
+        // 形态对齐线上负载：智谱风格 displayMsg 多语言错误 JSON，>500 字节。
+        let body = "{\"code\":14003,\"msg\":\"too many requests\",\"requestId\":\"df46c7db\",\
+\"retry_policy\":{\"retry\":true},\"displayMsg\":{\"en\":\"Too many requests. Please retry later.\",\
+\"zh\":\"请求过于频繁，请稍后重试。请求过于频繁，请稍后重试。请求过于频繁，请稍后重试。\
+请求过于频繁，请稍后重试。请求过于频繁，请稍后重试。请求过于频繁，请稍后重试。\",\
+\"zh-hant\":\"請求過於頻繁，請稍後重試。\"}}";
+        let (port, _hits) = spawn_status_body_server("HTTP/1.1 429 Too Many Requests", body).await;
+
+        let transport = ChatCompletionsTransport::new(test_config(port));
+        let (events, emitter) = collect_events();
+        let result = transport
+            .send_chat_request_streaming(request_body(), None, emitter)
+            .await;
+
+        match result {
+            Err(crate::NuphusError::LLM(crate::LLMError::ApiError { status, body })) => {
+                assert_eq!(status, 429, "应透出上游状态码");
+                assert!(!body.is_empty(), "错误体应保留可诊断内容");
+                assert!(
+                    body.starts_with("{\"code\":14003"),
+                    "body 应保留原始 JSON 前缀: {body}"
+                );
+                assert!(
+                    body.len() < 500 + 4,
+                    "body 截断必须落在字符边界上: len={}",
+                    body.len()
+                );
+            }
+            other => panic!("429 应收敛为 ApiError，实际: {other:?}"),
+        }
+        // 不得产生任何流式内容事件（错误路径）
+        let events = events.lock().unwrap();
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, AssistantEvent::TextDelta(_))),
+            "429 错误不得产出内容"
+        );
+    }
+
+    /// 一次性假服务器：直接返回指定状态行 + body（Content-Length 精确，无 chunked）。
+    async fn spawn_status_body_server(status_line: &str, body: &str) -> (u16, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits2 = hits.clone();
+        let status_line = status_line.to_string();
+        let body = body.to_string();
+        tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                hits2.fetch_add(1, AtomicOrdering::SeqCst);
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 8192];
+                    let _ = tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        sock.read(&mut buf),
+                    )
+                    .await;
+                    let head = format!(
+                        "{status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = sock.write_all(head.as_bytes()).await;
+                    let _ = sock.write_all(body.as_bytes()).await;
+                    let _ = sock.flush().await;
+                });
+            }
+        });
+        (port, hits)
     }
 
     /// 心跳保活下的内容级静默：上游只发 SSE 注释帧（`: keep-alive`，解析层
