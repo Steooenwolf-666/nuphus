@@ -1068,9 +1068,11 @@ export function ChatPanel({
   // scrollTop 钳回底部，会被严格版误读成「用户上滚」而静默解锁。宽容语义下：
   // 「用户向下滚回区内」是唯一恢复入口（内容增长仍不恢复）、收缩钳位不再误解锁。
   // 执行追踪面板（ExecutionTraceFloating）不传该选项，保持原严格语义不变。
+  // smoothPull = true（2026-10-11）：流式增长与回底按钮改为 rAF 追踪循环（每帧向底部
+  // 收拢、目标每帧重测），「瞬移跳动」变连续滑移；程序性回填（followReset）保持瞬移。
   const { scrollRef, showJumpButton, onScroll, jumpToBottom, followReset } = useStickyScroll(
     messages,
-    { bottomZonePx: 80 },
+    { bottomZonePx: 80, smoothPull: true },
   )
   // followReset 回填：useEvents 在 App 层（本组件之上）监听 nuphus-event，
   // execution_started（新轮次恢复跟随后续流式）/ execution_completed（完成瞬间补拉）
