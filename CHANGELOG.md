@@ -16,6 +16,13 @@
   显示收藏星标（未收藏不渲染）。「使用中」是全局唯一态：按 (provider, model) 双全等
   判定，同 id 跨 provider 不会双标；行内不再整行点击切换（切换 = 写盘 + 付费探测，
   显式按钮防误触）。
+- **模型列表热门快捷 chip + 多关键词筛选**：筛选框下方加一排品牌 chip（GPT / Claude /
+  Gemini / DeepSeek / Qwen / Grok），点击即把该品牌片段填进筛选框并高亮（内容与 chip
+  片段一致时点亮 `is-active`），一步筛到主力模型全家——片段取**宽品牌名**，`gpt` 同时命中
+  gpt-4o / gpt-5，`deepseek` 同时命中 deepseek-chat / deepseek-reasoner / deepseek-v4
+  （上一版用 `gpt-5` / `deepseek-v4` 等窄片段漏掉主力模型）。筛选框同步支持**空格分隔的
+  多关键词 OR**（任一命中即显示），单关键词行为与此前的 `includes` 完全一致；chip 只写既有
+  `filterInput`，不引入第二套过滤状态、不发 IPC。
 
 ### Fixed
 - **流式响应「假活」不再静默：上游模型无内容输出会持续告知用户**：此前只要连接里有字节

@@ -1215,6 +1215,56 @@ button.cap-chip:disabled {
 .models-empty-title {
   line-height: 1.5;
 }
+
+/* ── 热门模型快捷区（筛选框下方一排 chip）──
+   点击 = 把该 chip 的关键词片段填进筛选框，复用列表既有的分词 OR 筛选；
+   只改筛选框内容，不引入第二套过滤状态。 */
+.models-hot-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--space-2);
+}
+.models-hot-label {
+  margin-right: 2px;
+  font-size: var(--fz-xs);
+  color: var(--fg-4);
+}
+.models-hot-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border: 1px solid var(--line-2);
+  border-radius: 11px;
+  background: var(--surface-2);
+  color: var(--fg-3);
+  font-size: var(--fz-xs);
+  font-family: inherit;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.models-hot-chip:hover {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  color: var(--fg-1);
+}
+.models-hot-chip:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus);
+}
+/* 选中态：筛选框内容恰等于该 chip 的片段串（点击 chip 后即点亮） */
+.models-hot-chip.is-active {
+  border-color: var(--accent);
+  color: var(--fg-1);
+}
+
 /* 订阅账号（OAuth）：可折叠区块 —— 折叠态只有一行摘要（未配置时对用户零干扰），
    展开后是 OAuth 配置五项 + 登录区。与「自定义标头」同为可选块，故用同一套排版语言。 */
 .custom-oauth {

@@ -1124,6 +1124,7 @@ const en: Record<string, string> = {
   'models.voiceSaved': 'Voice cloning model saved',
   // ── Custom headers / OAuth account ──
   'models.filterPlaceholder': 'Filter models…',
+  'models.hotModelsTitle': 'Popular models',
   'models.baseUrlLabel': 'Endpoint URL',
   'models.baseUrlHelp': 'Endpoint URL of the relay or gateway, usually ending with /v1',
   'models.headerSectionLabel': 'Custom Headers',

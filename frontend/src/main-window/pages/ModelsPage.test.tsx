@@ -119,6 +119,15 @@ function provider(over: Partial<ProviderInfoStub> & { id: string }): ProviderInf
 
 let providerList: ProviderInfoStub[] = []
 
+/**
+ * 左栏（aside.models-rail）内查询：热门模型 chip 里也有 DeepSeek 等品牌名，
+ * 「按名称查按钮」会同时命中左栏服务商条目与 chip。左栏条目一律限定范围查找，
+ * 断言意图不变（仍然点的是左栏那个服务商）。
+ */
+function withinRail() {
+  return within(document.querySelector('.models-rail') as HTMLElement)
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(listProviderModels).mockReset()
@@ -523,7 +532,7 @@ describe('ModelsPage 自定义模型（Custom 配置入口 → 创建具名实�
     )
 
     // 官方 provider 页不回归：只读名称 + 原有密钥栏，无自定义四字段表单
-    fireEvent.click(screen.getByRole('button', { name: /DeepSeek/ }))
+    fireEvent.click(withinRail().getByRole('button', { name: /DeepSeek/ }))
     await waitFor(() => expect(screen.queryByLabelText('自定义名称')).not.toBeInTheDocument())
     expect(container.querySelector('.models-provider-current-name')?.textContent).toBe('DeepSeek')
     expect(screen.getByLabelText('API 密钥')).toBeInTheDocument()
@@ -543,7 +552,7 @@ describe('ModelsPage 自定义模型（Custom 配置入口 → 创建具名实�
     ]
 
     const { container } = render(<ModelsPage onClose={() => {}} />)
-    await screen.findByRole('button', { name: /DeepSeek/ })
+    await withinRail().findByRole('button', { name: /DeepSeek/ })
 
     const groups = [...container.querySelectorAll('.models-rail-group')].map(g => ({
       title: g.querySelector('.models-rail-group-title')?.textContent?.trim() ?? '',
@@ -912,7 +921,7 @@ describe('ModelsPage 连接反馈与快速切换', () => {
     const pending = deferred<ReturnType<typeof brief>[]>()
     vi.mocked(listProviderModels).mockReturnValue(pending.promise)
     fireEvent.click(screen.getByRole('button', { name: '连接测试' }))
-    fireEvent.click(screen.getByRole('button', { name: 'DeepSeek' }))
+    fireEvent.click(withinRail().getByRole('button', { name: 'DeepSeek' }))
     await act(async () => pending.resolve([brief('stale-model')]))
     expect(screen.queryByText('stale-model')).not.toBeInTheDocument()
     expect(screen.queryByText(/已获取到/)).not.toBeInTheDocument()
@@ -1132,7 +1141,7 @@ describe('ModelsPage 模型卡片（收藏 / 能力 / 排序）', () => {
     } as never)
     render(<ModelsPage onClose={() => {}} />)
     // deepseek 段：生效归属那张卡 = 使用中
-    fireEvent.click(await screen.findByRole('button', { name: /DeepSeek/ }))
+    fireEvent.click(await withinRail().findByRole('button', { name: /DeepSeek/ }))
     await waitFor(() =>
       expect(document.querySelectorAll('.model-card-grid > .model-card')).toHaveLength(1),
     )
@@ -1154,5 +1163,83 @@ describe('ModelsPage 模型卡片（收藏 / 能力 / 排序）', () => {
     await detect([brief('a'), brief('b')])
     const grid = document.querySelector('.model-card-grid') as HTMLElement
     expect(grid.getAttribute('style')).toBeNull()
+  })
+})
+
+// ── 热门模型快捷 chip：点击 = 填筛选框，复用同一套筛选路径 ──────────────────
+describe('ModelsPage 热门模型快捷 chip', () => {
+  const brief = (id: string) => ({
+    id,
+    supports_streaming: true,
+    supports_vision: false,
+    supports_audio: false,
+    supports_image_generation: false,
+  })
+  const IDS = ['gpt-4o', 'gpt-5', 'deepseek-chat', 'claude-opus-4-20250514']
+
+  async function openModels() {
+    localStorage.clear()
+    providerList.push(
+      provider({
+        id: 'custom-fast',
+        name: '快速中转站',
+        display_name: '快速中转站',
+        provider_type: 'custom',
+        base_url: 'https://relay.example/v1',
+      }),
+    )
+    render(<ModelsPage onClose={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: '快速中转站' }))
+  }
+  async function detect() {
+    vi.mocked(listProviderModels).mockResolvedValue(IDS.map(brief) as never)
+    fireEvent.click(screen.getByRole('button', { name: '连接测试' }))
+    await waitFor(() =>
+      expect(document.querySelectorAll('.model-card-grid > .model-card')).toHaveLength(IDS.length),
+    )
+  }
+  const gridOrder = () =>
+    [...document.querySelectorAll('.model-card-grid > .model-card')].map(
+      el => el.querySelector('.model-card-name')?.textContent ?? '',
+    )
+  const filterBox = () => screen.getByPlaceholderText('筛选模型…')
+  // chip 与左栏服务商按钮可能同名（如 DeepSeek），故限定在热门区内取
+  const chip = (label: string) =>
+    within(document.querySelector('.models-hot-row') as HTMLElement).getByRole('button', {
+      name: label,
+    })
+
+  it('点 chip：片段填进筛选框、列表只剩命中模型、该 chip 点亮', async () => {
+    await openModels()
+    await detect()
+    fireEvent.click(chip('GPT'))
+    expect(filterBox()).toHaveValue('gpt')
+    await waitFor(() => expect(gridOrder()).toEqual(['gpt-4o', 'gpt-5']))
+    expect(chip('GPT')).toHaveClass('is-active')
+    expect(chip('DeepSeek')).not.toHaveClass('is-active')
+  })
+
+  it('手输两个关键词（空格分隔）：任一命中即显示（OR）', async () => {
+    await openModels()
+    await detect()
+    fireEvent.change(filterBox(), { target: { value: 'gpt claude' } })
+    await waitFor(() => expect(gridOrder()).toEqual(['gpt-4o', 'gpt-5', 'claude-opus-4-20250514']))
+    // 手输内容不等于任何 chip 的片段串 → 没有 chip 处于选中态
+    expect(document.querySelectorAll('.models-hot-chip.is-active')).toHaveLength(0)
+  })
+
+  it('单关键词行为不变：大小写无关 + 首尾与多余空格容错', async () => {
+    await openModels()
+    await detect()
+    fireEvent.change(filterBox(), { target: { value: '  GPT-5  ' } })
+    await waitFor(() => expect(gridOrder()).toEqual(['gpt-5']))
+  })
+
+  it('无命中时空态仍回显原始输入', async () => {
+    await openModels()
+    await detect()
+    fireEvent.change(filterBox(), { target: { value: 'zzz' } })
+    // 空态文案把原始输入原样回显（.models-empty 是页内共用类，按文字定位避免误命中）
+    await waitFor(() => expect(screen.getByText(/zzz/)).toBeInTheDocument())
   })
 })
