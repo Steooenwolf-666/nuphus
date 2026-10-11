@@ -48,7 +48,8 @@ import type { ProviderInfo, ModelInfo, ProjectBookmark, ToolPermissions } from '
 import { friendlyIpcError } from '../lib/ipcError'
 import { orderProviderModels, readRecentModels, rememberRecentModel } from './modelPopupOrder'
 import { getProviderFavorites } from '../lib/favorites'
-import { buildQuoteRef, isSelectableInBubble, truncateQuote } from './messageSelection'
+import { buildQuoteRef } from './messageSelection'
+import { focusInputAtEnd } from './inputFocus'
 import { RefIcon } from './ReferenceBar'
 import { WelcomeScreen } from './WelcomeScreen'
 import { OnboardingModal } from './OnboardingModal'
@@ -84,7 +85,6 @@ import {
   IconStar,
   IconChartColumn,
   IconChevronsDown,
-  IconQuote,
 } from '../../ui/Icons'
 import { RatingModal } from '../layout/ExecutionTraceFloating'
 import { MoodFace } from '../../ui/MoodFace'
@@ -458,9 +458,6 @@ export function ChatPanel({
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([])
   // Pending resource references (skill/knowledge/workflow) — attached to next user message
   const [pendingReferences, setPendingReferences] = useState<ChatReference[]>([])
-  /** 聊天区选中文字的引用浮条：命中 .message-content 内的非空选区时出现。
-   *  x/y 是选区最后一行的屏幕坐标（fixed 定位，CSS 负责 translate(-50%)）。 */
-  const [quoteBar, setQuoteBar] = useState<{ x: number; y: number; label: string } | null>(null)
 
   // Load tool permissions for WORKFLOW mode check
   const [toolPermissions, setToolPermissions] = useState<ToolPermissions | undefined>()
@@ -1068,7 +1065,7 @@ export function ChatPanel({
   // scrollTop 钳回底部，会被严格版误读成「用户上滚」而静默解锁。宽容语义下：
   // 「用户向下滚回区内」是唯一恢复入口（内容增长仍不恢复）、收缩钳位不再误解锁。
   // 执行追踪面板（ExecutionTraceFloating）不传该选项，保持原严格语义不变。
-  // smoothPull = true（2026-10-11）：流式增长与回底按钮改为 rAF 追踪循环（每帧向底部
+  // smoothPull = true（2026-10-11）：流式增长与回底按钮改走 rAF 追踪循环（每帧向底部
   // 收拢、目标每帧重测），「瞬移跳动」变连续滑移；程序性回填（followReset）保持瞬移。
   const { scrollRef, showJumpButton, onScroll, jumpToBottom, followReset } = useStickyScroll(
     messages,
@@ -1131,16 +1128,28 @@ export function ChatPanel({
   }, [mode, modelName, loadEffortContext])
 
   // 当前模型声明的可选推理深度（来自内置 ModelDef 元数据；空 = 不支持配置，隐藏入口）
+  // (provider, model) 二元组限定：同 id 跨段（deepseek-v4-flash 同时在 deepseek 官方段
+  // 与 opencode-go 段；kimi-k3 / step-5-preview 同理）时，只按名称 find 会命中另一段的
+  // 档位 → 显示的档位与 handleEffortChange 实际写入的段分叉。currentProvider 与
+  // modelLabel 同出 effective_model 解析点（见下方弹窗勾选逻辑），天然同步；
+  // currentProvider 未就绪时宁可暂无档位，也不错贴（宁缺勿错，同后端 list_models）。
   const currentModelEfforts = useMemo(() => {
     const id = modelLabel || modelName || ''
-    return allModels.find(m => m.id === id)?.reasoning_efforts ?? []
-  }, [allModels, modelLabel, modelName])
+    if (!id || !currentProvider) return []
+    return (
+      allModels.find(m => m.id === id && m.provider === currentProvider)?.reasoning_efforts ?? []
+    )
+  }, [allModels, modelLabel, modelName, currentProvider])
 
   // 当前模型的默认推理强度（未配置时生效；null = 无声明，UI 显示「默认」）
+  // 同上：(provider, model) 二元组限定，不做名称兜底。
   const currentModelDefaultEffort = useMemo(() => {
     const id = modelLabel || modelName || ''
-    return allModels.find(m => m.id === id)?.default_effort ?? null
-  }, [allModels, modelLabel, modelName])
+    if (!id || !currentProvider) return null
+    return (
+      allModels.find(m => m.id === id && m.provider === currentProvider)?.default_effort ?? null
+    )
+  }, [allModels, modelLabel, modelName, currentProvider])
 
   // Reload latest config when quick-switch modal opens
   useEffect(() => {
@@ -1177,15 +1186,10 @@ export function ChatPanel({
       if (text) {
         setInput(prev => (prev ? prev + '\n' + text : text))
         autoResize()
-        // 追加后聚焦输入框并置光标到末尾（右键「问问 Nuphus」/工作流导出体验一致）
-        requestAnimationFrame(() => {
-          const ta = textareaRef.current
-          if (ta) {
-            ta.focus()
-            const len = ta.value.length
-            ta.setSelectionRange(len, len)
-          }
-        })
+        // 追加后聚焦输入框并置光标到末尾（右键「问问 Nuphus」/工作流导出体验一致）。
+        // 聚焦语义与引用入栏共用一份实现（inputFocus.ts）——两条链都是
+        // 「内容进输入区后焦点交给输入框」。
+        requestAnimationFrame(() => focusInputAtEnd(textareaRef.current))
       }
       if (mode && onSetMode) {
         onSetMode(mode)
@@ -1430,80 +1434,31 @@ export function ChatPanel({
   }, [])
 
   /**
-   * 右键菜单「引用这段」→ 加入引用栏。
+   * 引用入栏（统一入口）：加 chip + 聚焦输入框、光标置末尾。
    *
-   * 与浮条共用同一链路（buildQuoteRef + addReference），只换触发入口：
-   * 拖选松手弹浮条 / 右键菜单选引用，两条路产出完全相同的 chip。
-   * 不落盘、不查文件——引用的就是这段文本本身（见 process.rs 的 quote 分支）。
+   * 两条来源共用：右键菜单「引用这段」（`nuphus:add-quote-reference` 事件）
+   * 与预览浮层「发送给 Agent」（PreviewOverlay.onSendAnnotations）。
+   * 聚焦是必需语义而非锦上添花——同族 append-to-chat 一直聚焦，
+   * 引用通道漏了它会让用户入栏后必须再点一次输入框才能打字
+   * （仓库 issue #98）。rAF 理由见 inputFocus.ts 头注。
    */
+  const addQuoteReference = useCallback(
+    (ref: ChatReference) => {
+      addReference(ref)
+      requestAnimationFrame(() => focusInputAtEnd(textareaRef.current))
+    },
+    [addReference],
+  )
+
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent<{ text?: string }>).detail
       const ref = buildQuoteRef(detail?.text ?? '')
-      if (ref) addReference(ref)
+      if (ref) addQuoteReference(ref)
     }
     window.addEventListener('nuphus:add-quote-reference', handler)
     return () => window.removeEventListener('nuphus:add-quote-reference', handler)
-  }, [addReference])
-
-  // ── 选中文字 → 引用（复用 ChatReference 的 quote 分支，不新开注入通道）──
-  /** mouseup 判定选区：非空 + 锚点落在 .message-content 内才弹浮条。
-   *  刻意不用 selectionchange——拖选过程中弹窗会跟着选区跳动，松手才定型。
-   *  位置取松手瞬间的光标（clientX/Y），贴合「鼠标在哪就在哪」的操作直觉；
-   *  贴边时自动翻转，避免浮条被视口裁掉。 */
-  const handleMessagesMouseUp = useCallback((e: React.MouseEvent) => {
-    const sel = window.getSelection()
-    const raw = sel?.toString() ?? ''
-    if (!raw.trim() || !sel || sel.rangeCount === 0) {
-      setQuoteBar(null)
-      return
-    }
-    // 跨气泡拖选只认锚点所在气泡：多气泡会让浮条定位飘，且引文归属不明
-    if (!isSelectableInBubble(sel.anchorNode)) {
-      setQuoteBar(null)
-      return
-    }
-    // 入 state 前先截断：选区可能误拖到整篇长文，没必要把原文整体存进 React state
-    const { text } = truncateQuote(raw)
-    if (!text) {
-      setQuoteBar(null)
-      return
-    }
-    // 浮条尺寸（与 .quote-float 的 padding/font-size 对齐，用于边缘翻转判定）
-    const barW = 110
-    const barH = 28
-    const gap = 10
-    let x = e.clientX
-    let y = e.clientY + gap
-    // 下方不够 → 翻到光标上方
-    if (y + barH > window.innerHeight - 4) y = e.clientY - barH - gap
-    // 右侧不够 → 右对齐到视口内
-    if (x + barW > window.innerWidth - 4) x = window.innerWidth - barW - 4
-    if (x - barW < 4) x = barW + 4
-    setQuoteBar({ x, y, label: text })
-  }, [])
-
-  /** 点击浮条 → 入引用栏。按钮的 mousedown 已 preventDefault（见 JSX 注释）保住
-   *  selection；这里显式清除，免得残留 range 干扰下一次选区判定。 */
-  const handleQuoteCommit = useCallback(() => {
-    if (!quoteBar) return
-    const ref = buildQuoteRef(quoteBar.label)
-    if (ref) addReference(ref)
-    window.getSelection()?.removeAllRanges()
-    setQuoteBar(null)
-  }, [quoteBar, addReference])
-
-  /** 点击浮条之外（消息区空白处 / 输入框 / 按钮）→ 收起，否则浮条会滞留在原处。
-   *  selection 本身交给浏览器处理，这里只管浮条生命周期。 */
-  useEffect(() => {
-    if (!quoteBar) return
-    const onDown = (e: MouseEvent) => {
-      if ((e.target as Element | null)?.closest?.('.quote-float')) return
-      setQuoteBar(null)
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [quoteBar])
+  }, [addQuoteReference])
 
   const removePendingImage = useCallback((index: number) => {
     setPendingImages(prev => prev.filter((_, i) => i !== index))
@@ -1853,11 +1808,8 @@ export function ChatPanel({
           className="chat-messages"
           ref={scrollRef}
           onScroll={() => {
-            // 滚动即选区失效：浮条用屏幕坐标，不收起会飘到别的内容上
-            setQuoteBar(null)
             onScroll()
           }}
-          onMouseUp={handleMessagesMouseUp}
         >
           {messages.length === 0 ? (
             <WelcomeScreen
@@ -2164,26 +2116,6 @@ export function ChatPanel({
           <TurnRail messages={messages} scrollRef={scrollRef} t={t} />
         </div>
       </div>
-
-      {/* ── 选中文字引用浮条：fixed + portal（避开 .chat-messages 的滚动裁剪）──
-          位置 = 松手时光标处（见 handleMessagesMouseUp 的边缘翻转），不再居中于选区。 */}
-      {quoteBar &&
-        createPortal(
-          <button
-            type="button"
-            className="quote-float"
-            style={{ left: quoteBar.x, top: quoteBar.y }}
-            /* 必须拦住 mousedown：焦点移到按钮会清掉 selection，点击时就取不到原文 */
-            onMouseDown={e => e.preventDefault()}
-            onClick={handleQuoteCommit}
-            aria-label={t('chat.quoteSelection')}
-            title={t('chat.quoteSelection')}
-          >
-            <IconQuote size={13} />
-            {t('chat.quoteSelection')}
-          </button>,
-          document.body,
-        )}
 
       {/* ── Pause Modal ── */}
       <PauseOverlay
@@ -2907,7 +2839,7 @@ export function ChatPanel({
         <PreviewOverlay
           path={previewPath}
           onClose={() => setPreviewPath(null)}
-          onSendAnnotations={addReference}
+          onSendAnnotations={addQuoteReference}
         />
       )}
     </div>
