@@ -1486,6 +1486,7 @@ mod tests {
     ///   被删除后引用未同步，死链写进了每个 Agent 的系统提示词；
     /// - `prompts/` 三个政策文档从未进资产表，发布版里相关引用一直断，
     ///   只因发布版 Agent 没人真去读而长期未暴露。
+    ///
     /// 本测试把「删/移文档必须同步改引用 + 进资产表」从人记变成机查。
     /// 覆盖面：L0_FRAMEWORK / L0_RUNTIME / build_l2_leader / WORKAGENT_L0 /
     /// WORKAGENT_L2_COMMON / build_exec_prompt（build_workagent_prompt 无 .md 引用，

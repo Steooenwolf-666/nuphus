@@ -797,9 +797,11 @@ mod tests {
 
     /// 构造指定绑定的最小 Agent（last_used 初值 = 该绑定）。
     fn agent_with_binding(provider: &str, model: &str) -> ReactAgent {
-        let mut config = AgentConfig::default();
-        config.provider = provider.to_string();
-        config.model = model.to_string();
+        let config = AgentConfig {
+            provider: provider.to_string(),
+            model: model.to_string(),
+            ..AgentConfig::default()
+        };
         ReactAgent::new(Arc::new(NoopApiClient), ToolRegistry::builtin(), config)
     }
 

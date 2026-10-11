@@ -36,7 +36,7 @@ fn dropped_dir() -> PathBuf {
 /// 净化文件名：剔除路径分隔符与控制字符，仅保留安全字符；为空则回退 `file`。
 fn sanitize_name(raw: &str) -> String {
     let cleaned: String = raw
-        .rsplit(|c| c == '/' || c == '\\')
+        .rsplit(['/', '\\'])
         .next()
         .unwrap_or(raw)
         .chars()
