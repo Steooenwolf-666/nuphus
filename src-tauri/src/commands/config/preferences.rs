@@ -193,11 +193,29 @@ fn infer_browser_name(exe: &std::path::Path) -> String {
 fn is_self_managed_profile(profile: Option<&std::path::Path>) -> bool {
     let Some(dir) = profile else { return false };
     let managed = nuphus::browser::managed_profile_dir();
-    // Compare canonicalized paths so separator / case / trailing-slash
-    // differences between the cmdline and the derived path cannot cause a
-    // false negative (Windows paths are case-insensitive).
+    // 两侧同构归一：canonicalize 能成功（路径在盘）会产出 `\\?\` 扩展前缀，不在盘则
+    // 回退原形——两边前缀形态不对称时 PathBuf::starts_with 恒 false，曾致「managed 在盘
+    // 而其子目录不在盘」漏判（CI 实锤复现 2 次）。故 canonicalize 之后统一剥前缀、
+    // Windows 大小写不敏感统一小写。starts_with 保留 PathBuf 组件级比较（不用字符串
+    // 前缀），兄弟目录（如 browser_profile_v2_extra）不会被误吞。
     let norm = |p: &std::path::Path| -> std::path::PathBuf {
-        std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+        let c = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let s = c.to_string_lossy();
+        let s = if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{rest}")
+        } else {
+            s.strip_prefix(r"\\?\")
+                .map(|r| r.to_string())
+                .unwrap_or_else(|| s.to_string())
+        };
+        #[cfg(windows)]
+        {
+            std::path::PathBuf::from(s.replace('/', "\\").to_lowercase())
+        }
+        #[cfg(not(windows))]
+        {
+            std::path::PathBuf::from(s)
+        }
     };
     let (a, b) = (norm(dir), norm(&managed));
     a == b || a.starts_with(&b)
@@ -665,6 +683,21 @@ mod tests {
         assert!(
             is_self_managed_profile(Some(&child)),
             "managed profile 的子目录不得漏判"
+        );
+
+        // 回归钉点（CI 实锤 2 次）：managed 在盘（canonicalize 产出 \\?\ 前缀）而其
+        // 子目录不在盘（回退原形）——归一不对称时 starts_with 跨前缀恒 false。
+        // 先确保 managed 真在盘上，再断言不在盘的子目录仍判自管。
+        std::fs::create_dir_all(&managed).expect("create managed profile dir for test");
+        let child = managed.join("Default");
+        assert!(
+            is_self_managed_profile(Some(&child)),
+            "managed 在盘 + 子目录不在盘的组合不得漏判: {child:?}"
+        );
+        // managed 自身此时必然在盘：精确命中路径保持绿
+        assert!(
+            is_self_managed_profile(Some(&managed)),
+            "managed profile 自身（在盘态）必须被判为自管"
         );
 
         // None / 空 → 不是自管（不能凭空把别人的浏览器也排掉）
