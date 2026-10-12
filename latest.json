@@ -1,19 +1,19 @@
-﻿{
-    "version":  "0.2.28",
-    "notes":  "Nuphus 0.2.28",
-    "pub_date":  "2026-10-12T04:53:22Z",
-    "platforms":  {
-                      "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQm94cFYyeEU1ZW56UElydmVGZ0dhVEt3ZFJ1N25nTmQra0pwNjFPV0FtOXRZNWlCY0ZQSzV6K2txSGVjR0F1WjRXRGFmRVE2VVBiYzYrazJnMjdXZ2dRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNzgwNzgxCWZpbGU6TnVwaHVzXzAuMi4yOF94NjQtc2V0dXAuZXhlCmJZd2F6VTF2MXN1M09kTVcrZ2RZb1R1eFNkRmxhTjhTOVhSN01lY1ZiMEJRcG9mWEY0bzhISi9MUElzWTlEOGxvWlc0REpTUFRmNXIzbVBkeTRIWEJRPT0K",
-                                             "url":  "https://gitee.com/nuphus/nuphus/releases/download/v0.2.28/nuphus-win32-x64-0.2.28-setup.exe"
-                                         },
-                      "darwin-aarch64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQmpWZEg3TmVEM1FVY2s1TTRjdW9hWTZ4clAwNWx3TzQ1eUo5S010b29BYm5rQnlvUE1KUDFVY01PY2t6NnhwdDh5WFh6UWx6dVlyZFJudkt0Q0RPNXdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNzgwNzI3CWZpbGU6TnVwaHVzLmFwcC50YXIuZ3oKdGpzdkFncWtVbDJHQUlQazVrRmVaVHExUTgvcmYvZ1BweUQydG9kN0daQlpTVmNBTmpMN0NMRzJwZzN1MEVnN1ArOWVKS1QvWXRCMGkvNWZDSnFkQlE9PQo=",
-                                             "url":  "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v0.2.28/Nuphus.app.tar.gz"
-                                         },
-                      "linux-x86_64":  {
-                                           "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQnBJSFZzbElDWDRDcGtsMSttcUZlbGFIRDdnWW01VWptQkZJempMNlo0WEw4UE5LU3F5OGpKWjdmc1pDSHFWd1llTGNPU0prV2V3YWtxYXlBbTZpanc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNzgwNjQ1CWZpbGU6TnVwaHVzXzAuMi4yOF9hbWQ2NC5BcHBJbWFnZQorM0hmdExNOHd4SDJncFFKcjBUS0FOWFpROHRzTEdFMjkwTTBGbks0T1BRcTVlOG12MmowTG9qNlhTOWJyQTJRWUZpekFXRnZ5bSt4VmlJWDQ4V0NDUT09Cg==",
-                                           "url":  "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v0.2.28/Nuphus_0.2.28_amd64.AppImage"
-                                       }
-                  }
+{
+  "version": "0.2.28",
+  "notes": "Nuphus 0.2.28",
+  "pub_date": "2026-10-12T04:53:22Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQm94cFYyeEU1ZW56UElydmVGZ0dhVEt3ZFJ1N25nTmQra0pwNjFPV0FtOXRZNWlCY0ZQSzV6K2txSGVjR0F1WjRXRGFmRVE2VVBiYzYrazJnMjdXZ2dRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNzgwNzgxCWZpbGU6TnVwaHVzXzAuMi4yOF94NjQtc2V0dXAuZXhlCmJZd2F6VTF2MXN1M09kTVcrZ2RZb1R1eFNkRmxhTjhTOVhSN01lY1ZiMEJRcG9mWEY0bzhISi9MUElzWTlEOGxvWlc0REpTUFRmNXIzbVBkeTRIWEJRPT0K",
+      "url": "https://gitee.com/nuphus/nuphus/releases/download/v0.2.28/nuphus-win32-x64-0.2.28-setup.exe"
+    },
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQmpWZEg3TmVEM1FVY2s1TTRjdW9hWTZ4clAwNWx3TzQ1eUo5S010b29BYm5rQnlvUE1KUDFVY01PY2t6NnhwdDh5WFh6UWx6dVlyZFJudkt0Q0RPNXdzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNzgwNzI3CWZpbGU6TnVwaHVzLmFwcC50YXIuZ3oKdGpzdkFncWtVbDJHQUlQazVrRmVaVHExUTgvcmYvZ1BweUQydG9kN0daQlpTVmNBTmpMN0NMRzJwZzN1MEVnN1ArOWVKS1QvWXRCMGkvNWZDSnFkQlE9PQo=",
+      "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v0.2.28/Nuphus.app.tar.gz"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQnBJSFZzbElDWDRDcGtsMSttcUZlbGFIRDdnWW01VWptQkZJempMNlo0WEw4UE5LU3F5OGpKWjdmc1pDSHFWd1llTGNPU0prV2V3YWtxYXlBbTZpanc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxNzgwNjQ1CWZpbGU6TnVwaHVzXzAuMi4yOF9hbWQ2NC5BcHBJbWFnZQorM0hmdExNOHd4SDJncFFKcjBUS0FOWFpROHRzTEdFMjkwTTBGbks0T1BRcTVlOG12MmowTG9qNlhTOWJyQTJRWUZpekFXRnZ5bSt4VmlJWDQ4V0NDUT09Cg==",
+      "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v0.2.28/Nuphus_0.2.28_amd64.AppImage"
+    }
+  }
 }
