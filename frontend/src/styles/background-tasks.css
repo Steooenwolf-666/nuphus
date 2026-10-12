@@ -97,7 +97,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 12px 8px;
+  gap: 8px;
+  /* 上下对称留白：此前 `0 12px 8px` 顶部零内边距让标题贴死面板上沿，
+     底部 8px 又与 border-bottom 叠出不对称的头部呼吸。 */
+  padding: 10px 12px;
   border-bottom: 1px solid var(--glass-2);
   flex: 0 0 auto;
 }
@@ -108,11 +111,21 @@
   min-width: 0;
 }
 .bgt-header-icon {
-  color: var(--spark-dim);
+  /* 裸 inline span 包 SVG 会按**文字基线**排布（不是垂直居中），图标因此与
+     标题上下错位。显式 flex + 固定方框把它钉到与文字中线对齐。 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
   flex: 0 0 auto;
+  color: var(--spark-dim);
 }
 .bgt-title {
   font-size: var(--fz-sm);
+  /* 显式行高与图标方框同高（16px）：默认行高会让文字盒高于图标，
+     align-items: center 对齐的是两个盒子的中线，字面基线仍偏下。 */
+  line-height: 16px;
   color: var(--spark-primary);
   white-space: nowrap;
 }
@@ -122,6 +135,9 @@
   justify-content: center;
   width: 22px;
   height: 22px;
+  /* 与 .bgt-header 的 align-items: center 配套：按钮方框 22px 高于文字行 16px，
+     不给负外边距会让 ✕ 在视觉上比标题高一档。 */
+  margin: -3px 0;
   flex: 0 0 auto;
   border: none;
   background: transparent;

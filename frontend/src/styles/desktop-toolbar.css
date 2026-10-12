@@ -18,7 +18,15 @@
   right: 20px;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 9999;
+  /* 层级与 .chat-header-left / .chat-header-right 同为10（chat-messages.css:66）。
+   2026-10-12 大王钦定：工具条不是弹窗，不该有任何「压过别的浮层」的特权；
+   但也不必比 header 更低——两者同属常驻 chrome，同层内按 DOM 顺序压住即可。
+   10 之上依次是：思考条 40 / 工具条自身遮罩 200 / island 260 / cmd-palette 300 /
+   右键菜单 3000 / 模型页遮罩 10000，以及 input-bar 50、后台任务面板 52、
+   设置类 60~90、确认弹窗 150 —— 用户正在用的任何弹窗都在工具条之上。
+   刻意不用 pointer-events:none（会让 hover 永不触发、整列变死 UI，
+   见文件头「热区纪律」）。 */
+  z-index: 10;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -207,7 +215,12 @@
 .desktop-toolbar-overlay {
   position: fixed;
   inset: 0;
-  z-index: 9998;
+  /* 工具条自身的加载遮罩：必须高于 dock（45），否则盖不住触发它的按钮列。
+     但不得高于用户自己的弹窗族——它是工具条内部态，用户若在别处开了弹窗，
+     这个遮罩不该盖住它（dock 降级后 9998 仍会压住 compact 150 / cmd-palette 300）。
+     200 = 与既有全屏遮罩族（msg/设置 200、chat-input 200）同层：高于内容层、
+     低于 island 260 / cmd-palette 300 / 菜单 3000 / 遮罩 10000。 */
+  z-index: 200;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -248,7 +261,11 @@
 /* ── 结果浮窗 ── */
 
 .desktop-toolbar-result {
-  z-index: 9999;
+  /* 结果浮窗：本工具主动发起的产物，随其 overlay（200）一同在 portal 内渲染，
+     只需高于 overlay 自身即可。**刻意不设 9999**——它曾在 dock 降级后仍压住
+     用户的弹窗族，而结果弹窗是「可关掉的轻提示」，没有压过一切的理由。
+     201 = 紧贴 overlay 之上的同层位，低于 island 260 / 菜单 3000 / 遮罩 10000。 */
+  z-index: 201;
   position: relative;
   width: 440px;
   max-height: 360px;

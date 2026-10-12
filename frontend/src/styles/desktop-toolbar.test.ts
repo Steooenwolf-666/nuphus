@@ -90,8 +90,20 @@ describe('② dock 定位与排布：对齐 .chat-header-right', () => {
     expect(dock).toMatch(/gap:\s*4px/)
   })
 
-  it('层级保留 9999', () => {
-    expect(dock).toMatch(/z-index:\s*9999/)
+  it('层级降到 45：常驻工具不得压住任何浮层（大王钦定「完全降级」）', () => {
+    // 2026-10-12：原 9999 让「鼠标扫过右缘整列显形」且压住用户正在用的
+    // 确认弹窗 / 指令面板 / 模型页遮罩。改为 45——高于内容层（header 10、
+    // 思考条 40），低于全部浮层（输入框 50、后台任务面板 52、确认弹窗 150、
+    // island 260、菜单 3000、遮罩 10000）。
+    expect(dock).toMatch(/z-index:\s*45\b/)
+    expect(dock).not.toMatch(/z-index:\s*9999/)
+    // 三者必须全部落在浮层族之下：dock、工具条自身遮罩、结果浮窗
+    const overlay = ruleBody(toolbarCss, '.desktop-toolbar-overlay')
+    const result = ruleBody(toolbarCss, '.desktop-toolbar-result')
+    expect(overlay).toMatch(/z-index:\s*200\b/)
+    expect(overlay).not.toMatch(/z-index:\s*999\d/)
+    expect(result).toMatch(/z-index:\s*201\b/)
+    expect(result).not.toMatch(/z-index:\s*999\d/)
   })
 
   it('热区纪律：dock 无 padding / margin / inset / 铺满式尺寸', () => {

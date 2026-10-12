@@ -99,4 +99,22 @@ describe('后台任务面板样式契约（不透明度体系 + 无新 token）'
     const panel = ruleBody('.bgt-panel')
     expect(panel).not.toMatch(/position:\s*fixed/)
   })
+
+  it('头部上下对齐：图标盒与标题行高同为 16px，header 上下留白对称', () => {
+    // 2026-10-12 修复：图标包在裸 inline span 里按**文字基线**排布（不是垂直居中），
+    // 与标题上下错位；且 header padding 顶部为 0，标题贴死面板上沿。
+    // 三处钉死：图标必须 flex 居中 + 16px 方框、标题行高 16px、padding 上下对称。
+    const header = ruleBody('.bgt-header')
+    expect(header).toMatch(/padding:\s*10px\s+12px/)
+    expect(header).not.toMatch(/padding:\s*0\s/)
+
+    const icon = ruleBody('.bgt-header-icon')
+    expect(icon).toMatch(/display:\s*flex/)
+    expect(icon).toMatch(/align-items:\s*center/)
+    expect(icon).toMatch(/height:\s*16px/)
+
+    // 标题行高与图标方框同高 → align-items: center 对齐后两者中线重合
+    const title = ruleBody('.bgt-title')
+    expect(title).toMatch(/line-height:\s*16px/)
+  })
 })
