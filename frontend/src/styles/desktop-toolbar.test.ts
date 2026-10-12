@@ -90,13 +90,16 @@ describe('② dock 定位与排布：对齐 .chat-header-right', () => {
     expect(dock).toMatch(/gap:\s*4px/)
   })
 
-  it('层级降到 45：常驻工具不得压住任何浮层（大王钦定「完全降级」）', () => {
+  it('层级降到 10：与 .chat-header-left/right 同层，常驻工具不得压住任何浮层（大王钦定）', () => {
     // 2026-10-12：原 9999 让「鼠标扫过右缘整列显形」且压住用户正在用的
-    // 确认弹窗 / 指令面板 / 模型页遮罩。改为 45——高于内容层（header 10、
-    // 思考条 40），低于全部浮层（输入框 50、后台任务面板 52、确认弹窗 150、
-    // island 260、菜单 3000、遮罩 10000）。
-    expect(dock).toMatch(/z-index:\s*45\b/)
+    // 确认弹窗 / 指令面板 / 模型页遮罩。后经大王二次钦定，与 chat-header 同为 10
+    // （chat-messages.css:66）——两者同属常驻chrome，同层内按 DOM 顺序压住即可。
+    // 10 之上：思考条 40 / 工具条自身遮罩 200 / island 260 / cmd-palette 300 /
+    // 右键菜单 3000 / 遮罩 10000，以及 input-bar 50、后台任务面板 52、
+    // 设置类 60~90、确认弹窗 150 —— 用户正在用的任何弹窗都在工具条之上。
+    expect(dock).toMatch(/z-index:\s*10\b/)
     expect(dock).not.toMatch(/z-index:\s*9999/)
+    expect(dock).not.toMatch(/z-index:\s*45\b/)
     // 三者必须全部落在浮层族之下：dock、工具条自身遮罩、结果浮窗
     const overlay = ruleBody(toolbarCss, '.desktop-toolbar-overlay')
     const result = ruleBody(toolbarCss, '.desktop-toolbar-result')
