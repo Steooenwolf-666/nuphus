@@ -8,8 +8,7 @@
  *
  * 用户名可信度（均经 GitHub API `/users/<login>` 200 校验）：
  *   - yuansui486：README 致谢 #23 / #26 / #28 的链接用户名，且这些合并提交的作者名相同；
- *   - zhoupeiyu515-ui：README 致谢 #31 的链接用户名；#32 分支提交作者邮箱与 #31 完全一致（同一人）；
- *   - jiangdingwei123-afk：#21 分支提交作者名即 GitHub 用户名（README 未收录该轮次）。
+ *   - zhoupeiyu515-ui：README 致谢 #31 的链接用户名；#32 分支提交作者邮箱与 #31 完全一致（同一人）。
  *   - Steooenwolf-666：2026-09-28 经 `/contributors` API 确认该账号真实存在且已有 21 次提交，
  *     本轮 PR #67 / #70~#75 的作者均为该账号，头像 u/156271754——新增提交者，按发版铁律
  *     补入头像墙与轮次表。
@@ -49,11 +48,12 @@
  *
  * `0.2.28` 轮次取证：2026-10-12 经 `/pulls?state=closed` API 核对，v0.2.27（2026-10-10）之后
  * 唯一合并 PR 为 #104（zhoupeiyu515-ui，热门模型快捷 chip + 筛选框多关键词，2026-10-11 合并，
- * merge commit 3dc1dd4b）——作者已在头像墙，**无新提交者**。`git log v0.2.27..HEAD` 区间
+ * merge commit 3dc1dd4b）。`git log v0.2.27..HEAD` 区间
  * 其余提交全为仓库所有者直推，按既定口径以 **commit 出处**收录重要功能；纯格式 / lint /
- * 发版杂务提交不收录。
+ * 发版杂务提交不收录。历史轮次中的 #21 条目经所有者复核不属于本仓库贡献记录，已移除，
+ * 不得回填。
  *
- * ⛔ 新增记录前必须先在上面的三处找到出处；不得凭印象补充贡献者或贡献内容。
+ * ⛔ 新增记录前必须先在上面的三处找到出处并经所有者确认；不得凭印象补充贡献者或贡献内容。
  */
 
 /** 本仓库主页（与 Ctrl+K 命令、旧筹备页使用同一地址） */
@@ -572,12 +572,6 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
           },
         ],
       },
-      {
-        user: 'jiangdingwei123-afk',
-        contributions: [
-          { pr: 21, summary: 'npm 安装后 macOS / Linux 无法启动：启动器幂等补齐可执行位' },
-        ],
-      },
     ],
   },
 ]
@@ -601,7 +595,6 @@ export const REPO_COMMITTERS: string[] = [
   'fouyzjl', // 13 commits
   'mrpulor-gh', // 3 commits（仓库所有者；2026-10-05 发版后重跑 API 仍报 3——/contributors
   // 统计有缓存滞后，0.2.26 的 8 个直推提交已 push 双远端，计数待 GitHub 后台刷新）
-  'jiangdingwei123-afk', // 1 commit
   'zhoupeiyu515-ui', // 1 commit
 ]
 

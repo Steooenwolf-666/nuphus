@@ -61,7 +61,8 @@
   视图且毫无察觉（`browser_evaluate` 里 `window.frames` 可读反而加重了「能读到却没采集」
   的错觉）。现在：`Page.getFrameTree` 枚举全部 frame，对会话可直达的子 frame 逐一以其
   frameId 采集 AX 树——主文档 refs 保持原编号在前，嵌套 frame refs 追加在后，并以
-  「── 嵌套 frame：… ──」头行标明归属；click / type / exec 的 @N 解析随 frame 归属路由，
+  「── 嵌套 frame：… ──」头行标明归属；click / type / exec 的元素引用（N 为快照元素
+  编号）随 frame 归属路由，
   iframe 内元素可直接点击、输入（实测：点击 iframe 内按钮，动作落在子文档里）。
   采不到的 frame（跨进程 / 跨源沙箱，或 AX 树为空）在快照末尾以「⚠ … 未包含在上方快照中」
   逐条披露，残缺视图从此是显式的；frame 树枚举失败时退化为原主文档行为，不阻断。
