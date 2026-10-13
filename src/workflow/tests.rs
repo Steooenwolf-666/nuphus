@@ -1363,7 +1363,10 @@ mod serialization_tests {
 
         let round: InputSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(round.kind, InputKind::Enum);
-        assert_eq!(round.options.as_deref(), Some(&["普通".to_string(), "后台".to_string()][..]));
+        assert_eq!(
+            round.options.as_deref(),
+            Some(&["普通".to_string(), "后台".to_string()][..])
+        );
 
         // 旧数据：无 options 字段 → None，非 enum 类型零影响
         let legacy: InputSpec =

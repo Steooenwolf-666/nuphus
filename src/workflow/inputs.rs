@@ -57,10 +57,9 @@ pub fn validate_specs(specs: &[InputSpec]) -> Vec<String> {
         }
         // enum 专项：options 必填非空、不含空档位；default 必须命中白名单
         if spec.kind.is_enum() {
-            let empty = spec
-                .options
-                .as_ref()
-                .is_none_or(|options| options.is_empty() || options.iter().any(|o| o.trim().is_empty()));
+            let empty = spec.options.as_ref().is_none_or(|options| {
+                options.is_empty() || options.iter().any(|o| o.trim().is_empty())
+            });
             if empty {
                 errors.push(format!(
                     "输入 '{}': type=enum 必须提供非空 options 档位列表",
@@ -197,13 +196,19 @@ mod tests {
         bad.options = Some(vec!["普通".into(), "后台".into()]);
         bad.default = Some(serde_json::json!("硬件"));
         let errors = validate_specs(&[bad]);
-        assert!(errors.iter().any(|e| e.contains("不在 options")), "{errors:?}");
+        assert!(
+            errors.iter().any(|e| e.contains("不在 options")),
+            "{errors:?}"
+        );
 
         // ③ 非 enum 类型带 options → 声明错误
         let mut stray = spec("text", InputKind::String);
         stray.options = Some(vec!["x".into()]);
         let errors = validate_specs(&[stray]);
-        assert!(errors.iter().any(|e| e.contains("仅 type=enum")), "{errors:?}");
+        assert!(
+            errors.iter().any(|e| e.contains("仅 type=enum")),
+            "{errors:?}"
+        );
 
         // ④ 运行时：合法档位通过；非法档位报白名单错误
         let mut mode = spec("mode", InputKind::Enum);
