@@ -684,6 +684,7 @@ mod schedule_editor_tests {
             default: None,
             description: None,
             sensitive,
+            options: None,
         }
     }
 

@@ -233,6 +233,7 @@ mod compiler_tests {
             default,
             description: None,
             sensitive: false,
+            options: None,
         }
     }
 
@@ -322,6 +323,7 @@ mod compiler_tests {
             default: None,
             description: None,
             sensitive: false,
+            options: None,
         }];
         store.save(&child).await.unwrap();
 
@@ -1329,6 +1331,7 @@ mod serialization_tests {
             default: Some(serde_json::json!("D:/tmp")),
             description: Some("输入目录".into()),
             sensitive: true,
+            options: None,
         };
         let json = serde_json::to_string(&spec).unwrap();
         assert!(json.contains(r#""type":"path""#), "type 别名未生效: {json}");
@@ -1340,6 +1343,33 @@ mod serialization_tests {
         assert_eq!(round.default, Some(serde_json::json!("D:/tmp")));
         assert_eq!(round.description.as_deref(), Some("输入目录"));
         assert!(round.sensitive);
+    }
+
+    /// enum 类型序列化与 options 携带：旧数据（无 options）反序列化不受影响
+    #[test]
+    fn input_spec_enum_round_trip() {
+        let spec = InputSpec {
+            name: "mode".into(),
+            kind: InputKind::Enum,
+            required: false,
+            default: Some(serde_json::json!("普通")),
+            description: None,
+            sensitive: false,
+            options: Some(vec!["普通".into(), "后台".into()]),
+        };
+        let json = serde_json::to_string(&spec).unwrap();
+        assert!(json.contains(r#""type":"enum""#), "enum 别名未生效: {json}");
+        assert!(json.contains(r#""options""#), "options 未序列化: {json}");
+
+        let round: InputSpec = serde_json::from_str(&json).unwrap();
+        assert_eq!(round.kind, InputKind::Enum);
+        assert_eq!(round.options.as_deref(), Some(&["普通".to_string(), "后台".to_string()][..]));
+
+        // 旧数据：无 options 字段 → None，非 enum 类型零影响
+        let legacy: InputSpec =
+            serde_json::from_str(r#"{"name":"topic","type":"string"}"#).unwrap();
+        assert_eq!(legacy.kind, InputKind::String);
+        assert!(legacy.options.is_none());
     }
 
     /// 声明项省略可选字段时取默认：type=string / required=false / sensitive=false

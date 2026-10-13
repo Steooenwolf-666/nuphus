@@ -551,12 +551,12 @@ export interface ScheduleConfig {
 // ── WorkflowInputSpec（后端 InputSpec 镜像：workflow.inputs[]）──
 
 /** 输入类型（后端 InputKind，JSON 字段名 type） */
-export type WorkflowInputKind = 'string' | 'number' | 'boolean' | 'path' | 'json'
+export type WorkflowInputKind = 'string' | 'number' | 'boolean' | 'path' | 'json' | 'enum'
 
 /** 工作流外部输入声明（运行前由 UI 收集，注入变量池 inputs.x / 顶层 x） */
 export interface WorkflowInputSpec {
   name: string
-  /** 控件类型，缺省 string */
+  /** 控件类型，缺省 string；enum = 档位下拉（须配 options） */
   type?: WorkflowInputKind
   /** 必填：无 default 且未填 → 运行前阻断 */
   required?: boolean
@@ -565,6 +565,8 @@ export interface WorkflowInputSpec {
   description?: string
   /** 敏感值：密码控件且不写日志/事件；本机运行快照仍会保留值 */
   sensitive?: boolean
+  /** enum 档位白名单（仅 type=enum 有效且必填非空）；其它类型忽略 */
+  options?: string[]
 }
 
 // ── WorkflowItem (V2) ──

@@ -803,6 +803,7 @@ mod gate_tests {
             default: None,
             description: None,
             sensitive: false,
+            options: None,
         }];
         engine.store.save(&workflow).await.unwrap();
 

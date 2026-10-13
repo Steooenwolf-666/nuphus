@@ -583,6 +583,7 @@ mod tests {
             default: None,
             description: None,
             sensitive,
+            options: None,
         }
     }
 

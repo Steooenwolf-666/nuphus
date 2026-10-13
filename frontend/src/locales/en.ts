@@ -1,4 +1,4 @@
-﻿import { editorEn } from './workflowEditor'
+import { editorEn } from './workflowEditor'
 
 const en: Record<string, string> = {
   ...editorEn,
@@ -312,6 +312,7 @@ const en: Record<string, string> = {
   'extAgents.state.ready': 'Ready',
   'extAgents.state.done': 'Standby',
   'extAgents.state.blocked': 'Blocked',
+  'extAgents.state.cancelled': 'Cancelled',
   'extAgents.state.error': 'Error',
   'extAgents.state.uninitialized': 'Uninitialized',
   'extAgents.state.unknown': 'Unknown',
@@ -1538,8 +1539,8 @@ const en: Record<string, string> = {
   'theme.darkDesc': 'Dark theme',
   'theme.light': 'White',
   'theme.lightDesc': 'Light theme',
-  'theme.tech': 'Void Light',
-  'theme.techDesc': 'Deep black → high contrast',
+  'theme.fresh': 'Morning Mist',
+  'theme.freshDesc': 'Mist base · a touch of spring green',
   'lang.zh': '中文',
   'lang.en': 'English',
 

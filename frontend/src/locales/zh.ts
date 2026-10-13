@@ -1,4 +1,4 @@
-﻿import { editorZh } from './workflowEditor'
+import { editorZh } from './workflowEditor'
 
 const zh: Record<string, string> = {
   ...editorZh,
@@ -301,6 +301,7 @@ const zh: Record<string, string> = {
   'extAgents.state.ready': '就绪',
   'extAgents.state.done': '待命',
   'extAgents.state.blocked': '阻塞',
+  'extAgents.state.cancelled': '已取消',
   'extAgents.state.error': '错误',
   'extAgents.state.uninitialized': '未初始化',
   'extAgents.state.unknown': '未知',
@@ -1459,8 +1460,8 @@ const zh: Record<string, string> = {
   'theme.darkDesc': '深色主题',
   'theme.light': '简白',
   'theme.lightDesc': '浅色主题',
-  'theme.tech': '深渊冷光',
-  'theme.techDesc': '纯黑底·高对比赛博',
+  'theme.fresh': '晨雾清新',
+  'theme.freshDesc': '晨雾底·一抹青芽绿',
   'lang.zh': '中文',
   'lang.en': 'English',
 

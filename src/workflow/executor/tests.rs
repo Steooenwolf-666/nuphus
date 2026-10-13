@@ -500,6 +500,7 @@ async fn test_wf_call_resolves_declared_inputs_and_defaults() {
             default: None,
             description: None,
             sensitive: false,
+            options: None,
         },
         InputSpec {
             name: "label".into(),
@@ -508,6 +509,7 @@ async fn test_wf_call_resolves_declared_inputs_and_defaults() {
             default: Some(serde_json::json!("default-label")),
             description: None,
             sensitive: false,
+            options: None,
         },
     ];
     sub.steps = vec![make_tool_step(
@@ -1427,6 +1429,7 @@ fn input_spec(
         default,
         description: None,
         sensitive,
+        options: None,
     }
 }
 
