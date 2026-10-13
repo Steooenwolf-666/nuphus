@@ -1041,7 +1041,7 @@ pub(crate) fn build_contract(agent: &str, task_id: &str, dir: &Path) -> String {
 /// 命中则更新其 status.json 的 state / last_event / updated_at；
 /// 未命中或无目录 → 静默跳过（不报错，避免破坏既有门铃流程）。
 ///
-/// 状态映射：progress→in_progress / done→done / blocked→blocked。
+/// 状态映射：progress→in_progress / done→done / blocked→blocked / cancelled→cancelled。
 /// ready 保留兼容解析（旧 Agent 可能仍上报），但产品流程（read.md/契约）不再要求 ready。
 ///
 /// ## task_id 一致性闸
@@ -1078,6 +1078,7 @@ fn update_agent_status_from_doorbell_at(
         "ready" | "progress" => "in_progress",
         "done" => "done",
         "blocked" => "blocked",
+        "cancelled" => "cancelled",
         _ => return None, // 未知状态：不落盘（与 push_event 校验语义一致）
     };
     // 整段「读—判—改—写」在同一把写锁内完成：门铃 handler 与派发编排分属不同线程，
@@ -1125,7 +1126,8 @@ fn update_agent_status_from_doorbell_at(
         return None;
     }
 
-    // 完工审计：只在 done/blocked 上做（progress 只是开工确认，此时工作区还没动）。
+    // 完工审计：只在 done/blocked 上做（progress 只是开工确认，此时工作区还没动；
+    // cancelled 是派发方作废任务，不作为完工验收依据）。
     let audit = if matches!(status, "done" | "blocked") {
         head_audit(&doc)
     } else {
@@ -1196,7 +1198,7 @@ mod tests {
         // 同 task_id 重派/续派放行（失败重试与契约刷新的唯一出口）
         assert!(in_flight_block_reason(Some(&doc("in_progress", "task-a")), "task-a").is_none());
         // 终态后放行
-        for s in ["done", "blocked", "error", "idle"] {
+        for s in ["done", "blocked", "error", "idle", "cancelled"] {
             assert!(
                 in_flight_block_reason(Some(&doc(s, "task-a")), "task-b").is_none(),
                 "终态 {s} 不应阻止新派发"
@@ -1725,6 +1727,22 @@ mod tests {
     fn test_doorbell_grouping_updates_status_and_skips_unknown() {
         let root = tmp_root("group");
         init_agent_at(&root, "web_agent", "desc").unwrap();
+
+        // cancelled 映射 + 不跑完工审计（派发方作废任务不作验收依据）
+        update_agent_status_from_doorbell_at(
+            &root,
+            "web_agent::task-001",
+            "cancelled",
+            "任务被取消",
+            None,
+        );
+        let status: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("web_agent").join("status.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(status["state"], "cancelled");
+        assert_eq!(status["last_event"]["status"], "cancelled");
+        assert!(status.get("head_check").is_none(), "cancel 不触发完工审计");
 
         update_agent_status_from_doorbell_at(&root, "web_agent", "ready", "旧式就位事件", None);
         let status = status_json(&root, "web_agent");
