@@ -508,5 +508,11 @@ mod tests {
         ] {
             assert!(s.contains(pinned), "上行协议被改动：{pinned}");
         }
+        // ready 握手必须带 file（父窗口按 basename 挡掉双 PreviewOverlay 并存时
+        // 另一实例/旧文档的同形状消息）。缺 file 会让父窗口形状校验恒拒 → 恒「未就绪」。
+        assert!(
+            s.contains("file: currentFile()"),
+            "ready 握手必须携带 file（父窗口据此做跨文件防串话）"
+        );
     }
 }
