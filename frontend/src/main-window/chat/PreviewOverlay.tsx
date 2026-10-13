@@ -787,11 +787,14 @@ export function PreviewOverlay({
       //   ③ file basename 必须等于当前预览文件 —— 双 PreviewOverlay 并存（ChatPanel
       //      与外部 agent 状态栏各托管一个）且 source 扫描是「任意 iframe」时，
       //      这一条把另一实例/旧文档残留的同形状消息挡在状态机外。
-      const data = event.data as {
-        type?: unknown
-        file?: unknown
-        annotations?: unknown
-      } | null | undefined
+      const data = event.data as
+        | {
+            type?: unknown
+            file?: unknown
+            annotations?: unknown
+          }
+        | null
+        | undefined
       if (!data || typeof data !== 'object') {
         diag.rejectedByShape += 1
         diag.lastReject = `非对象消息（${String(event.data).slice(0, 30)}）`

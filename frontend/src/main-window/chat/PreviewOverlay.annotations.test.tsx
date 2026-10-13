@@ -185,7 +185,10 @@ describe('PreviewOverlay HTML 标注回流（P1）', () => {
   it('缺 file 字段的上行消息被形状校验挡掉（协议面要求 file 非空）', () => {
     const iframe = renderHtmlPreview()
     enterAnnotating(iframe)
-    dispatchMessage({ type: 'nuphus:annotations', annotations: PAYLOAD.annotations }, iframe.contentWindow)
+    dispatchMessage(
+      { type: 'nuphus:annotations', annotations: PAYLOAD.annotations },
+      iframe.contentWindow,
+    )
     dispatchMessage({ type: 'nuphus:annotator-ready' }, iframe.contentWindow)
     expect(screen.queryByText('标题改成蓝色')).not.toBeInTheDocument()
   })
@@ -850,7 +853,9 @@ describe('PreviewOverlay 标注 UI 重构（P4：父窗口托管）', () => {
     // 上行走 parent.postMessage），与 preview:// 实机一致。
     const sent: { type?: string; annotations?: unknown[] }[] = []
     const realParent = w.parent
-    const fakeParent = { postMessage: (p: { type?: string; annotations?: unknown[] }) => sent.push(p) }
+    const fakeParent = {
+      postMessage: (p: { type?: string; annotations?: unknown[] }) => sent.push(p),
+    }
     w.parent = fakeParent
     try {
       new Function(js)()
