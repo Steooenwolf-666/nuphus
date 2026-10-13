@@ -13,11 +13,11 @@ import { CaptureOverlay } from './CaptureOverlay'
  */
 ;(() => {
   const html = document.documentElement
-  type ThemeId = 'dark' | 'light' | 'tech'
+  type ThemeId = 'dark' | 'light' | 'fresh'
   const readBase = (): ThemeId => {
     try {
       const saved = localStorage.getItem('nuphus_theme') as ThemeId | null
-      if (saved === 'dark' || saved === 'light' || saved === 'tech') return saved
+      if (saved === 'dark' || saved === 'light' || saved === 'fresh') return saved
     } catch {}
     return 'dark'
   }
@@ -33,7 +33,7 @@ import { CaptureOverlay } from './CaptureOverlay'
       }[]
       const active = Array.isArray(parsed) ? parsed.find(t => t.id === activeId) : undefined
       if (active) {
-        if (active.base === 'dark' || active.base === 'light' || active.base === 'tech') {
+        if (active.base === 'dark' || active.base === 'light' || active.base === 'fresh') {
           theme = active.base
         }
         for (const [key, value] of Object.entries(active.overrides ?? {})) {

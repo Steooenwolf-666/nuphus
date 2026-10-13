@@ -380,8 +380,6 @@
           clearOverlayLayer()
           clearHighlight()
           markers = []
-          editing = null
-          pendingRegion = null
           afterMarkersChange()
         }
 
@@ -720,10 +718,10 @@
         // 改为标记全局标志 —— Rust 侧 read_annotations 读到的对象里
         // ready 为 true 即表示初始化完成，不必再等一次协议往返。
         if (CDP_HOST) {
-          window.__NUPHUS_ANNOTATIONS__ = { type: 'nuphus:annotator-ready', ready: true, at: Date.now() }
+          window.__NUPHUS_ANNOTATIONS__ = { type: 'nuphus:annotator-ready', ready: true, file: currentFile(), at: Date.now() }
         } else {
           try {
-            window.parent.postMessage({ type: 'nuphus:annotator-ready' }, '*')
+            window.parent.postMessage({ type: 'nuphus:annotator-ready', file: currentFile() }, '*')
           } catch (err) {
             console.error(LOG + ' 握手失败', err)
           }

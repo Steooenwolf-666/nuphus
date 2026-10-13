@@ -1184,6 +1184,35 @@ export function setCapabilityBinding(kind: string, model: string, provider: stri
   return invoke<void>('set_capability_binding', { kind, model, provider })
 }
 
+/** 图像理解生效路径解析（后端权威，跟随链展示用）。
+ *  strategy: capability=显式绑定 / main=跟随 Leader 主模型 / none=不可用。 */
+export interface VisionResolution {
+  strategy: 'capability' | 'main' | 'none'
+  /** capability=绑定模型 id；main=Leader 模型 id；none='' */
+  model: string
+  /** 模型所在 provider 段名（解析不到为空串） */
+  provider: string
+  /** 当前 Leader 模型 id */
+  leader_model: string
+}
+
+export function getVisionResolution() {
+  return invoke<VisionResolution>('get_vision_resolution')
+}
+
+/** 「发送测试图片」探测结果（1x1 PNG 直调视觉链路）。
+ *  失败时 kind 为后端分类：auth / billing / rate_limit / image_too_large / other。 */
+export interface VisionTestOutcome {
+  ok: boolean
+  latency_ms: number
+  kind: string
+  message: string
+}
+
+export function testVisionModel() {
+  return invoke<VisionTestOutcome>('test_vision_model')
+}
+
 /** 手动设定某 provider 下某模型的视觉（多模态）能力（模型行内开关）。
  *  落盘后在 providers.toml 标记来源 user，自动探测不再覆盖该值。 */
 export function setModelSupportsVision(provider: string, model: string, supportsVision: boolean) {

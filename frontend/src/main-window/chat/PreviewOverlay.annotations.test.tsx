@@ -32,12 +32,21 @@ function dispatchMessage(data: unknown, source: unknown) {
 
 /** 渲染 HTML 预览并触发 iframe onLoad，返回该 iframe */
 function renderHtmlPreview(path = 'C:/work/demo.html', onSendAnnotations?: (ref: unknown) => void) {
+  const iframe = renderHtmlPreviewNoLoad(path, onSendAnnotations)
+  fireEvent.load(iframe)
+  return iframe
+}
+
+/** 渲染 HTML 预览但**不**触发 onLoad（用于模拟「握手先于 load 到达」的真实时序） */
+function renderHtmlPreviewNoLoad(
+  path = 'C:/work/demo.html',
+  onSendAnnotations?: (ref: unknown) => void,
+) {
   render(
     <PreviewOverlay path={path} onClose={() => undefined} onSendAnnotations={onSendAnnotations} />,
   )
   const iframe = document.querySelector('iframe.pv-iframe') as HTMLIFrameElement | null
   if (!iframe) throw new Error('HTML 预览分支未渲染 iframe')
-  fireEvent.load(iframe)
   return iframe
 }
 
@@ -73,6 +82,9 @@ const EMPTY_PAYLOAD = {
   file: 'demo.html',
   annotations: [],
 }
+
+/** ready 握手：脚本现携带 file（父窗口据此做跨文件防串话，形状校验要求非空字符串） */
+const readyMsg = { type: 'nuphus:annotator-ready', file: 'demo.html' }
 
 /** P3 区域框选 payload：单条带 region 附加字段（既有字段零改） */
 const REGION_PAYLOAD = {
@@ -117,17 +129,34 @@ describe('PreviewOverlay HTML 标注回流（P1）', () => {
     localStorage.clear()
   })
 
-  it('iframe onLoad 之后才注册 message listener', () => {
+  it('message listener 挂载即注册（不等 onLoad，防先行握手被丢）', () => {
+    // 回归（标注器未就绪实机根因）：注入脚本在 iframe 的 DOMContentLoaded 就发 ready，
+    // 而 load 要等资源。若 listener 挂在 onLoad 里，先行到达的握手因「无监听器」被
+    // postMessage 直接丢弃（不缓冲、不补投）→ 2s 超时恒触发「标注器未就绪」。
     const addSpy = vi.spyOn(window, 'addEventListener')
     try {
       render(<PreviewOverlay path="C:/work/demo.html" onClose={() => undefined} />)
-      const iframe = document.querySelector('iframe.pv-iframe') as HTMLIFrameElement
-      // 挂载时只注册 Esc 监听，message listener 必须等 iframe 就绪
-      expect(addSpy).not.toHaveBeenCalledWith('message', expect.any(Function))
-      fireEvent.load(iframe)
       expect(addSpy).toHaveBeenCalledWith('message', expect.any(Function))
     } finally {
       addSpy.mockRestore()
+    }
+  })
+
+  it('握手先于 onLoad 到达（真实时序）仍被接受，不触发未就绪', () => {
+    vi.useFakeTimers()
+    try {
+      const iframe = renderHtmlPreviewNoLoad()
+      // 真实浏览器：DOMContentLoaded 时 ready 已发出，此刻 load 尚未触发
+      dispatchMessage(readyMsg, iframe.contentWindow)
+      expect(screen.queryByText(/标注器未就绪/)).not.toBeInTheDocument()
+      // onLoad 之后到来也不得把已就绪冲回 missing（readySeenRef 已置位则不再起表）
+      fireEvent.load(iframe)
+      act(() => {
+        vi.advanceTimersByTime(5000)
+      })
+      expect(screen.queryByText(/标注器未就绪/)).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
     }
   })
 
@@ -141,6 +170,37 @@ describe('PreviewOverlay HTML 标注回流（P1）', () => {
     dispatchMessage(PAYLOAD, iframe)
     expect(screen.queryByText('收到 2 条标注')).not.toBeInTheDocument()
     expect(screen.queryByText('标题改成蓝色')).not.toBeInTheDocument()
+  })
+
+  it('file 与当前预览不符的同形状消息被忽略（双 PreviewOverlay 并存防串话）', () => {
+    const iframe = renderHtmlPreview()
+    enterAnnotating(iframe)
+    // source 合法（本 iframe contentWindow）、形状合法，但 file 是另一个文件
+    dispatchMessage({ ...PAYLOAD, file: 'other.html' }, iframe.contentWindow)
+    expect(document.querySelector('.pv-annot-panel')).not.toBeNull()
+    expect(screen.queryByText('标题改成蓝色')).not.toBeInTheDocument()
+    expect(localStorage.getItem('nuphus:annotations:C:/work/demo.html')).toBeNull()
+  })
+
+  it('缺 file 字段的上行消息被形状校验挡掉（协议面要求 file 非空）', () => {
+    const iframe = renderHtmlPreview()
+    enterAnnotating(iframe)
+    dispatchMessage({ type: 'nuphus:annotations', annotations: PAYLOAD.annotations }, iframe.contentWindow)
+    dispatchMessage({ type: 'nuphus:annotator-ready' }, iframe.contentWindow)
+    expect(screen.queryByText('标题改成蓝色')).not.toBeInTheDocument()
+  })
+
+  it('条目缺 rect（形状不完整）被挡掉，不进列表也不落库（防渲染 TypeError）', () => {
+    const iframe = renderHtmlPreview()
+    enterAnnotating(iframe)
+    const broken = {
+      type: 'nuphus:annotations',
+      file: 'demo.html',
+      annotations: [{ css_selector: 'p', outer_html_snippet: '<p>', comment: 'x' }],
+    }
+    dispatchMessage(broken, iframe.contentWindow)
+    expect(screen.queryByText('x')).not.toBeInTheDocument()
+    expect(localStorage.getItem('nuphus:annotations:C:/work/demo.html')).toBeNull()
   })
 
   it('本 iframe contentWindow 发来的标注进入右侧修改列表', () => {
@@ -189,7 +249,7 @@ describe('PreviewOverlay HTML 标注回流（P1）', () => {
     vi.useFakeTimers()
     try {
       const iframe = renderHtmlPreview()
-      dispatchMessage({ type: 'nuphus:annotator-ready' }, iframe.contentWindow)
+      dispatchMessage(readyMsg, iframe.contentWindow)
       act(() => {
         vi.advanceTimersByTime(5000)
       })
@@ -203,7 +263,7 @@ describe('PreviewOverlay HTML 标注回流（P1）', () => {
     vi.useFakeTimers()
     try {
       renderHtmlPreview()
-      dispatchMessage({ type: 'nuphus:annotator-ready' }, window)
+      dispatchMessage({ type: 'nuphus:annotator-ready', file: 'demo.html' }, window)
       act(() => {
         vi.advanceTimersByTime(5000)
       })
@@ -218,14 +278,15 @@ describe('PreviewOverlay HTML 标注回流（P1）', () => {
     const iframe = document.querySelector('iframe.pv-iframe') as HTMLIFrameElement
     fireEvent.load(iframe)
     fireEvent.click(editToggle())
-    dispatchMessage(PAYLOAD, iframe.contentWindow)
+    // file 必须与当前预览文件一致（形状校验要求 basename 匹配），消息才会被接受
+    dispatchMessage({ ...PAYLOAD, file: 'a.html' }, iframe.contentWindow)
     expect(screen.getByText(/2 条标注/)).toBeInTheDocument()
 
     rerender(<PreviewOverlay path="C:/work/b.html" onClose={() => undefined} />)
     // 切文件同时退出编辑态并清空列表（旧的 .pv-annot-panel 不再是展开态）
     expect(document.querySelector('.pv-annot-panel')).toBeNull()
-    // 旧 listener 已拆：接着从旧 iframe 的 contentWindow 发消息也不会复活面板
-    dispatchMessage(PAYLOAD, iframe.contentWindow)
+    // 旧路径的载荷（file=a.html）对新预览（b.html）不再匹配 → 面板不复活
+    dispatchMessage({ ...PAYLOAD, file: 'a.html' }, iframe.contentWindow)
     expect(document.querySelector('.pv-annot-panel')).toBeNull()
   })
 
@@ -343,7 +404,7 @@ describe('PreviewOverlay 标注持久化与区域框选（P3）', () => {
 
     const iframe = renderHtmlPreview('C:/work/demo.html')
     const postSpy = vi.spyOn(iframe.contentWindow as Window, 'postMessage')
-    dispatchMessage({ type: 'nuphus:annotator-ready' }, iframe.contentWindow)
+    dispatchMessage(readyMsg, iframe.contentWindow)
 
     // 恢复指令只发给本 iframe 的 contentWindow（targetOrigin '*'，父→iframe 下行）
     expect(postSpy).toHaveBeenCalledWith(
@@ -361,7 +422,7 @@ describe('PreviewOverlay 标注持久化与区域框选（P3）', () => {
   it('无历史文件 → 不下发 restore 指令（不打扰）', () => {
     const iframe = renderHtmlPreview('C:/work/demo.html')
     const postSpy = vi.spyOn(iframe.contentWindow as Window, 'postMessage')
-    dispatchMessage({ type: 'nuphus:annotator-ready' }, iframe.contentWindow)
+    dispatchMessage(readyMsg, iframe.contentWindow)
 
     for (const call of postSpy.mock.calls) {
       expect((call[0] as { type?: string }).type).not.toBe('nuphus:annotations-restore')
@@ -426,36 +487,37 @@ describe('PreviewOverlay 标注持久化与区域框选（P3）', () => {
  * 未启用 @types/node，字面量 'node:fs' 会被 tsc 报 TS2307）。
  * ══════════════════════════════════════════════════════════════════
  */
-describe('注入 overlay 脚本：真实 JS 语法校验（防 Rust 内嵌脚本语法错逃逸）', () => {
-  /** 从 src-tauri/src/preview_protocol.rs 的原始字符串里抽出 JS 源码。
-   *  路径解析：import.meta.url 在本项目的 vitest 配置下不是 file: 协议
-   *  （new URL(x, import.meta.url) 直接抛 "The URL must be of scheme file"，
-   *  与脚本内容无关）；改用 process.cwd()（= frontend/）逐级上溯到仓库根。
-   *  真正可执行的解析防线另有一道：node frontend/tools/sync-overlay-script.mjs
-   *  在搬运进 .rs 之前先 new Function 过一遍。 */
-  async function loadOverlayScript(): Promise<string> {
-    const { readFileSync } = (await import('node:' + 'fs')) as {
-      readFileSync: (p: unknown, enc: string) => string
-    }
-    const { resolve } = (await import('node:' + 'path')) as {
-      resolve: (...p: string[]) => string
-    }
-    // tsconfig 未装 @types/node，直接写 process 会报 TS2580；取全局再断言。
-    const cwd = (globalThis as { process?: { cwd(): string } }).process?.cwd()
-    if (!cwd) throw new Error('无法确定 vitest 的工作目录')
-    // 脚本真源搬到了 nuphus-browser（CDP 与 preview 两个宿主共同依赖的最底层
-    // crate）；preview_protocol.rs 改为 `pub(crate) use` 引用它。这里必须跟着搬，
-    // 否则会读到"常量已不在此文件"的假失败。
-    const src = readFileSync(
-      resolve(cwd, '..', 'crates', 'nuphus-browser', 'src', 'annotation_overlay.rs'),
-      'utf8',
-    )
-    const m = src.match(/const ANNOTATION_OVERLAY_SCRIPT: &str = r####"([\s\S]*?)"####/)
-    if (!m) throw new Error('未能从 annotation_overlay.rs 提取 ANNOTATION_OVERLAY_SCRIPT')
-    // 剥掉 <script> 包装，得到纯 JS 源码
-    return m[1].replace(/^<script>/, '').replace(/<\/script>\s*$/, '')
+/** 从 crates/nuphus-browser/src/annotation_overlay.rs 的原始字符串里抽出 JS 源码。
+ *  路径解析：import.meta.url 在本项目的 vitest 配置下不是 file: 协议
+ *  （new URL(x, import.meta.url) 直接抛 "The URL must be of scheme file"，
+ *  与脚本内容无关）；改用 process.cwd()（= frontend/）逐级上溯到仓库根。
+ *  真正可执行的解析防线另有一道：node frontend/tools/sync-overlay-script.mjs
+ *  在搬运进 .rs 之前先 new Function 过一遍。
+ *  放在模块级（而非某个 describe 内），供「语法校验」与「clear-all 空快照」两组用例共用。 */
+async function loadOverlayScript(): Promise<string> {
+  const { readFileSync } = (await import('node:' + 'fs')) as {
+    readFileSync: (p: unknown, enc: string) => string
   }
+  const { resolve } = (await import('node:' + 'path')) as {
+    resolve: (...p: string[]) => string
+  }
+  // tsconfig 未装 @types/node，直接写 process 会报 TS2580；取全局再断言。
+  const cwd = (globalThis as { process?: { cwd(): string } }).process?.cwd()
+  if (!cwd) throw new Error('无法确定 vitest 的工作目录')
+  // 脚本真源搬到了 nuphus-browser（CDP 与 preview 两个宿主共同依赖的最底层
+  // crate）；preview_protocol.rs 改为 `pub(crate) use` 引用它。这里必须跟着搬，
+  // 否则会读到"常量已不在此文件"的假失败。
+  const src = readFileSync(
+    resolve(cwd, '..', 'crates', 'nuphus-browser', 'src', 'annotation_overlay.rs'),
+    'utf8',
+  )
+  const m = src.match(/const ANNOTATION_OVERLAY_SCRIPT: &str = r####"([\s\S]*?)"####/)
+  if (!m) throw new Error('未能从 annotation_overlay.rs 提取 ANNOTATION_OVERLAY_SCRIPT')
+  // 剥掉 <script> 包装，得到纯 JS 源码
+  return m[1].replace(/^<script>/, '').replace(/<\/script>\s*$/, '')
+}
 
+describe('注入 overlay 脚本：真实 JS 语法校验（防 Rust 内嵌脚本语法错逃逸）', () => {
   it('脚本能被 JS 引擎成功解析（无 SyntaxError）', async () => {
     const js = await loadOverlayScript()
     expect(js.length).toBeGreaterThan(1000)
@@ -604,7 +666,7 @@ describe('PreviewOverlay 标注 UI 重构（P4：父窗口托管）', () => {
     enterAnnotating(iframe)
     expect(document.querySelector('.pv-annot-panel')).not.toBeNull()
 
-    dispatchMessage({ type: 'nuphus:annotate-exit' }, iframe.contentWindow)
+    dispatchMessage({ type: 'nuphus:annotate-exit', file: 'demo.html' }, iframe.contentWindow)
     expect(document.querySelector('.pv-annot-panel')).toBeNull()
     expect(editToggle()).toHaveAttribute('aria-pressed', 'false')
   })
@@ -613,8 +675,8 @@ describe('PreviewOverlay 标注 UI 重构（P4：父窗口托管）', () => {
     const iframe = renderHtmlPreview()
     enterAnnotating(iframe)
 
-    dispatchMessage({ type: 'nuphus:annotate-exit' }, window)
-    dispatchMessage({ type: 'nuphus:annotate-exit' }, {})
+    dispatchMessage({ type: 'nuphus:annotate-exit', file: 'demo.html' }, window)
+    dispatchMessage({ type: 'nuphus:annotate-exit', file: 'demo.html' }, {})
     expect(document.querySelector('.pv-annot-panel')).not.toBeNull()
   })
 
@@ -707,7 +769,7 @@ describe('PreviewOverlay 标注 UI 重构（P4：父窗口托管）', () => {
     fireEvent.click(editToggle())
     const postSpy = vi.spyOn(iframe.contentWindow as Window, 'postMessage')
 
-    dispatchMessage({ type: 'nuphus:annotator-ready' }, iframe.contentWindow)
+    dispatchMessage(readyMsg, iframe.contentWindow)
     expect(postSpy).toHaveBeenCalledWith({ type: 'nuphus:annotate-mode', on: true }, '*')
     postSpy.mockRestore()
   })
@@ -718,7 +780,7 @@ describe('PreviewOverlay 标注 UI 重构（P4：父窗口托管）', () => {
       JSON.stringify(PAYLOAD.annotations),
     )
     const iframe = renderHtmlPreview('C:/work/demo.html', vi.fn())
-    dispatchMessage({ type: 'nuphus:annotator-ready' }, iframe.contentWindow)
+    dispatchMessage(readyMsg, iframe.contentWindow)
     dispatchMessage(PAYLOAD, iframe.contentWindow)
 
     enterAnnotating(iframe)
@@ -769,5 +831,49 @@ describe('PreviewOverlay 标注 UI 重构（P4：父窗口托管）', () => {
     expect(onSend).toHaveBeenCalledTimes(1)
     expect(localStorage.getItem('nuphus:annotations:C:/work/demo.html')).toBeNull()
     postSpy.mockRestore()
+  })
+
+  /**
+   * 回归（H1，审计发现）：clearAllMarkers 里残留的 `editing = null` /
+   * `pendingRegion = null` 引用了从未声明的变量 —— 'use strict' 下赋值未声明
+   * 标识符抛 ReferenceError，而这两行在 afterMarkersChange() 之前，导致空快照
+   * 根本发不出去。此前全绿是因为：cargo test 只做子串断言、前端 vitest 只 new
+   * Function 解析（不执行），运行时 ReferenceError 是两道既有防线的共同盲区。
+   * 本用例把 Rust 内嵌脚本真实执行：先放一条 marker，再发 clear-all，断言收到
+   * 空 annotations 快照 —— 这是「发送/放弃后父窗口据此同步 UI」契约的唯一真跑验证。
+   */
+  it('注入脚本 clear-all 后广播空快照（不得因未声明变量抛错中断）', async () => {
+    const js = await loadOverlayScript()
+    const w = window as unknown as Record<string, unknown>
+    // 脚本按 window.parent === window 判定宿主：jsdom 里 parent===window，会被判成
+    // CDP 宿主。这里换成一个独立的 parent 对象 → 走 iframe 分支（下行走 message 监听，
+    // 上行走 parent.postMessage），与 preview:// 实机一致。
+    const sent: { type?: string; annotations?: unknown[] }[] = []
+    const realParent = w.parent
+    const fakeParent = { postMessage: (p: { type?: string; annotations?: unknown[] }) => sent.push(p) }
+    w.parent = fakeParent
+    try {
+      new Function(js)()
+      // iframe 分支经 message 监听接收下行指令；source 铁律只认 window.parent
+      const fire = (data: unknown) => {
+        const ev = new MessageEvent('message', { data })
+        Object.defineProperty(ev, 'source', { value: fakeParent, configurable: true })
+        window.dispatchEvent(ev)
+      }
+      // 真实执行 clear-all：修复前这里抛 ReferenceError（editing/pendingRegion 未声明），
+      // 且异常在 afterMarkersChange() 之前，空快照永远发不出去。
+      expect(() => fire({ type: 'nuphus:annotate-clear-all' })).not.toThrow()
+      // 契约：clear-all 必须回一条空 annotations 快照（父窗口据此同步 UI）
+      const emptySnap = sent.find(
+        p =>
+          p.type === 'nuphus:annotations' &&
+          Array.isArray(p.annotations) &&
+          p.annotations.length === 0,
+      )
+      expect(emptySnap, 'clear-all 后应广播一条空快照').toBeTruthy()
+    } finally {
+      w.parent = realParent
+      delete w.__nuphusAnnotatorLoaded
+    }
   })
 })

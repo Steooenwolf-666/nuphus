@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import * as pdfjsLib from 'pdfjs-dist'
@@ -79,13 +79,29 @@ function readAnnotationStore(path: string): AnnotationItem[] | null {
   try {
     const raw = localStorage.getItem(annotationLsKey(path))
     if (!raw) return null
-    const parsed = JSON.parse(raw) as AnnotationItem[]
-    return Array.isArray(parsed) ? parsed : null
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return null
+    // localStorage 是不可信输入（损坏/手改/旧版本残留）：渲染直接读 item.rect.w，
+    // 缺 rect 的条目会让整个预览树 TypeError——逐条校验，坏条目丢弃不阻塞其余。
+    const valid = parsed.filter(isStoredAnnotationItem)
+    return valid.length > 0 ? valid : null
   } catch (err) {
     // 存储损坏 / 隐私模式：不阻塞预览，仅报错（best-effort）
     console.error('[nuphus-annotator] 读取标注历史失败', err)
     return null
   }
+}
+
+/** localStorage 历史条目的最小形状校验（比协议校验宽松：snippet/dpr 缺失只降级展示） */
+function isStoredAnnotationItem(a: unknown): a is AnnotationItem {
+  if (typeof a !== 'object' || a === null) return false
+  const it = a as { css_selector?: unknown; outer_html_snippet?: unknown; comment?: unknown }
+  return (
+    typeof it.css_selector === 'string' &&
+    typeof it.outer_html_snippet === 'string' &&
+    typeof it.comment === 'string' &&
+    isRectLike((a as { rect?: unknown }).rect)
+  )
 }
 
 function writeAnnotationStore(path: string, msg: AnnotationMessage): void {
@@ -188,11 +204,20 @@ const ANNOTATOR_UP_TYPES = new Set([
  *
  * 2026-10-08：source 恒等比对在 preview:// 沙箱下不可靠（见 handler 内注释），
  * 放宽后必须用形状把「非标注器的消息」挡在门外——type 必须命中白名单，
- * 且 `nuphus:annotations` 的annotations 必须是数组、每条字段类型正确。
+ * 且 `nuphus:annotations` 的annotations 必须是数组、每条字段类型正确
+ * （含 rect 四元数字——渲染直接读 item.rect.w，缺 rect 会 TypeError 崩掉整个预览树）。
  * 这样即便别的窗口/扩展往主窗口 postMessage 相同形状的数据，也进不了标注状态机。
+ *
+ * 上行三条消息均要求 `file` 字符串：handler 会再与当前预览文件的 basename 比对，
+ * 挡掉「别的 iframe / 旧文档残留」的同形状消息（双 PreviewOverlay 并存时防串话）。
  */
-function isAnnotatorMessage(data: { type?: unknown; annotations?: unknown }): boolean {
+function isAnnotatorMessage(data: {
+  type?: unknown
+  file?: unknown
+  annotations?: unknown
+}): boolean {
   if (typeof data.type !== 'string' || !ANNOTATOR_UP_TYPES.has(data.type)) return false
+  if (typeof data.file !== 'string' || !data.file) return false
   if (data.type === 'nuphus:annotations') {
     if (!Array.isArray(data.annotations)) return false
     return data.annotations.every(
@@ -201,10 +226,27 @@ function isAnnotatorMessage(data: { type?: unknown; annotations?: unknown }): bo
         a !== null &&
         typeof (a as { css_selector?: unknown }).css_selector === 'string' &&
         typeof (a as { outer_html_snippet?: unknown }).outer_html_snippet === 'string' &&
-        typeof (a as { comment?: unknown }).comment === 'string',
+        typeof (a as { comment?: unknown }).comment === 'string' &&
+        isRectLike((a as { rect?: unknown }).rect),
     )
   }
   return true
+}
+
+/** rect / region 形状：x/y/w/h 必须是有限数字（渲染与序列化都会直接读这四个字段）*/
+function isRectLike(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false
+  const r = v as { x?: unknown; y?: unknown; w?: unknown; h?: unknown }
+  return (
+    typeof r.x === 'number' &&
+    Number.isFinite(r.x) &&
+    typeof r.y === 'number' &&
+    Number.isFinite(r.y) &&
+    typeof r.w === 'number' &&
+    Number.isFinite(r.w) &&
+    typeof r.h === 'number' &&
+    Number.isFinite(r.h)
+  )
 }
 
 function sendAnnotateCommand(frame: HTMLIFrameElement | null, cmd: AnnotateCommand): void {
@@ -614,8 +656,11 @@ export function PreviewOverlay({
   }, [onClose])
 
   /** ── HTML 标注回流（P1：postMessage 接收；P2：发送给丞相；P3：持久化；P4：父窗口 UI）──
-   *  listener 注册在 iframe onLoad 之后：此刻 contentWindow 稳定，正好作为
-   *  source 校验基准。只认本 iframe 发来的消息，伪造 source 一律忽略。 */
+   *  listener 在挂载时（useLayoutEffect）注册，**不在 onLoad**：
+   *  注入脚本在 iframe 的 DOMContentLoaded 就发出 ready 握手，而 iframe 的 load
+   *  事件（资源加载完）在其之后——挂载才注册会把先行到达的握手直接丢弃
+   *  （postMessage 不缓冲、不补投），2s 超时恒触发「标注器未就绪」。
+   *  防伪不依赖注册时机：形状白名单 + 实时 iframe 集合扫描 + file basename 比对。 */
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const [annotationMsg, setAnnotationMsg] = useState<AnnotationMessage | null>(null)
   /** 标注器握手：pending=等握手 2s；ready=已握手；missing=超时未握手（注入失败/页面异常） */
@@ -624,7 +669,7 @@ export function PreviewOverlay({
   )
   /** 握手诊断（红条展开时展示断点证据，见 AnnotatorDiag）*/
   const [annotatorDiag, setAnnotatorDiag] = useState<AnnotatorDiag>(freshDiag)
-  /** 握手诊断的 ref 镜像：message handler 只在 onLoad 注册一次，靠 ref 累加计数
+  /** 握手诊断的 ref 镜像：message handler 挂载注册一次，靠 ref 累加计数
    *  而不重挂 listener（与 annotatingRef / annotationCountRef 同思路）。 */
   const annotatorDiagRef = useRef<AnnotatorDiag>(freshDiag())
   /** 诊断面板展开态（红条默认收起，点「诊断详情」才展开——默认不干扰正常预览）*/
@@ -637,30 +682,26 @@ export function PreviewOverlay({
   const commentRefs = useRef<Map<number, HTMLTextAreaElement | null>>(new Map())
   /** 定位序列号：同一 selector 连续 ◎ 也让 iframe 侧动画重启 */
   const focusSeqRef = useRef(0)
-  /** 快照条数与编辑态的 ref 镜像：message handler 注册在 iframe onLoad（只跑一次），
+  /** 快照条数与编辑态的 ref 镜像：message handler 只在挂载时注册一次，
    *  读不到当次的 state 值，用 ref 保持最新又不重挂 listener。 */
   const annotationCountRef = useRef(0)
   const annotatingRef = useRef(false)
-  const frameCleanupRef = useRef<(() => void) | null>(null)
-  // 关闭覆盖层 / 切换预览文件：拆掉上一条 listener 并清空旧载荷与握手状态，
-  // 防上一个 iframe 的消息串话、也避免旧文件的标注残留在新预览上
-  useEffect(() => {
-    setAnnotationMsg(null)
-    setAnnotatorStatus(null)
-    setRestoredCount(0)
-    // 切换文件时诊断一并重置，避免上一个文件的判定结果误导本次排查
-    annotatorDiagRef.current = freshDiag()
-    setAnnotatorDiag(annotatorDiagRef.current)
-    // P4：编辑态也随文件重置（iframe 已经换了，旧编辑态指令没有意义）
-    setAnnotating(false)
-    annotationCountRef.current = 0
-    annotatingRef.current = false
-    commentRefs.current.clear()
-    return () => frameCleanupRef.current?.()
-  }, [path])
+  /** 当前预览文件路径的 ref 镜像：挂载注册的 handler 需要读到最新 path
+   *  （file basename 校验 + localStorage 落库键），切换文件时随 layout effect 更新。 */
+  const pathRef = useRef(path)
+  /** ready 握手是否已达（ref：listener 挂载一次，跨 onLoad 存活——握手可能先于 load） */
+  const readySeenRef = useRef(false)
+  /** 握手超时计时器（onLoad 起 2s；ready 先到则 onLoad 不再起表） */
+  const readyTimerRef = useRef<number | null>(null)
+  const clearReadyTimer = () => {
+    if (readyTimerRef.current != null) {
+      window.clearTimeout(readyTimerRef.current)
+      readyTimerRef.current = null
+    }
+  }
 
-  // P4 编辑态镜像到 ref：message handler 只在 iframe onLoad 时注册一次，
-  // 靠 ref 读到最新编辑态而不必重挂 listener
+  /** P4 编辑态镜像到 ref：message handler 挂载注册一次，
+   *  靠 ref 读到最新编辑态而不必重挂 listener */
   useEffect(() => {
     annotatingRef.current = annotating
   }, [annotating])
@@ -705,20 +746,32 @@ export function PreviewOverlay({
     })
   }
 
-  const handleFrameLoad = () => {
-    frameCleanupRef.current?.()
-    const frame = iframeRef.current
-    if (!frame?.contentWindow) return
-    // 诊断 ref 与 state 同步重置（ref 供 handler 累加，state 供渲染）
-    annotatorDiagRef.current = { ...freshDiag(), frameLoaded: true }
-    setAnnotatorDiag({ ...annotatorDiagRef.current })
-    setAnnotatorStatus('pending')
-    let readySeen = false
+  // 关闭覆盖层 / 切换预览文件：重置载荷、握手、诊断与编辑态，防旧文件的标注
+  // 残留在新预览上。与 listener 的挂载/切换在同一个 layout effect 里原子完成——
+  // 拆成两个 effect 时，「新 listener 已挂、旧 state 未清」的窗口里先到的握手
+  // 会被随后的 reset 冲掉（status 回 null 后 readySeenRef 已 true，onLoad 不再
+  // 起表，界面既无红条也无就绪态）。
+  // useLayoutEffect：在 paint 前同步执行，保证任何异步消息（postMessage 是宏任务）
+  // 被处理前，reset + pathRef 更新 + listener 切换已全部就位。
+  useLayoutEffect(() => {
+    setAnnotationMsg(null)
+    setAnnotatorStatus(null)
+    setRestoredCount(0)
+    annotatorDiagRef.current = freshDiag()
+    setAnnotatorDiag(annotatorDiagRef.current)
+    setAnnotating(false)
+    annotationCountRef.current = 0
+    annotatingRef.current = false
+    commentRefs.current.clear()
+    readySeenRef.current = false
+    clearReadyTimer()
+    pathRef.current = path
+    if (!HTML_EXTS.has(extOf(path))) return
     const handler = (event: MessageEvent) => {
       // ── 诊断埋点：逐层记录判定结果（红条展开时可见，见 AnnotatorDiag）──
       const diag = annotatorDiagRef.current
       diag.messagesSeen += 1
-      // ── 防伪校验（2026-10-08 实机「标注器未就绪」修复）──
+      // ── 防伪校验（2026-10-08 实机「标注器未就绪」修复 + 挂载注册防丢握手）──
       //
       // 原实现把 contentWindow 捕获在 onLoad 那一刻做 `event.source !== contentWindow`
       // 恒等比对，实机握手 100% 被拦。原因是 preview:// 文档在 onLoad 之后仍可能
@@ -726,13 +779,19 @@ export function PreviewOverlay({
       // 而 iframe 内 window.parent.postMessage 的 event.source 是它自己的 WindowProxy
       // ——两个 proxy 对象在沙箱+自定义协议下不保证是同一 JS 对象身份。
       //
-      // 放宽为两段式，仍保留防伪能力：
-      //   ① 消息形状必须严格匹配本协议（type 白名单 + 载荷结构校验）；
+      // 放宽为三段式，仍保留防伪能力：
+      //   ① 消息形状必须严格匹配本协议（type 白名单 + file 非空 + 载荷结构校验）；
       //   ② event.source 必须是「某个」iframe 的 contentWindow —— 用
       //      [...iframe 集合].some(f => f.contentWindow === event.source)，
-      //      对比实时取到的 contentWindow，绕开「捕获时快照」的失效问题。
-      // 若 source 完全对不上任何 iframe（如别的窗口/扩展注入），仍然丢弃。
-      const data = event.data as { type?: unknown; annotations?: unknown } | null | undefined
+      //      对比实时取到的 contentWindow，绕开「捕获时快照」的失效问题；
+      //   ③ file basename 必须等于当前预览文件 —— 双 PreviewOverlay 并存（ChatPanel
+      //      与外部 agent 状态栏各托管一个）且 source 扫描是「任意 iframe」时，
+      //      这一条把另一实例/旧文档残留的同形状消息挡在状态机外。
+      const data = event.data as {
+        type?: unknown
+        file?: unknown
+        annotations?: unknown
+      } | null | undefined
       if (!data || typeof data !== 'object') {
         diag.rejectedByShape += 1
         diag.lastReject = `非对象消息（${String(event.data).slice(0, 30)}）`
@@ -745,24 +804,29 @@ export function PreviewOverlay({
         setAnnotatorDiag({ ...diag })
         return
       }
-      const fromOurFrame =
-        frame.contentWindow === event.source ||
-        (typeof window !== 'undefined' &&
-          Array.from(document.querySelectorAll('iframe')).some(
-            f => f.contentWindow && f.contentWindow === event.source,
-          ))
+      const fromOurFrame = Array.from(document.querySelectorAll('iframe')).some(
+        f => f.contentWindow && f.contentWindow === event.source,
+      )
       if (!fromOurFrame) {
         diag.rejectedBySource += 1
         diag.lastReject = '消息来源不是本预览 iframe（被防伪校验拦截）'
         setAnnotatorDiag({ ...diag })
         return
       }
+      if (data.file !== baseName(pathRef.current)) {
+        diag.rejectedBySource += 1
+        diag.lastReject = `消息文件与当前预览不匹配（${String(data.file)}）`
+        setAnnotatorDiag({ ...diag })
+        return
+      }
       diag.shapeOk += 1
-      const contentWindow = frame.contentWindow
+      const frame = iframeRef.current
+      const contentWindow = frame?.contentWindow
       if (!contentWindow) return
       if (data.type === 'nuphus:annotator-ready') {
-        readySeen = true
+        readySeenRef.current = true
         diag.readySeen = true
+        clearReadyTimer()
         setAnnotatorStatus('ready')
         setAnnotatorDiag({ ...diag })
         // 先下发主题令牌再谈恢复：标注器配色必须来自当前主题（父窗口 token），
@@ -772,7 +836,7 @@ export function PreviewOverlay({
           '*',
         )
         // P3 持久化恢复：握手后把同文件的历史标注下发 iframe（selector 回定位 DOM）
-        const restored = readAnnotationStore(path)
+        const restored = readAnnotationStore(pathRef.current)
         if (restored && restored.length > 0) {
           contentWindow.postMessage(
             { type: 'nuphus:annotations-restore', annotations: restored },
@@ -799,7 +863,7 @@ export function PreviewOverlay({
         setAnnotationMsg(msg)
         annotationCountRef.current = msg.annotations.length
         // markers 每次变更广播的同型快照 → 落父窗口 localStorage（发送/放弃时清）
-        writeAnnotationStore(path, msg)
+        writeAnnotationStore(pathRef.current, msg)
         // P4：新增标记时把焦点交给父窗口列表里新增的那一条，用户可以直接写批注
         // （iframe 侧已无批注框；列表 textarea 是唯一的批注输入口）。
         // 只认「编辑态下新增长」——恢复历史（前置 snapshot）与删除（数量减少）都不抢焦点。
@@ -810,15 +874,27 @@ export function PreviewOverlay({
       }
     }
     window.addEventListener('message', handler)
+    return () => {
+      window.removeEventListener('message', handler)
+      clearReadyTimer()
+    }
+  }, [path, t])
+
+  const handleFrameLoad = () => {
+    const frame = iframeRef.current
+    if (!frame?.contentWindow) return
+    annotatorDiagRef.current = { ...annotatorDiagRef.current, frameLoaded: true }
+    setAnnotatorDiag({ ...annotatorDiagRef.current })
+    // ready 可能先于 onLoad 到达（注入脚本在 DOMContentLoaded 即发握手，load 要等
+    // 资源）——已握手则不再进入等待态，也不再起超时表（否则把 ready 冲成 missing）。
+    if (readySeenRef.current) return
+    setAnnotatorStatus('pending')
     // 握手兜底：onLoad 后 2s 未收到 ready → 提示标注器未就绪（best-effort，常见于
     // overlay 注入脚本被宿主页面清理 / 页面自身脚本异常）
-    const readyTimer = window.setTimeout(() => {
-      if (!readySeen) setAnnotatorStatus('missing')
+    clearReadyTimer()
+    readyTimerRef.current = window.setTimeout(() => {
+      if (!readySeenRef.current) setAnnotatorStatus('missing')
     }, 2000)
-    frameCleanupRef.current = () => {
-      window.removeEventListener('message', handler)
-      window.clearTimeout(readyTimer)
-    }
   }
 
   /** ── P2：发送给 Agent ──
