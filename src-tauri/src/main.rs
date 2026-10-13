@@ -299,6 +299,8 @@ fn main() {
             macos_permissions::open_macos_permission_settings,
             commands::set_capability,
             commands::set_capability_binding,
+            commands::get_vision_resolution,
+            commands::test_vision_model,
             commands::set_model_supports_vision,
             commands::set_model_supports_image_generation,
             commands::get_context_limit,

@@ -926,7 +926,9 @@ impl DesktopClient {
                         let resp = serde_json::json!({ "text": text, "engine": "vision" });
                         Self::result_ok(resp)
                     }
-                    Err(e) => Self::result_err(format!("视觉模型调用失败: {e}")),
+                    // 单层化：vision_ocr 已产出结构化错误文案（含模型/provider/跟随态/
+                    // 分类出路），此处直接透传，不再叠加「视觉模型调用失败: 」前缀。
+                    Err(e) => Self::result_err(e),
                 }
             }
             _ => {

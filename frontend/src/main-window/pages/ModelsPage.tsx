@@ -21,6 +21,8 @@ import {
   setModelSupportsVision,
   setModelSupportsImageGeneration,
   setCapabilityBinding,
+  getVisionResolution,
+  testVisionModel,
   createCustomProvider,
   updateCustomProvider,
   removeCustomProvider,
@@ -39,6 +41,8 @@ import type {
   SyncReport,
   OauthConfigPayload,
   OauthStatusInfo,
+  VisionResolution,
+  VisionTestOutcome,
 } from '../lib/api'
 import {
   useSttModelDownload,
@@ -404,6 +408,21 @@ function makeTXT(t: TFunc) {
       'models.visionFollowUnknown',
       '跟随 Leader：图像由当前 Leader 模型直接理解（尚未检测到 Leader 模型信息）',
     ),
+    // 跟随链只读行：后端权威解析结果「跟随 Leader → 模型 @ provider」
+    visionFollowChain: (m: string, p: string) =>
+      p ? `跟随 Leader → ${m} @ ${p}` : `跟随 Leader → ${m}`,
+    visionNoneUnavailable: tr(
+      t,
+      'models.visionNoneUnavailable',
+      '当前无可用图像理解路径：未指定图像理解模型，且 Leader 不支持视觉输入——截图/图片识别不可用',
+    ),
+    // ── 图像理解测试探测（真实调用一次，1x1 PNG）──
+    visionTestBtn: tr(t, 'models.visionTestBtn', '发送测试图片'),
+    visionTesting: tr(t, 'models.visionTesting', '探测中…'),
+    visionTestHint: tr(t, 'models.visionTestHint', '发送约 1KB 测试请求（真实调用一次）'),
+    visionTestOk: tr(t, 'models.visionTestOk', '✓ 测试成功'),
+    visionTestFail: tr(t, 'models.visionTestFail', '✗ 测试失败'),
+    visionTestFailDefault: tr(t, 'models.visionTestFailDefault', '测试请求发送失败'),
     // ── 子智能体模型 ──
     execSection: tr(t, 'models.execSection', '子任务执行模型（Exec）'),
     execSectionDesc: tr(
@@ -1469,6 +1488,10 @@ export function ModelsPage({
   const [visionProvider, setVisionProvider] = useState('')
   const [visionSaving, setVisionSaving] = useState(false)
   const [visionFeedback, setVisionFeedback] = useState<{ ok: boolean; msg: string } | null>(null)
+  // 图像理解生效路径（后端权威解析）：跟随链只读行 + 测试探测按钮
+  const [visionResolution, setVisionResolution] = useState<VisionResolution | null>(null)
+  const [visionTesting, setVisionTesting] = useState(false)
+  const [visionTestResult, setVisionTestResult] = useState<VisionTestOutcome | null>(null)
   // 本地 sherpa-onnx STT 状态（进入 custom tab 时一次性探测）
   const [sttLocalStatus, setSttLocalStatus] = useState<SttStatus | null>(null)
   const [sttModel, setSttModel] = useState('')
@@ -1560,6 +1583,37 @@ export function ModelsPage({
       .catch(() => {})
   }, [])
 
+  // 图像理解生效路径刷新（后端权威）：绑定写入成功后调用，保持只读行与实际配置一致
+  const refreshVisionResolution = useCallback(() => {
+    getVisionResolution()
+      .then(r => {
+        if (mountedRef.current) setVisionResolution(r)
+      })
+      .catch(() => {})
+  }, [])
+
+  // 「发送测试图片」探测：真实调用一次视觉链路（1x1 PNG，约 1KB 请求）。
+  // 失败结果按后端分类渲染；命令本身不抛错（ok=false + kind），仅 IPC 异常走兜底文案。
+  const runVisionTest = async () => {
+    if (visionTesting) return
+    setVisionTesting(true)
+    setVisionTestResult(null)
+    try {
+      const outcome = await testVisionModel()
+      if (mountedRef.current) setVisionTestResult(outcome)
+    } catch (e: unknown) {
+      if (mountedRef.current)
+        setVisionTestResult({
+          ok: false,
+          latency_ms: 0,
+          kind: 'other',
+          message: friendlyIpcError(e, TXT.visionTestFailDefault),
+        })
+    } finally {
+      if (mountedRef.current) setVisionTesting(false)
+    }
+  }
+
   // STT / 视觉模型下载（事件驱动）
   const sttDl = useSttModelDownload(probeStt)
   const visionDl = useVisionModelDownload()
@@ -1630,6 +1684,13 @@ export function ModelsPage({
           setVideoGenModel(m.video_generation || '')
           setVideoGenProvider(m.video_generation_provider || '')
         }
+      })
+      .catch(() => {})
+    // 图像理解生效路径（后端权威）：跟随链只读行的数据源。
+    // 与 getCapabilities 同步加载；命令不可用（旧后端）时保持 null → 渲染回退到客户端推断行。
+    getVisionResolution()
+      .then(r => {
+        if (mountedRef.current) setVisionResolution(r)
       })
       .catch(() => {})
     listModels()
@@ -3571,6 +3632,8 @@ export function ModelsPage({
                           setVisionProvider(selectedProvider)
                           setVisionFeedback({ ok: true, msg: TXT.visionSaved })
                           setTimeout(() => setVisionFeedback(null), 2000)
+                          // 绑定写入后刷新后端权威解析，保持跟随链只读行一致
+                          refreshVisionResolution()
                         } catch (e: any) {
                           setVisionFeedback({
                             ok: false,
@@ -3591,18 +3654,56 @@ export function ModelsPage({
                     )}
                     {/* 图像理解生效路径如实呈现：默认「跟随 Leader」时讲清由谁处理，
                         Leader 不支持视觉时明确警示——否则用户无从知道截图识别已不可用
-                        （视觉不可用时桌面操作会真实报错，这里提前把原因摆在配置处）。 */}
-                    <div
-                      className={`text-caption${!visionModel && leaderVisionModelId && !leaderSupportsVision ? ' text-danger' : ''}`}
-                    >
-                      {visionModel
-                        ? TXT.visionExplicitPath(visionModel)
-                        : leaderVisionModelId
+                        （视觉不可用时桌面操作会真实报错，这里提前把原因摆在配置处）。
+                        跟随链行以后端 get_vision_resolution 为权威（capability/main/none
+                        三态）；命令不可用时回退到客户端推断行（零回归）。 */}
+                    {visionModel ? (
+                      <div className="text-caption">{TXT.visionExplicitPath(visionModel)}</div>
+                    ) : visionResolution ? (
+                      visionResolution.strategy === 'main' ? (
+                        <div className="text-caption">
+                          {TXT.visionFollowChain(visionResolution.model, visionResolution.provider)}
+                        </div>
+                      ) : visionResolution.strategy === 'none' ? (
+                        <div className="text-caption text-danger">
+                          {leaderVisionModelId
+                            ? TXT.visionFollowWarn(leaderVisionModelId)
+                            : TXT.visionNoneUnavailable}
+                        </div>
+                      ) : (
+                        // strategy=capability 但 visionModel 尚未同步（getCapabilities 在途）——
+                        // 用后端解析结果兜底，不闪「跟随 Leader」误导
+                        <div className="text-caption">
+                          {TXT.visionExplicitPath(visionResolution.model)}
+                        </div>
+                      )
+                    ) : (
+                      <div
+                        className={`text-caption${!visionModel && leaderVisionModelId && !leaderSupportsVision ? ' text-danger' : ''}`}
+                      >
+                        {leaderVisionModelId
                           ? leaderSupportsVision
                             ? TXT.visionFollowOk(leaderVisionModelId)
                             : TXT.visionFollowWarn(leaderVisionModelId)
                           : TXT.visionFollowUnknown}
+                      </div>
+                    )}
+                    {/* ── 测试探测：真实发一张 1x1 PNG 验证整条视觉链路（模型/密钥/额度/网络） ── */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Button size="sm" onClick={runVisionTest} loading={visionTesting}>
+                        {visionTesting ? TXT.visionTesting : TXT.visionTestBtn}
+                      </Button>
+                      <span className="text-caption">{TXT.visionTestHint}</span>
                     </div>
+                    {visionTestResult && (
+                      <div
+                        className={`text-caption${visionTestResult.ok ? ' text-success' : ' text-danger'}`}
+                      >
+                        {visionTestResult.ok
+                          ? `${TXT.visionTestOk}（${visionTestResult.latency_ms}ms）：${visionTestResult.message}`
+                          : `${TXT.visionTestFail}（${visionTestResult.latency_ms}ms，${visionTestResult.kind}）：${visionTestResult.message}`}
+                      </div>
+                    )}
                   </Section>
 
                   {/* ── 图片生成 ── */}
