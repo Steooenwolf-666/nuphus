@@ -17,9 +17,9 @@
       防回退：本层与 .chat-input-body 均勿加 border，见 body 层注释。 */
   border-radius: var(--radius-6);
   /* 阴影走 token：三主题各自适配（简白 = 输入框专属加重档 --shadow-input，
-     dark/tech = 等同原 elevated）。输入框是全局唯一天然「贴窗浮起」的元素，
+     fresh = 浅底竹影柔光档，dark = 等同原 elevated）。输入框是全局唯一天然「贴窗浮起」的元素，
      故独立成档——加重它不再震动 --shadow-elevated 的其余 29 处浮层消费方。
-     原 0 2px 10px rgba(0,0,0,.15) 是三主题共享的 neutral 重影，简白下尤显脏。 */
+     原 0 2px 10px rgba(0,0,0,.15) 是三主题共享的 neutral 重影，浅色主题下尤显脏。 */
   box-shadow: var(--shadow-input);
   z-index: 50;
 }
@@ -157,7 +157,7 @@
 .input-send-btn.active:hover {
   background: var(--accent-hover);
 }
-/* 终止态配色走 --send-interrupt-* 语义键（简白=墨黑反色 / dark·tech=红，见 tokens.css）。
+/* 终止态配色走 --send-interrupt-* 语义键（简白=墨黑反色 / dark·fresh=红，见 tokens.css）。
    光晕/呼吸同步换 --send-interrupt-glow；落影换 var(--shadow-surface) 去写死重影。
    语义不变：呼吸节奏=可终止的进行中动作（与 processing 的 sendBreathing 同 1.6s）。 */
 .input-send-btn.interrupt {
