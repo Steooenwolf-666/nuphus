@@ -34,17 +34,6 @@ pub enum NuphusEvent {
         started_at_ms: Option<u64>,
     },
 
-    /// User-facing workflow commentary, never raw model reasoning.
-    AssistantProgress {
-        session_id: String,
-        turn_id: String,
-        message_id: String,
-        text: String,
-        timestamp: u64,
-        /// Commit the currently streamed native text rather than duplicate it.
-        replaces_draft: bool,
-    },
-
     /// Tool call start (from_task: true when executed by ExecuteAgent, for frontend to distinguish)
     ToolCallStart {
         call_id: String,

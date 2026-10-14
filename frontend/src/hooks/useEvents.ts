@@ -192,9 +192,6 @@ export function useEvents(h: EventHandlers) {
   const refineOutputRef = useRef('')
   const refineStartTimeRef = useRef(0)
   const refineMsgIdRef = useRef<string | null>(null)
-  const progressTurnRef = useRef<{ session_id: string; turn_id: string } | null>(null)
-  const progressIdsRef = useRef(new Set<string>())
-
   // ── 提炼状态统一复位（四个出口共用，勿在各处复制）──
   // 出口：refine_failed 事件 / forced invoke 失败兜底 / 超时 guard / 手动关闭弹窗。
   // 复位提炼 refs（refineActiveRef 卡 true 会让后续 refine_prompt 被忽略、
@@ -433,8 +430,6 @@ export function useEvents(h: EventHandlers) {
       switch (event.type) {
         case 'session_changed':
         case 'new_chat_broadcast':
-          progressTurnRef.current = null
-          progressIdsRef.current.clear()
           // 会话增强偏好由后端按 Workflow session 保存。会话切换或新建后让所有
           // 已挂载的入口重新读取权威状态，避免按钮仍展示上一会话的开关与配置徽标。
           requestWorkflowEnhancedModeRefresh()
@@ -560,16 +555,11 @@ export function useEvents(h: EventHandlers) {
           if (h.refs.executionActiveRef.current) {
             break
           }
-          progressTurnRef.current =
-            event.session_id && event.turn_id
-              ? { session_id: event.session_id, turn_id: event.turn_id }
-              : null
           // 真实会话 id 的唯一权威来源：execution_started.session_id（后端
           // rt.session().id）——点评提交（useAgentControl submitExecutionRating）
           // 等消费方据此关联后端会话记录。SessionInfo.session_id 是每轮随机
           // 事件关联 id、**不是会话 id**（曾误消费，点评关联到假会话，2026-10 纠）。
           if (event.session_id) h.setSessionId(event.session_id)
-          progressIdsRef.current.clear()
           // Refine mode: set execution state but don't create a message bubble
           // Keep refineState intact — the modal should stay open until SessionRefined
           if (refineActiveRef.current) {
@@ -799,51 +789,6 @@ export function useEvents(h: EventHandlers) {
           }
           break
         }
-        case 'assistant_progress': {
-          const turn = progressTurnRef.current
-          if (
-            refineActiveRef.current ||
-            !h.refs.executionActiveRef.current ||
-            h.refs.interruptedRef.current ||
-            !turn ||
-            turn.session_id !== event.session_id ||
-            turn.turn_id !== event.turn_id ||
-            progressIdsRef.current.has(event.message_id) ||
-            !event.text.trim()
-          )
-            break
-          progressIdsRef.current.add(event.message_id)
-          const draftId = h.refs.streamingMsgId.current
-          if (!draftId) break
-          h.setMessages(prev => {
-            if (prev.some(m => m.message_id === event.message_id)) return prev
-            prev = continueReplyAfterUser(prev, draftId)
-            const index = prev.findIndex(m => m.id === draftId)
-            if (index < 0) return prev
-            const draft = prev[index]
-            const progress: ChatMessage = {
-              id: event.message_id,
-              reply_id: draft.reply_id ?? draft.id,
-              message_id: event.message_id,
-              kind: 'progress',
-              role: 'assistant',
-              content: event.text,
-              timestamp: event.timestamp,
-              runtime: 'done',
-            }
-            return [
-              ...prev.slice(0, index),
-              progress,
-              event.replaces_draft
-                ? { ...draft, content: '', timestamp: event.timestamp }
-                : draft.content
-                  ? draft
-                  : { ...draft, timestamp: event.timestamp },
-              ...prev.slice(index + 1),
-            ]
-          })
-          break
-        }
         case 'llm_text_delta':
           // 暂停菜单打开期间收到 LLM 流式文本 = agent 已越过暂停检查点恢复执行
           // （如手机端追加后先思考再调工具），自动关闭桌面暂停菜单
@@ -942,33 +887,22 @@ export function useEvents(h: EventHandlers) {
             // （process_text_delta 跨 chunk 折叠不完美）。execution_completed 的
             // result_message 是后端 extract_think_blocks 处理过的权威干净文本——
             // finalMsg 非空时无条件覆盖，避免"中间的空格都是 thinking 的 chars"。
+            // 与 leader 完全同构：最终回复覆盖流式过程文本，气泡只留权威定稿。
             const content = finalMsg.trim() ? finalMsg : '（已执行完成，未产出回复）'
             h.setMessages((prev: ChatMessage[]) =>
-              continueReplyAfterUser(prev, s).map(m => {
-                if (m.id === s) {
-                  return {
-                    ...m,
-                    content: finalMsg.trim() ? finalMsg : m.content || content,
-                    runtime: 'done',
-                    // 完成元数据落到该轮 assistant 气泡：历史消息重开（applyHistory
-                    // 由后端 HistoryMessage.meta 回填）与实时路径共用同一字段，
-                    // 消息底部 <TurnMetaBar> 读它，无需另建一处计时。
-                    meta: completedMeta,
-                  }
-                }
-                // ── workflow 过程气泡收敛（对齐 leader「完成后只留最终回复」语义）──
-                // assistant_progress 产生的独立 progress 气泡在最终回复落地后清空
-                // 内容（保留消息对象与 message_id：去重与历史对账依赖它们）。
-                // 过程文本仍可从执行回溯（traceItems / 后端 session 快照）查看。
-                // leader 轮次不产生 progress 消息 → 此分支对 leader 零影响。
-                // 边界保护：reply_id 链对齐当前 draft——追加 user 后 continueReplyAfterUser
-                // 已把旧分段 progress 的 reply_id 改名，条件天然只命中当前分段，
-                // 追加前已展示的过程文本保留不动。
-                if (m.kind === 'progress' && m.reply_id === s) {
-                  return { ...m, content: '' }
-                }
-                return m
-              }),
+              continueReplyAfterUser(prev, s).map(m =>
+                m.id === s
+                  ? {
+                      ...m,
+                      content: finalMsg.trim() ? finalMsg : m.content || content,
+                      runtime: 'done',
+                      // 完成元数据落到该轮 assistant 气泡：历史消息重开（applyHistory
+                      // 由后端 HistoryMessage.meta 回填）与实时路径共用同一字段，
+                      // 消息底部 <TurnMetaBar> 读它，无需另建一处计时。
+                      meta: completedMeta,
+                    }
+                  : m,
+              ),
             )
           }
           // 步数一致性由后端单一来源保证（SignalState 累加 + execution_completed 下发），

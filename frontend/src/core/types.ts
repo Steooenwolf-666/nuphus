@@ -668,15 +668,6 @@ export type NuphusEvent =
       started_at_ms?: number
     }
   | {
-      type: 'assistant_progress'
-      session_id: string
-      turn_id: string
-      message_id: string
-      text: string
-      timestamp: number
-      replaces_draft: boolean
-    }
-  | {
       type: 'tool_call_start'
       call_id: string
       tool_name: string

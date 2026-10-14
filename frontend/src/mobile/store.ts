@@ -343,66 +343,6 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
         },
       }
 
-    case 'assistant_progress': {
-      if (
-        !state.activity.running ||
-        state.refining ||
-        !ev.text.trim() ||
-        !ev.session_id ||
-        !ev.turn_id
-      )
-        return state
-      const canRecover =
-        state.activity.progressScopeRecovery === 'awaiting' &&
-        !state.activity.session_id &&
-        !state.activity.turn_id
-      if (
-        !canRecover &&
-        (state.activity.session_id !== ev.session_id || state.activity.turn_id !== ev.turn_id)
-      )
-        return state
-      const activity = canRecover
-        ? {
-            ...state.activity,
-            session_id: ev.session_id,
-            turn_id: ev.turn_id,
-            progressScopeRecovery: undefined,
-          }
-        : state.activity
-      // A history replay can establish the scope too, without duplicating its bubble.
-      if (state.messages.some(m => m.message_id === ev.message_id)) return { ...state, activity }
-      const messages = state.messages.slice()
-      const last = messages[messages.length - 1]
-      const draft =
-        last?.role === 'assistant' && last.streaming
-          ? messages.pop()!
-          : {
-              id: rid(),
-              role: 'assistant' as const,
-              content: '',
-              streaming: true,
-              timestamp: ev.timestamp,
-            }
-      messages.push(
-        {
-          id: ev.message_id,
-          reply_id: draft.id,
-          message_id: ev.message_id,
-          kind: 'progress',
-          role: 'assistant',
-          content: ev.text,
-          timestamp: ev.timestamp,
-          streaming: false,
-        },
-        ev.replaces_draft
-          ? { ...draft, content: '', timestamp: ev.timestamp }
-          : draft.content
-            ? draft
-            : { ...draft, timestamp: ev.timestamp },
-      )
-      return { ...state, activity, messages }
-    }
-
     case 'llm_text_delta': {
       // 非执行中忽略：息屏/切应用返回后积压的旧轮次 delta 重放时，
       // running 已为 false（execution_completed 先到）→ 忽略，防创建孤立空气泡。
@@ -554,49 +494,20 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
         startedAtMs: ev.meta?.startedAtMs ?? state.activity.metaStartedAtMs,
       }
       if (!state.refining && result) {
-        // ── workflow 过程气泡收敛（对齐桌面端 useEvents 同款语义）──
-        // completed 后「本轮」progress 气泡内容清空（保留消息对象/message_id 供去重），
-        // 最终回复只落在最后一条 assistant 上——长任务不再残留一大坨过程文本。
-        // 边界保护：只清最后一条 user 消息（追加指令）之后的 progress——更早的分段
-        // 属于已收敛的历史输出，保留不动。无 user 消息时清全部（全新轮次）。
-        const lastUserIdx = messages.map(m => m.role === 'user').lastIndexOf(true)
-        const cleared = messages.map((m, i) =>
-          m.kind === 'progress' && m.content && i > lastUserIdx ? { ...m, content: '' } : m,
-        )
-        const lastOfCleared = cleared[cleared.length - 1]
-        if (
-          lastOfCleared &&
-          lastOfCleared.role === 'assistant' &&
-          lastOfCleared.kind !== 'progress'
-        ) {
-          cleared[cleared.length - 1] = {
-            ...lastOfCleared,
-            content: result,
-            streaming: false,
-            meta: completedMeta,
-          }
+        // 与 leader 同构：completed 后最终回复覆盖流式定稿（progress 机制已移除，
+        // 消息流里只剩流式累积的 assistant 草稿）。
+        const lastIdx = messages.length - 1
+        const last = messages[lastIdx]
+        if (last && last.role === 'assistant' && last.kind !== 'progress') {
+          messages[lastIdx] = { ...last, content: result, streaming: false, meta: completedMeta }
         } else {
-          cleared.push({
+          messages.push({
             id: rid(),
             role: 'assistant',
             content: result,
             timestamp: Date.now(),
             meta: completedMeta,
           })
-        }
-        return {
-          ...state,
-          activity: {
-            ...state.activity,
-            running: false,
-            paused: false,
-            pauseActionId: undefined,
-            startedAt: undefined,
-            metaStartedAtMs: undefined,
-            pausedAt: undefined,
-          },
-          pendingConfirm: null,
-          messages: cleared,
         }
       }
       return {
