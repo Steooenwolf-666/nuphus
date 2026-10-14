@@ -50,15 +50,6 @@ impl Default for WorkflowAgentConfig {
     }
 }
 
-fn delivery_warning_level(tool_calls: usize) -> usize {
-    match tool_calls {
-        0..=23 => 0,
-        24..=47 => 1,
-        48..=95 => 2,
-        _ => 3,
-    }
-}
-
 /// WorkflowAgent — 独立的工作流设计执行器
 ///
 /// 生命周期由 Runtime 管理：创建后存于 Runtime::workflow_agent，
@@ -89,8 +80,6 @@ pub struct WorkflowAgent {
     pub(crate) reminders: ReminderQueue,
     /// Progressive warning level
     pub(crate) max_warning_injected: usize,
-    /// Progressive delivery/convergence warning level (based on tool calls, per turn)
-    pub(crate) delivery_warning_injected: usize,
     /// Protection detection state
     pub(crate) protection: ProtectionGuard,
     /// Pending warnings buffer
@@ -156,7 +145,6 @@ impl WorkflowAgent {
             safety_failures: 0,
             reminders: ReminderQueue::new(),
             max_warning_injected: 0,
-            delivery_warning_injected: 0,
             protection: ProtectionGuard::new(),
             pending_warnings: Vec::new(),
             user_terminated: false,
@@ -348,7 +336,7 @@ impl WorkflowAgent {
                     let tail = crate::utils::memory_journal_tail(&content, 2000);
                     let trimmed = tail.trim();
                     if !trimmed.is_empty() {
-                        self.session.push_user(format!(
+                        self.session.push_user_internal(format!(
                             "=== 历史工作流记忆（来自 workflow-memory.md，追加式日志，最新即所读）===\n{trimmed}\n\n当前 session id：{}\n记忆快照文件：read {}（追加式日志，tail 即最新）\n> 更新用 workflow_memory_update；跨会话检索用 memory_search / memory_recent",
                             self.session.id,
                             wmem_path.display()
@@ -449,7 +437,6 @@ impl WorkflowAgent {
         // Advance turn counter for memory tracking (consistent with Leader)
         self.session.advance_turn();
         self.max_warning_injected = 0;
-        self.delivery_warning_injected = 0;
         self.user_terminated = false;
         self.pending_warnings.clear();
 
@@ -588,7 +575,7 @@ impl WorkflowAgent {
                         }
                         PauseDecision::Terminate => {
                             tracing::info!("[WORKFLOW-PAUSE] User chose to terminate");
-                            self.session.push_user(
+                            self.session.push_user_internal(
                                 "⚠ 用户要求立即停止当前操作。请立即整理已有成果，输出你已完成的内容和当前状态。不要继续执行任何工具调用。".to_string()
                             );
                             user_requested_stop = true;
@@ -618,7 +605,6 @@ impl WorkflowAgent {
                 );
             }
 
-            self.inject_delivery_warning();
             if !self.internal_input && progress_cadence.take_reminder(std::time::Instant::now()) {
                 self.session.push_user_internal(
                     "[沟通提醒] 用户已有一段时间没有收到过程说明。下一步操作前请用 workflow_report_progress 简短说明已确认的进展、当前问题或下一步，然后继续执行；不要复述思考，不为汇报暂停等待，也不要把未知结果说成完成。若已完成则直接输出最终结果。".into()
@@ -891,7 +877,9 @@ impl WorkflowAgent {
                         }
                         exec_tool::BreakerAction::Warn | exec_tool::BreakerAction::Restrict => {
                             if let Some(msg) = exec_tool::breaker_message(self.safety_failures) {
-                                self.session.push_user(msg);
+                                // 系统安全警告走 internal（与 react_loop 对齐）：
+                                // 进 LLM 上下文，但不显示为用户气泡、不切割流式气泡
+                                self.session.push_user_internal(msg);
                             }
                         }
                         exec_tool::BreakerAction::None => {}
@@ -1397,10 +1385,11 @@ impl WorkflowAgent {
         let base = self.build_system_prompt();
 
         for attempt in 0..=MAX_RETRIES {
-            // Push reminders as user message to keep system_prompt stable
+            // Push reminders as internal user message to keep system_prompt stable
+            // （与 react_loop.rs 同一写法：internal 标记让前端历史过滤，不显示为用户气泡）
             if let Some(rem) = self.reminders.format_for_prompt() {
                 if !rem.is_empty() {
-                    self.session.push_user(rem);
+                    self.session.push_user_internal(rem);
                 }
             }
             // 待注入提示（状态变化类：项目目录切换等）：与 reminders 同一注入位，
@@ -1601,50 +1590,6 @@ impl WorkflowAgent {
         level >= 4
     }
 
-    /// Tool-call based convergence guidance, independent of the model context window.
-    /// These are progressive delivery nudges rather than early hard stops: complex
-    /// workflows may continue when a missing fact genuinely blocks deterministic output.
-    fn inject_delivery_warning(&mut self) {
-        let level = delivery_warning_level(self.tool_call_count);
-        if level <= self.delivery_warning_injected {
-            return;
-        }
-        self.delivery_warning_injected = level;
-
-        let (text, deliveries, priority) = match level {
-            1 => (
-                format!(
-                    "已执行 {} 次工具调用。若核心路径已成功且已有稳定 workflow_step，请停止比较性、研究性或旁支测试，立即固化并验证工作流；只有阻止确定性运行的缺失信息才值得继续探索。",
-                    self.tool_call_count
-                ),
-                2,
-                ReminderPriority::Normal,
-            ),
-            2 => (
-                format!(
-                    "已执行 {} 次工具调用，必须进入交付收敛：只补齐阻止保存、workflow_validate 或 workflow_run 的唯一缺口，随后立即写入并运行工作流。不要再研究跨进程、替换语义或额外异常等非必要旁支。",
-                    self.tool_call_count
-                ),
-                3,
-                ReminderPriority::High,
-            ),
-            _ => (
-                format!(
-                    "已执行 {} 次工具调用，停止所有新探索。现在必须用已有证据保存、校验并运行工作流；若确有唯一阻塞，明确报告该阻塞后结束，不得继续扩展测试范围。",
-                    self.tool_call_count
-                ),
-                4,
-                ReminderPriority::Critical,
-            ),
-        };
-        self.reminders.enqueue(
-            text,
-            deliveries,
-            priority,
-            ReminderCategory::DeviationCorrect,
-        );
-    }
-
     /// Safety check: session authorization → permissions → SecurityGuard
     async fn check_tool_safety(
         &mut self,
@@ -1674,7 +1619,7 @@ impl WorkflowAgent {
 
 #[cfg(test)]
 mod convergence_tests {
-    use super::{delivery_warning_level, WorkflowAgentConfig};
+    use super::WorkflowAgentConfig;
 
     #[test]
     fn workflow_iteration_budget_matches_the_global_single_source() {
@@ -1688,16 +1633,5 @@ mod convergence_tests {
             crate::agent::goal_types::GoalType::MAX_ITERATIONS,
             "WorkflowAgent 迭代上限必须与全局单一来源一致，不得出现第二套数字"
         );
-    }
-
-    #[test]
-    fn delivery_warnings_progress_at_expected_tool_budgets() {
-        assert_eq!(delivery_warning_level(23), 0);
-        assert_eq!(delivery_warning_level(24), 1);
-        assert_eq!(delivery_warning_level(47), 1);
-        assert_eq!(delivery_warning_level(48), 2);
-        assert_eq!(delivery_warning_level(95), 2);
-        assert_eq!(delivery_warning_level(96), 3);
-        assert_eq!(delivery_warning_level(500), 3);
     }
 }

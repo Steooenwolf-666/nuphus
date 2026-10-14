@@ -392,7 +392,7 @@ impl ToolRegistry {
             tool_def("desktop_find_text",
                 "区域找字（须传 region），需本地字库",
                 json_props! {
-                    "dict_name" => obj!("type"="string","description"="字库名（{name}.dict，可用 glob_search('**/*.dict') 列出）"),
+                    "dict_name" => obj!("type"="string","description"="字库名（{name}.dict，可用 Glob 工具搜 '**/*.dict' 列出）"),
                     "words" => obj!("type"="string","description"="查找文字，多个用 | 分隔，精确匹配"),
                     "region" => obj!("type"="object","description"="搜索区域{x,y,width,height}"),
                     "sim" => obj!("type"="number","default"=1.0,"description"="相似度 0-1，默认 1.0（精确）")
