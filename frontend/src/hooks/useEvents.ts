@@ -944,19 +944,31 @@ export function useEvents(h: EventHandlers) {
             // finalMsg 非空时无条件覆盖，避免"中间的空格都是 thinking 的 chars"。
             const content = finalMsg.trim() ? finalMsg : '（已执行完成，未产出回复）'
             h.setMessages((prev: ChatMessage[]) =>
-              continueReplyAfterUser(prev, s).map(m =>
-                m.id === s
-                  ? {
-                      ...m,
-                      content: finalMsg.trim() ? finalMsg : m.content || content,
-                      runtime: 'done',
-                      // 完成元数据落到该轮 assistant 气泡：历史消息重开（applyHistory
-                      // 由后端 HistoryMessage.meta 回填）与实时路径共用同一字段，
-                      // 消息底部 <TurnMetaBar> 读它，无需另建一处计时。
-                      meta: completedMeta,
-                    }
-                  : m,
-              ),
+              continueReplyAfterUser(prev, s).map(m => {
+                if (m.id === s) {
+                  return {
+                    ...m,
+                    content: finalMsg.trim() ? finalMsg : m.content || content,
+                    runtime: 'done',
+                    // 完成元数据落到该轮 assistant 气泡：历史消息重开（applyHistory
+                    // 由后端 HistoryMessage.meta 回填）与实时路径共用同一字段，
+                    // 消息底部 <TurnMetaBar> 读它，无需另建一处计时。
+                    meta: completedMeta,
+                  }
+                }
+                // ── workflow 过程气泡收敛（对齐 leader「完成后只留最终回复」语义）──
+                // assistant_progress 产生的独立 progress 气泡在最终回复落地后清空
+                // 内容（保留消息对象与 message_id：去重与历史对账依赖它们）。
+                // 过程文本仍可从执行回溯（traceItems / 后端 session 快照）查看。
+                // leader 轮次不产生 progress 消息 → 此分支对 leader 零影响。
+                // 边界保护：reply_id 链对齐当前 draft——追加 user 后 continueReplyAfterUser
+                // 已把旧分段 progress 的 reply_id 改名，条件天然只命中当前分段，
+                // 追加前已展示的过程文本保留不动。
+                if (m.kind === 'progress' && m.reply_id === s) {
+                  return { ...m, content: '' }
+                }
+                return m
+              }),
             )
           }
           // 步数一致性由后端单一来源保证（SignalState 累加 + execution_completed 下发），

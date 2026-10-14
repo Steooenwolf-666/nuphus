@@ -905,7 +905,32 @@ pub async fn submit_user_message<R: tauri::Runtime>(
             match wa.run(&effective_message, &images2, &cancel_flag2).await {
                 Ok(output) => {
                     if let Ok(mut guard) = state.runtime.lock() {
+                        // ── workflow 轮次完成落盘（对齐 leader 持久化时机）──
+                        // 此前 workflow 轮次结束只把 agent 放回槽，镜像（SQLite 快照 +
+                        // 元数据行）要等 refine 或退出钩子才写——期间切走/崩溃，rail 显示
+                        // 的 preview/message_count 与恢复链拿到的都是旧快照。
+                        // 保护名单先于 runtime 锁收集（std Mutex 不可重入）。
+                        let protected =
+                            crate::commands::process::shelf::protected_snapshot_ids_with_ctx(
+                                &guard, state.inner(),
+                            );
+                        crate::commands::process::shelf::persist_and_mirror(
+                            "workflow",
+                            wa.session(),
+                            &protected,
+                        );
                         guard.workflow_agent = Some(wa);
+                    }
+                    // ── 轮次收敛：清 session_backup ──
+                    // session_backup 只服务「执行中 agent 被 take 的历史回退」与
+                    // 「切换降级中转」两个生命周期内场景。轮次成功放回槽后槽位已是
+                    // 权威数据，残留旧快照会让空态判据（process.rs backup_none）失真、
+                    // 且跨 mode 切回时被 chat_history / rail 的 backup 回退路径读到
+                    // 其它 mode 的会话（2026-10-13 leader 会话"被覆盖"事故根因之一）。
+                    if let Ok(mut sb) = state.session.lock() {
+                        sb.session_backup = None;
+                        sb.last_message.clear();
+                        sb.last_message_images.clear();
                     }
                     (output, false, Option::<String>::None)
                 }
@@ -972,6 +997,14 @@ pub async fn submit_user_message<R: tauri::Runtime>(
                     );
                     if let Ok(mut guard) = state.runtime.lock() {
                         guard.leader_agent = Some(runtime);
+                    }
+                    // ── 轮次收敛：清 session_backup（与 workflow 分支同语义）──
+                    // 槽位已放回权威数据，备份的「执行中回退」使命结束；残留会污染
+                    // 空态判据与跨 mode 切回时的 backup 回退路径（2026-10-13 事故）。
+                    if let Ok(mut sb) = state.session.lock() {
+                        sb.session_backup = None;
+                        sb.last_message.clear();
+                        sb.last_message_images.clear();
                     }
                     (output, false, Option::<String>::None)
                 }

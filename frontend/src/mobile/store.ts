@@ -554,18 +554,49 @@ function applyEvent(state: ChatState, ev: NuphusEvent): ChatState {
         startedAtMs: ev.meta?.startedAtMs ?? state.activity.metaStartedAtMs,
       }
       if (!state.refining && result) {
-        const lastIdx = messages.length - 1
-        const last = messages[lastIdx]
-        if (last && last.role === 'assistant' && last.kind !== 'progress') {
-          messages[lastIdx] = { ...last, content: result, streaming: false, meta: completedMeta }
+        // ── workflow 过程气泡收敛（对齐桌面端 useEvents 同款语义）──
+        // completed 后「本轮」progress 气泡内容清空（保留消息对象/message_id 供去重），
+        // 最终回复只落在最后一条 assistant 上——长任务不再残留一大坨过程文本。
+        // 边界保护：只清最后一条 user 消息（追加指令）之后的 progress——更早的分段
+        // 属于已收敛的历史输出，保留不动。无 user 消息时清全部（全新轮次）。
+        const lastUserIdx = messages.map(m => m.role === 'user').lastIndexOf(true)
+        const cleared = messages.map((m, i) =>
+          m.kind === 'progress' && m.content && i > lastUserIdx ? { ...m, content: '' } : m,
+        )
+        const lastOfCleared = cleared[cleared.length - 1]
+        if (
+          lastOfCleared &&
+          lastOfCleared.role === 'assistant' &&
+          lastOfCleared.kind !== 'progress'
+        ) {
+          cleared[cleared.length - 1] = {
+            ...lastOfCleared,
+            content: result,
+            streaming: false,
+            meta: completedMeta,
+          }
         } else {
-          messages.push({
+          cleared.push({
             id: rid(),
             role: 'assistant',
             content: result,
             timestamp: Date.now(),
             meta: completedMeta,
           })
+        }
+        return {
+          ...state,
+          activity: {
+            ...state.activity,
+            running: false,
+            paused: false,
+            pauseActionId: undefined,
+            startedAt: undefined,
+            metaStartedAtMs: undefined,
+            pausedAt: undefined,
+          },
+          pendingConfirm: null,
+          messages: cleared,
         }
       }
       return {

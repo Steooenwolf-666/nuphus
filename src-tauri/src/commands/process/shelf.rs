@@ -1168,14 +1168,28 @@ pub(crate) fn list_shelf_sessions_inner(state: &AppState) -> Result<serde_json::
     } else if let Some(sess) = read_backup_session(state) {
         // chat_history 在当前 mode 的 runtime 槽为空时也使用 session_backup；
         // 列表必须复用同一回退源，否则 Workflow 会话切换成功后看不到“当前”。
-        push_active_candidate(
-            state,
-            kind,
-            &sess,
-            &mut candidates,
-            &mut active_id,
-            &mut created_fallback,
-        );
+        // ── backup 归属校验（与 chat_history 同一把尺子，2026-10-13 事故修复）──
+        // backup 会话镜像归属 ≠ 当前 kind → 跳过（它是残留/错位快照，不能当 active 展示）；
+        // 无镜像（新会话未落库）→ 放行，宁缺勿错。
+        let backup_allowed = match nuphus::store::session::get_snapshot(&sess.id) {
+            Ok(Some((mode, _))) => normalize_mode(&mode) == kind,
+            _ => true,
+        };
+        if backup_allowed {
+            push_active_candidate(
+                state,
+                kind,
+                &sess,
+                &mut candidates,
+                &mut active_id,
+                &mut created_fallback,
+            );
+        } else {
+            tracing::warn!(
+                "[Shelf] backup 归属错位（id={}），跳过 active 回退防跨 mode 串会话",
+                &sess.id[..8.min(sess.id.len())]
+            );
+        }
     }
 
     if let Ok(shelf) = state.shelf.lock() {
@@ -3012,6 +3026,32 @@ mod tests {
         assert_eq!(active.len(), 1, "backup 当前会话必须是唯一 active");
         assert_eq!(active[0]["id"].as_str(), Some(target_id.as_str()));
         assert_eq!(active[0]["mode"].as_str(), Some("workflow"));
+    }
+
+    /// 2026-10-13 事故回归（rail 侧）：current_mode=leader + 无 agent 槽 +
+    /// session_backup 残留 **workflow** 会话（镜像归属 workflow）→ 该 backup
+    /// 不得作为 active 展示（与 chat_history 同一把尺子，防跨 mode 串会话）。
+    #[test]
+    fn list_shelf_rejects_backup_from_other_mode() {
+        let state = AppState::default();
+        {
+            let mut cm = state.current_mode.write().unwrap();
+            *cm = "leader".to_string();
+        }
+        let wf_sess = session_with_user(&["工作流会话"]);
+        let json = serde_json::to_string(&wf_sess).unwrap();
+        nuphus::store::session::upsert_snapshot(&wf_sess.id, "workflow", &json).unwrap();
+        {
+            let mut session = state.session.lock().unwrap();
+            session.session_backup = Some(json);
+        }
+        let payload = list_shelf_sessions_inner(&state).unwrap();
+        let items = payload["items"].as_array().unwrap();
+        assert!(
+            items.iter().all(|i| i["is_active"] == false),
+            "错位 backup 不得作为 active 展示"
+        );
+        let _ = nuphus::store::session::delete_session(&wf_sess.id);
     }
 
     /// runtime agent 已恢复时优先使用 runtime 会话，不能被旧 backup 覆盖。

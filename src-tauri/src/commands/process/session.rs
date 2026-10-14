@@ -389,7 +389,41 @@ pub(crate) fn chat_history(state: &AppState) -> Result<Vec<crate::state::History
     // 不再回退另一侧 agent：主槽空 = 该 mode 无会话（欢迎页），回退会把其它 mode 的
     // 旧会话复活进「新建对话」后的首页（2026-09-04「新建对话回旧对话」根因之一）。
     let busy = state.busy.load(std::sync::atomic::Ordering::SeqCst);
-    if !busy {
+    // ── backup 归属校验（2026-10-13 事故修复）──
+    // session_backup 是「当前轮执行快照 / 切换中转」，但它可能与 current_mode 不一致：
+    // 轮次收敛前的残留、或切换中断的半截状态。读侧必须校验镜像归属——backup 会话的
+    // 存储快照归属 mode 与 current_mode 不一致时跳过（视同无 backup，走欢迎页），
+    // 杜绝 workflow 快照在 leader 首页冒充当前会话（反之亦然）。
+    // 归属未知（镜像不存在 = 新会话尚未落库）→ 放行：宁缺勿错，只拒「明确错位」。
+    let backup_allowed = {
+        let backup_id = state.session.lock().ok().and_then(|sb| {
+            sb.session_backup
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
+                .and_then(|v| v.get("id").and_then(|x| x.as_str()).map(String::from))
+        });
+        match backup_id {
+            Some(id) => {
+                let expected = crate::commands::process::shelf::normalize_mode(&current_mode);
+                match crate::commands::process::shelf::read_mirror(&id) {
+                    Some((mode, _)) => {
+                        let stored = crate::commands::process::shelf::normalize_mode(&mode);
+                        if stored != expected {
+                            tracing::warn!(
+                                "[CHAT] backup 归属错位（stored={} expected={}），跳过回退防跨 mode 串会话",
+                                stored,
+                                expected
+                            );
+                        }
+                        stored == expected
+                    }
+                    None => true, // 新会话未落库：无镜像可校验，放行
+                }
+            }
+            None => true, // 无 backup：校验无对象
+        }
+    };
+    if !busy && backup_allowed {
         if let Ok(sb) = state.session.lock() {
             if let Some(ref json) = sb.session_backup {
                 if let Ok(sess) = serde_json::from_str::<nuphus::session::Session>(json) {
@@ -416,36 +450,41 @@ pub(crate) fn chat_history(state: &AppState) -> Result<Vec<crate::state::History
     // agent 不存在或 session 为空 → 回退从 session_backup 恢复（执行中 agent 被
     // take 移出时仍能读到执行前历史；retry.rs 用同一 JSON 恢复 session 的先例）
     drop(guard);
-    if let Ok(sb) = state.session.lock() {
-        if let Some(ref json) = sb.session_backup {
-            if let Ok(sess) = serde_json::from_str::<nuphus::session::Session>(json) {
-                let messages = extract_history_for_mode(&sess, is_workflow);
-                if !messages.is_empty() {
-                    // 执行中 agent take：backup 是执行前快照，补当前轮 user 消息（含图）
-                    let messages =
-                        append_last_turn_user(messages, &sb.last_message, &sb.last_message_images);
-                    tracing::info!(
-                        "[CHAT] get_chat_history returned {} messages from session_backup",
-                        messages.len()
-                    );
-                    return Ok(messages);
+    if backup_allowed {
+        if let Ok(sb) = state.session.lock() {
+            if let Some(ref json) = sb.session_backup {
+                if let Ok(sess) = serde_json::from_str::<nuphus::session::Session>(json) {
+                    let messages = extract_history_for_mode(&sess, is_workflow);
+                    if !messages.is_empty() {
+                        // 执行中 agent take：backup 是执行前快照，补当前轮 user 消息（含图）
+                        let messages = append_last_turn_user(
+                            messages,
+                            &sb.last_message,
+                            &sb.last_message_images,
+                        );
+                        tracing::info!(
+                            "[CHAT] get_chat_history returned {} messages from session_backup",
+                            messages.len()
+                        );
+                        return Ok(messages);
+                    }
                 }
             }
-        }
-        // backup 为空（首次执行 / 新 session）但有当前轮 user → 直接返回它，
-        // 否则执行中刷新/息屏重开连第一条消息都看不到。
-        if !sb.last_message.trim().is_empty() {
-            return Ok(vec![crate::state::HistoryMessage {
-                role: "user".to_string(),
-                content: sb.last_message.trim().to_string(),
-                kind: None,
-                message_id: None,
-                images: Vec::new(),
-                audio: Vec::new(),
-                timestamp: None,
-                trace_items: Vec::new(),
-                meta: None,
-            }]);
+            // backup 为空（首次执行 / 新 session）但有当前轮 user → 直接返回它，
+            // 否则执行中刷新/息屏重开连第一条消息都看不到。
+            if !sb.last_message.trim().is_empty() {
+                return Ok(vec![crate::state::HistoryMessage {
+                    role: "user".to_string(),
+                    content: sb.last_message.trim().to_string(),
+                    kind: None,
+                    message_id: None,
+                    images: Vec::new(),
+                    audio: Vec::new(),
+                    timestamp: None,
+                    trace_items: Vec::new(),
+                    meta: None,
+                }]);
+            }
         }
     }
 
@@ -1083,5 +1122,61 @@ mod tests {
         let state = AppState::default();
         let hist = chat_history(&state).unwrap();
         assert!(hist.is_empty());
+    }
+
+    /// 2026-10-13 事故回归：current_mode=leader + leader 槽空/None + 空闲 +
+    /// session_backup 残留 **workflow** 会话快照（其镜像归属 workflow）
+    /// → 必须跳过 backup 返回空（欢迎页），不得把 workflow 会话冒充 leader 当前会话。
+    #[test]
+    fn chat_history_rejects_backup_from_other_mode() {
+        let state = AppState::default();
+        set_current_mode(&state, "leader");
+        {
+            let mut guard = state.runtime.lock().unwrap();
+            guard.leader_agent = None; // leader 槽空 → 走 backup 回退
+        }
+        // backup 是 workflow 会话，且其镜像归属 workflow（先落库再进 backup）
+        let wf_sess = {
+            let mut s = Session::new();
+            s.push_user("工作流问题".to_string());
+            s.push_assistant(assistant("工作流回复"));
+            s
+        };
+        let json = serde_json::to_string(&wf_sess).unwrap();
+        nuphus::store::session::upsert_snapshot(&wf_sess.id, "workflow", &json).unwrap();
+        {
+            let mut sb = state.session.lock().unwrap();
+            sb.session_backup = Some(json);
+        }
+        let hist = chat_history(&state).unwrap();
+        assert!(
+            hist.is_empty(),
+            "backup 归属 workflow ≠ current_mode=leader，必须跳过（防跨 mode 串会话）"
+        );
+        let _ = nuphus::store::session::delete_session(&wf_sess.id);
+    }
+
+    /// 2026-10-13 事故回归（镜像缺失兜底）：backup 会话无存储镜像（新会话尚未落库）
+    /// → 放行（宁缺勿错：只拒「明确归属另一 mode」，不误伤未落库的正常中转）。
+    #[test]
+    fn chat_history_allows_backup_without_mirror() {
+        let state = AppState::default();
+        set_current_mode(&state, "leader");
+        {
+            let mut guard = state.runtime.lock().unwrap();
+            guard.leader_agent = None;
+        }
+        let sess = {
+            let mut s = Session::new();
+            s.push_user("未落库消息".to_string());
+            s.push_assistant(assistant("未落库回复"));
+            s
+        };
+        {
+            let mut sb = state.session.lock().unwrap();
+            sb.session_backup = Some(serde_json::to_string(&sess).unwrap());
+        }
+        let hist = chat_history(&state).unwrap();
+        assert_eq!(hist.len(), 2, "无镜像可校验 → 放行（切换中转语义保留）");
     }
 }

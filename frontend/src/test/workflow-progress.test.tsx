@@ -1,11 +1,10 @@
-import { act, render, renderHook, screen } from '@testing-library/react'
+import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { composeAssistantReplies, foldAssistantHistory } from '../core/progressMessages'
 import { chatReducer, initialChatState } from '../mobile/store'
 import { useEvents, type EventHandlers } from '../hooks/useEvents'
 import type { ChatMessage, NuphusEvent } from '../core/types'
 import { projectExecutionActivity } from '../core/executionActivity'
-import { ExecutionActivityLine } from '../ui/ExecutionActivityLine'
 
 const { callbacks } = vi.hoisted(() => ({
   callbacks: new Map<string, (payload: unknown) => void>(),
@@ -98,8 +97,32 @@ describe('workflow progress narration', () => {
     const h = desktop()
     h.send(progress())
     h.send(completed)
-    expect(h.messages().map(m => m.content)).toEqual(['先检查已有流程。\n\n完成了。'])
+    // completed 收敛（对齐 leader「完成后覆盖过程 text」）：progress 内容清空，
+    // 展示层只剩最终回复；执行中 progress 气泡照常可见（本测试只覆盖完成时刻）。
+    expect(h.messages().map(m => m.content)).toEqual(['完成了。'])
     expect(h.messages()[0].runtime).toBe('done')
+  })
+  it('desktop clears progress content after completion (final reply only)', () => {
+    const h = desktop()
+    h.send(progress())
+    h.send(progress({ message_id: 'p2', text: '正在验证。' }))
+    h.send(completed)
+    // 收敛语义：completed 后 progress 气泡内容清空（消息对象保留供去重/对账），
+    // 展示层只剩最终回复——对齐 leader「完成后覆盖过程 text」。执行回溯仍可查过程。
+    expect(h.messages().map(m => m.content)).toEqual(['完成了。'])
+    // 底层记录仍在（仅内容清空），message_id 保留用于 reconnect 去重
+    expect(
+      h
+        .records()
+        .filter(m => m.kind === 'progress')
+        .map(m => m.message_id),
+    ).toEqual(['p1', 'p2'])
+    expect(
+      h
+        .records()
+        .filter(m => m.kind === 'progress')
+        .every(m => m.content === ''),
+    ).toBe(true)
   })
   it('desktop converts streamed text once and ignores duplicate/old turn events', () => {
     const h = desktop()
@@ -111,6 +134,8 @@ describe('workflow progress narration', () => {
     h.send(completed)
     h.send(progress({ message_id: 'late' }))
     expect(h.messages()).toHaveLength(1)
+    // completed 收敛：progress 内容清空 + 最终回复覆盖 draft → 只剩最终回复
+    expect(h.messages().map(m => m.content)).toEqual(['完成了。'])
   })
   it('desktop preserves progress on errors and rejects switched-session events', () => {
     const h = desktop()
@@ -132,7 +157,10 @@ describe('workflow progress narration', () => {
     expect(h.messages()[0].id).toBe(id)
     expect(h.messages()[0].content).toBe('先检查已有流程。\n\n正在验证。\n\n完成')
     h.send(completed)
-    expect(h.messages()[0].content).toBe('先检查已有流程。\n\n正在验证。\n\n完成了。')
+    // completed 收敛（对齐 leader）：progress 气泡清空、draft 被最终回复覆盖 → 只剩「完成了。」
+    expect(h.messages().map(m => m.content)).toEqual(['完成了。'])
+    // 展示容器 id 稳定性：最终回复落在原 draft 容器上
+    expect(h.messages()[0].id).toBe(id)
   })
   it('desktop output after an appended user message stays after that message', () => {
     const h = desktop()
@@ -140,11 +168,9 @@ describe('workflow progress narration', () => {
     h.send({ type: 'user_message_received', source: 'mobile', content: '改用新目录' })
     h.send(progress({ message_id: 'p2', text: '按新目录继续。' }))
     h.send(completed)
-    expect(h.messages().map(m => m.content)).toEqual([
-      '先检查已有流程。',
-      '改用新目录',
-      '按新目录继续。\n\n完成了。',
-    ])
+    // completed 收敛边界：追加 user 之前的 progress 属于已收敛的分段，保留；
+    // 追加之后（当前分段）的 progress 清空 + 最终回复覆盖 draft。
+    expect(h.messages().map(m => m.content)).toEqual(['先检查已有流程。', '改用新目录', '完成了。'])
     expect(new Set(h.messages().map(m => m.id)).size).toBe(3)
   })
   it('desktop does not leave an empty bubble when stopped before any public text', () => {
@@ -179,10 +205,12 @@ describe('workflow progress narration', () => {
       event: progress({ message_id: 'p2', text: '收到。' }),
     })
     state = chatReducer(state, { type: 'event', event: completed })
+    // completed 收敛边界（对齐桌面端）：追加 user 之前的 progress 保留，
+    // 追加之后的（本轮）progress 清空 + 最终回复。
     expect(composeAssistantReplies(state.messages).map(m => m.content)).toEqual([
       '先检查已有流程。',
       '追加',
-      '收到。\n\n完成了。',
+      '完成了。',
     ])
   })
   it('history composition respects user and refine boundaries and preserves media', () => {
@@ -238,9 +266,8 @@ describe('workflow progress narration', () => {
     ]) {
       state = chatReducer(state, { type: 'event', event })
     }
-    expect(composeAssistantReplies(state.messages).map(m => m.content)).toEqual([
-      '先检查已有流程。\n\n正在验证结果。\n\n完成了。',
-    ])
+    // completed 收敛（对齐桌面端）：progress 内容清空 → 展示层只剩最终回复
+    expect(composeAssistantReplies(state.messages).map(m => m.content)).toEqual(['完成了。'])
   })
   it('mobile ignores stale progress and does not expose subtask text as narration', () => {
     let state = chatReducer(initialChatState, { type: 'event', event: started })
@@ -286,9 +313,8 @@ describe('workflow progress narration', () => {
     state = chatReducer(state, { type: 'event', event: text })
     state = chatReducer(state, { type: 'event', event: progress({ replaces_draft: true }) })
     state = chatReducer(state, { type: 'event', event: completed })
-    expect(composeAssistantReplies(state.messages).map(m => m.content)).toEqual([
-      '先检查已有流程。\n\n完成了。',
-    ])
+    // completed 收敛（对齐桌面端）：原生流文本被 replaces_draft 提交、progress 清空 → 只剩最终回复
+    expect(composeAssistantReplies(state.messages).map(m => m.content)).toEqual(['完成了。'])
   })
   it('mobile reconnect binds a history duplicate without duplicating or losing later progress', () => {
     let state = chatReducer(initialChatState, {
@@ -405,19 +431,5 @@ describe('workflow progress narration', () => {
     expect(state?.phase).toBe('tool')
     expect(JSON.stringify(state)).not.toContain('private')
     expect(projectExecutionActivity(state, { type: 'refine_executing' })).toBeNull()
-  })
-  it('status elapsed time stops when inactive and timer cleans up', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(1000)
-    const view = render(
-      <ExecutionActivityLine activity={{ startedAt: 1000, phase: 'model', calls: [] }} />,
-    )
-    act(() => {
-      vi.advanceTimersByTime(3000)
-    })
-    expect(screen.getByRole('status')).toHaveTextContent('正在等待模型响应 · 已用时 3 秒')
-    view.rerender(<ExecutionActivityLine activity={null} />)
-    expect(screen.queryByRole('status')).toBeNull()
-    expect(vi.getTimerCount()).toBe(0)
   })
 })

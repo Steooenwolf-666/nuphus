@@ -77,6 +77,8 @@ describe('single workflow reply bubble', () => {
     expect(screen.getAllByRole('button', { name: '复制' })).toHaveLength(1)
     expect(screen.getAllByRole('button', { name: '点评' })).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: '复制' }))
+    // 本测试验证 UI 单气泡渲染（records 是执行中快照，progress 仍带内容）；
+    // completed 收敛后只剩最终回复的语义由 compose-cleared-progress.test.ts 覆盖。
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(body))
   })
   it('desktop retains the same bubble while more progress arrives and hides an empty stopped draft', () => {
