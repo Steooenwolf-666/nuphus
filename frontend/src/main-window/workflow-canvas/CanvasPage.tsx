@@ -227,6 +227,12 @@ function CanvasInner({
   const dirty = committedDirty || draftStore.dirty
   const editRevision = useRef(0)
   const saving = useRef(false)
+  /**
+   * I-1：保存前第三方写检测基线 —— 最近一次「本画布读到/写回」的 updated_at。
+   * 加载/保存成功时刷新；save 前与重拉的远端值比对，不一致即存在第三方写者
+   * （调度器 set_schedule / 列表页重命名 / 执行器 run_history 回写等）。
+   */
+  const savedStampRef = useRef<string | null | undefined>(undefined)
   const visitedInspectors = useRef(new Set<string>())
   const fieldEditPositions = useRef(new Map<string, Record<string, NodePos>>())
   /** 声明式外部输入收集弹层（运行前必填校验的唯一入口，复用 WorkflowInputsForm） */
@@ -302,6 +308,9 @@ function CanvasInner({
   const [problems, setProblems] = useState<Problem[]>([])
   const [backendReport, setBackendReport] = useState<ValidationReport | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  /** I-4：加载失败态（bridge invoke reject）——置非空后加载分支展示错误 + 手动重试，禁止无限自动重试 */
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loadAttempt, setLoadAttempt] = useState(0)
   // Reports describe a specific definition, never a later edit or uncommitted draft.
   useEffect(() => {
     setBackendReport(null)
@@ -408,15 +417,30 @@ function CanvasInner({
   }, [steps, draftStore])
 
   // ── 加载 ──
+  // t 经 ref 间接引用（对齐 L476 runTranslation 模式）：语言切换不重载画布——
+  // 重载会 setSteps 覆盖未提交草稿，等价于一次静默数据丢失。
+  const loadTranslate = useRef(t)
+  loadTranslate.current = t
   useEffect(() => {
     let alive = true
+    // I-4：bridge invoke reject（后端 panic/通道关闭等）不能让画布永久卡「加载画布中…」；
+    // 兜底为错误态 + 手动重试（loadAttempt 递增触发本 effect 重跑），不做无限自动重试。
     ;(async () => {
-      const raw = (await wfGetRaw(workflowId)) as unknown as WorkflowIR | null
-      if (!alive) return
-      if (!raw) {
-        setNotice(editorText('工作流不存在或已被删除', t))
+      let raw: WorkflowIR | null
+      try {
+        raw = (await wfGetRaw(workflowId)) as unknown as WorkflowIR | null
+      } catch (e) {
+        if (alive) setLoadError(String(e))
         return
       }
+      if (!alive) return
+      setLoadError(null)
+      if (!raw) {
+        setNotice(editorText('工作流不存在或已被删除', loadTranslate.current))
+        return
+      }
+      // I-1：以加载时的 updated_at 作为第三方写检测基线
+      savedStampRef.current = (raw as { updated_at?: string | null }).updated_at ?? null
       setIr(raw)
       setSteps(structuredClone(raw.steps ?? []))
       const layout = (await wfLayoutGet(workflowId).catch(
@@ -427,7 +451,7 @@ function CanvasInner({
     return () => {
       alive = false
     }
-  }, [workflowId])
+  }, [workflowId, loadAttempt])
 
   useEffect(() => {
     if (!replayRunId) {
@@ -888,12 +912,15 @@ function CanvasInner({
     const prev = historyRef.current.undo(cur)
     if (prev) {
       fieldEditPositions.current.clear()
+      // I-2：撤销替换了整个 steps；脏草稿基于撤销前状态，保留会在下次 flush
+      // 把撤销前的文本写回、静默覆盖撤销结果。全部丢弃，字段回到 IR 权威值。
+      draftStore.invalidateAll()
       stepsRef.current = prev
       setSteps(prev)
       editRevision.current++
       setDirty(true)
     }
-  }, [readOnly])
+  }, [readOnly, draftStore])
 
   const redo = useCallback(() => {
     const cur = stepsRef.current
@@ -901,12 +928,14 @@ function CanvasInner({
     const next = historyRef.current.redo(cur)
     if (next) {
       fieldEditPositions.current.clear()
+      // I-2：同 undo——重做同样整体替换 steps，脏草稿一并失效。
+      draftStore.invalidateAll()
       stepsRef.current = next
       setSteps(next)
       editRevision.current++
       setDirty(true)
     }
-  }, [readOnly])
+  }, [readOnly, draftStore])
 
   const flushDrafts = useCallback(async () => {
     const failure = await draftStore.flush()
@@ -999,6 +1028,39 @@ function CanvasInner({
         }
         // A user can keep typing while the gate request is in flight.
         if (!(await flushDrafts())) return
+        // ── I-1：保存前第三方写检测（前端最小防护，后端 revision token 另行批次）──
+        // wf_save 是全量覆盖写；同文件第三方写者（调度器 set_schedule、列表页重命名、
+        // 执行器 run_history 回写）的写入会被本次保存静默丢失。保存前重拉远端并与
+        // 本画布的基线比对：updated_at 变了 → 弹确认，把「覆盖第三方写入」的决定权交还用户。
+        // 预检失败（bridge reject / 工作流已删除）→ 放弃本次保存（缺失信息下覆盖写不可辩护）。
+        let remote: { updated_at?: string | null } | null
+        try {
+          remote = (await wfGetRaw(workflowId)) as unknown as {
+            updated_at?: string | null
+          } | null
+        } catch (e) {
+          setNotice(`${ui('保存失败', 'Save failed')}: ${String(e)}`)
+          return
+        }
+        if (remote === null) {
+          setNotice(editorText('保存失败：工作流不存在或已被删除', t))
+          return
+        }
+        const remoteStamp = remote.updated_at ?? null
+        if (remoteStamp !== savedStampRef.current) {
+          const proceed = await askConfirm(
+            editorText(
+              '该工作流在画布外被修改过（如定时设置、重命名或运行记录）。继续保存将覆盖这些修改，仍要继续？',
+              t,
+            ),
+          )
+          if (!proceed) {
+            // 用户选择让步：同步基线为远端值，避免下次保存重复弹窗
+            savedStampRef.current = remoteStamp
+            return
+          }
+          savedStampRef.current = remoteStamp
+        }
         const cur = stepsRef.current
         if (!cur) return
         const revision = editRevision.current
@@ -1026,6 +1088,16 @@ function CanvasInner({
                   : editorText('已保存', t),
             )
             setIr(current => (current ? { ...current, ...(name ? { name } : {}) } : payload))
+            // I-1：后端保存时强制刷新 updated_at=now()，前端无法预测该值；
+            // 重拉一次让基线精确对齐远端，避免下次保存误报第三方修改。
+            try {
+              const fresh = (await wfGetRaw(workflowId)) as unknown as {
+                updated_at?: string | null
+              } | null
+              if (fresh) savedStampRef.current = fresh.updated_at ?? null
+            } catch {
+              // 重拉失败不影响保存结果；下次保存走「基线不一致 → 确认」的保守路径
+            }
             return unchanged
           } else if (unchanged) {
             setNotice(editorText('保存被阻断：存在校验错误，详见问题面板「后端校验」', t))
@@ -1037,7 +1109,7 @@ function CanvasInner({
         saving.current = false
       }
     },
-    [gateRefresh, flushDrafts, draftStore],
+    [gateRefresh, flushDrafts, draftStore, askConfirm, workflowId],
   )
 
   const runCheck = useCallback(async () => {
@@ -1845,7 +1917,18 @@ function CanvasInner({
   if (!ir || !steps || !projection) {
     return (
       <div className="wfc-page">
-        <div className="wfc-loading">{notice ?? editorText('加载画布中…', t)}</div>
+        {loadError ? (
+          <div className="wfc-load-error" role="alert">
+            <div className="wfc-load-error-msg">
+              {editorText('加载画布失败', t)}: {loadError}
+            </div>
+            <button type="button" className="wfc-btn" onClick={() => setLoadAttempt(n => n + 1)}>
+              {editorText('重试', t)}
+            </button>
+          </div>
+        ) : (
+          <div className="wfc-loading">{notice ?? editorText('加载画布中…', t)}</div>
+        )}
       </div>
     )
   }
@@ -2540,7 +2623,18 @@ function CanvasInner({
           }}
           readOnly={snapshot.running || gateLocked}
           onClose={() => setScheduleOpen(false)}
-          onChanged={schedule => setIr(current => (current ? { ...current, schedule } : current))}
+          // I-1：调度对话框经 wf_schedule_set 直写后端并刷新 updated_at；
+          // 同步基线，避免画布自己的调度操作在下次保存时被误判为第三方修改。
+          onChanged={schedule => {
+            setIr(current => (current ? { ...current, schedule } : current))
+            void wfGetRaw(workflowId)
+              .then(fresh => {
+                if (fresh)
+                  savedStampRef.current =
+                    (fresh as { updated_at?: string | null }).updated_at ?? null
+              })
+              .catch(() => {})
+          }}
         />
 
         {/* ── 确认弹窗 ── */}
