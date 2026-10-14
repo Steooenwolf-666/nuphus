@@ -15,7 +15,7 @@ __pycache__/
 temp/
 frontend/dist/
 *.bmp
-# 根目录临时 Python 脚本（AI 会话产物，不入库）；scripts/ 正式脚本（generate_icons.py 等）不受影响
+# 根目录临时 Python 脚本（AI 会话产物，不入库）；scripts/ 正式脚本不受影响
 /*.py
 src-tauri/desktop/models/*.onnx
 src-tauri/desktop/models/*.txt
