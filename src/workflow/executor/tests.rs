@@ -824,6 +824,79 @@ async fn test_failed_run_creates_error_record_without_corrupting_previous() {
     );
 }
 
+/// B1 回归：取消标志泄漏 —— future 被 drop（plugin 300s 超时是受支持路径）时
+/// 正常返回路径的清理不跑，残留 true 的 cancel flag 会让下次同 id 运行每步
+/// 立即「已被取消」。RunStateGuard（Drop）必须在 guard 释放路径上移除条目，
+/// 使二次运行拿到全新 false flag 正常执行。
+#[tokio::test]
+async fn test_cancel_flag_leak_does_not_poison_next_run() {
+    let tmp = std::env::temp_dir().join("nuphus_test_cancel_leak");
+    let _ = std::fs::create_dir_all(&tmp);
+    let store = WorkflowStore::with_root(tmp.clone());
+    let events = EventBus::new();
+    let executor = Executor::new();
+
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut wf = Workflow::new("cancel_leak");
+    wf.steps = vec![make_tool_step("only", "counted_tool", serde_json::json!({}))];
+    let wf_id = wf.id.clone();
+    store.save(&wf).await.unwrap();
+
+    let tool_exec = {
+        let calls = calls.clone();
+        move |_: String, _: serde_json::Value| {
+            let calls = calls.clone();
+            async move {
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok("ok".to_string())
+            }
+        }
+    };
+
+    // ── 模拟泄漏：直接向 cancel_flags 插入 workflow_id → true（等价于「上次运行
+    //    被取消后 future 被 drop，清理未跑」的终态）──
+    {
+        let mut flags = executor.cancel_flags.write().await;
+        flags.insert(
+            wf_id.clone(),
+            Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        );
+    }
+
+    // ── 二次运行：不得被残留 true 的 flag 误取消 ──
+    let result = executor
+        .execute_v2(
+            &wf_id,
+            &store,
+            &events,
+            tool_exec,
+            None,
+            None,
+            None,
+            None,
+            true, // force_fresh：全新执行，排除断点续连干扰
+        )
+        .await;
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+
+    assert!(
+        result.is_ok(),
+        "残留 true 的 cancel flag 不得毒化下一次运行: {:?}",
+        result.err()
+    );
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "步骤应正常执行一次（每步 check_cancel 未误触发）"
+    );
+
+    // guard 释放路径：运行结束后条目已被移除，不留泄漏
+    assert!(
+        !executor.cancel_flags.read().await.contains_key(&wf_id),
+        "运行结束后 cancel_flags 条目应被清理"
+    );
+}
+
 #[tokio::test]
 async fn test_resume_skips_completed_steps() {
     let tmp = std::env::temp_dir().join("nuphus_test_resume");
@@ -1342,6 +1415,54 @@ async fn test_failed_step_emits_error_and_step_run_completed_error() {
     );
 }
 
+/// I-11 回归：重试路径必须发射 StepRunRetry（此前枚举字段齐全但全仓无 emit 点，
+/// 前端 step_run_retry 徽章是死代码）。attempt 语义：首次重试 = 1（前端显示 retrying N）。
+#[tokio::test]
+async fn test_retry_emits_step_run_retry_events() {
+    let tmp = std::env::temp_dir().join("nuphus_test_retry_emit");
+    let _ = std::fs::create_dir_all(&tmp);
+    let store = WorkflowStore::with_root(tmp.clone());
+    let events = EventBus::new();
+    let mut rx = events.subscribe();
+    let executor = Executor::new();
+
+    let mut step = make_tool_step("flaky_step", "flaky_tool", serde_json::json!({}));
+    step.on_error = OnError::Retry {
+        max: 2,
+        backoff_ms: 1,
+        backoff_multiplier: 2.0,
+    };
+    let mut wf = Workflow::new("retry_emit_test");
+    wf.steps = vec![step];
+    let wf_id = wf.id.clone();
+    store.save(&wf).await.unwrap();
+
+    // 始终失败：max=2 → 3 次尝试、2 次重试发射
+    let tool_exec = |tool: String, params: serde_json::Value| fail_tool_exec(tool, params);
+    let result = executor
+        .execute_v2(
+            &wf_id, &store, &events, tool_exec, None, None, None, None, false,
+        )
+        .await;
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+    assert!(result.is_err());
+
+    let mut retry_attempts: Vec<u32> = Vec::new();
+    loop {
+        match rx.try_recv() {
+            Ok(WorkflowEvent::StepRunRetry { attempt, .. }) => retry_attempts.push(attempt),
+            Ok(_) => {}
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+            Err(_) => break,
+        }
+    }
+    assert_eq!(
+        retry_attempts,
+        vec![1, 2],
+        "两次重试应各发一次 StepRunRetry，attempt 从 1 递增: {retry_attempts:?}"
+    );
+}
+
 /// wait 步骤的提示语必须做 `{{var}}` 模板替换（与 chat / script / tool / mcp 对齐）。
 ///
 /// 回归背景：实测 HUD 上显示的是字面的 "等待: 已读取到 {{pending_raw}}…" ——
@@ -1541,4 +1662,92 @@ fn variables_input_namespace_and_top_level() {
         super::variables::resolve_vars_str("hi {{inputs.name}}", &vars),
         "hi Nuphus"
     );
+}
+
+// ── B9：敏感值落盘脱敏 ──
+
+/// 纯函数契约：顶层键与 inputs 命名空间内的敏感键都被剔除；非敏感键原样保留
+#[test]
+fn strip_sensitive_snapshot_removes_sensitive_keys_both_positions() {
+    use super::variables::strip_sensitive_from_snapshot;
+
+    let sensitive: std::collections::HashSet<String> = ["token".to_string()]
+        .into_iter()
+        .collect();
+    let vars: HashMap<String, serde_json::Value> = HashMap::from([
+        ("token".to_string(), serde_json::json!("super-secret")),
+        ("plain".to_string(), serde_json::json!("visible")),
+        (
+            "inputs".to_string(),
+            serde_json::json!({"token": "super-secret", "plain": "visible"}),
+        ),
+    ]);
+
+    let snapshot = strip_sensitive_from_snapshot(&vars, &sensitive);
+
+    assert!(
+        !snapshot.contains_key("token"),
+        "顶层敏感键应被剔除: {snapshot:?}"
+    );
+    assert_eq!(snapshot.get("plain"), Some(&serde_json::json!("visible")));
+    let ns = snapshot.get("inputs").and_then(|v| v.as_object()).unwrap();
+    assert!(
+        !ns.contains_key("token"),
+        "inputs 命名空间内的敏感键应被剔除: {ns:?}"
+    );
+    assert_eq!(ns.get("plain"), Some(&serde_json::json!("visible")));
+
+    // 空名单 → 原样快照（含敏感键，因为根本没有敏感声明）
+    let no_sensitive: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let passthrough = strip_sensitive_from_snapshot(&vars, &no_sensitive);
+    assert_eq!(passthrough.get("token"), Some(&serde_json::json!("super-secret")));
+}
+
+/// 端到端：带 sensitive 输入的工作流执行完成后，落盘的 workflow.json
+/// 中不得出现敏感明文（顶层快照与 inputs 命名空间两处都要验证）；
+/// 非敏感变量照常保留。
+#[tokio::test]
+async fn sensitive_input_value_never_persisted_to_workflow_json() {
+    let tmp = std::env::temp_dir().join("nuphus_test_b9_persist");
+    let _ = std::fs::create_dir_all(&tmp);
+    let store = WorkflowStore::with_root(tmp.clone());
+    let events = EventBus::new();
+    let executor = Executor::new();
+
+    let mut wf = Workflow::new("b9_persist");
+    wf.inputs = vec![input_spec("token", false, None, true)];
+    wf.steps = vec![make_tool_step("only", "mock_echo", serde_json::json!({}))];
+    let wf_id = wf.id.clone();
+    store.save(&wf).await.unwrap();
+
+    let tool_exec = |tool: String, params: serde_json::Value| ok_tool_exec(tool, params);
+    let inputs = HashMap::from([("token".to_string(), serde_json::json!("super-secret"))]);
+    let result = executor
+        .execute_v2(
+            &wf_id, &store, &events, tool_exec, None, None, None, Some(inputs), true,
+        )
+        .await;
+    assert!(result.is_ok(), "执行应成功: {:?}", result.err());
+
+    // 直接读磁盘上的 workflow.json（绕过内存缓存，验证真实落盘内容）
+    let persisted =
+        std::fs::read_to_string(tmp.join(&wf_id).join("workflow.json")).unwrap();
+    assert!(
+        !persisted.contains("super-secret"),
+        "敏感明文不得出现在落盘的 workflow.json 中"
+    );
+
+    let wf_after = store.get(&wf_id).await.unwrap();
+    let snapshot = &wf_after.last_run().unwrap().variables_snapshot;
+    assert!(
+        !snapshot.contains_key("token"),
+        "顶层快照不得含敏感键: {snapshot:?}"
+    );
+    if let Some(ns) = snapshot.get("inputs").and_then(|v| v.as_object()) {
+        assert!(
+            !ns.contains_key("token"),
+            "inputs 命名空间快照不得含敏感键: {ns:?}"
+        );
+    }
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
 }

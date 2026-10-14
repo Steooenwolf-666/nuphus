@@ -44,6 +44,11 @@ impl Executor {
         for attempt in 0..=max_retries {
             // 重试间隔
             if attempt > 0 {
+                // I-11：补发射重试事件（此前只有 Error 横幅，前端 step_run_retry 徽章是死代码）
+                events.emit(WorkflowEvent::StepRunRetry {
+                    step_id: step.id.clone(),
+                    attempt,
+                });
                 events.emit(WorkflowEvent::Error {
                     message: format!(
                         "Tool '{}' ({}): attempt {}/{} after error: {}",

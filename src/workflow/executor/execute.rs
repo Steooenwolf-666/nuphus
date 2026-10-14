@@ -54,17 +54,22 @@ impl Executor {
         }
 
         // ── 初始化取消标志 ──
-        {
-            let mut flags = self.cancel_flags.write().await;
-            if !flags.contains_key(workflow_id) {
-                flags.insert(
-                    workflow_id.to_string(),
-                    crate::workflow::debug::current()
-                        .map(|session| session.cancelled.clone())
-                        .unwrap_or_else(|| Arc::new(AtomicBool::new(false))),
-                );
-            }
-        }
+        // B1：总是插入新条目（非 debug 新建 false；debug 复用 session.cancelled），
+        // 覆盖可能残留的旧条目——上次运行被取消且 future 被 drop 时 guard 未及清理
+        // 的极端下，残留 true 不得毒化本次运行。全局执行闸门保证同 id 无并发 run，
+        // 覆盖无竞态；debug 会话也因此总能拿到自己的 cancelled Arc。
+        self.cancel_flags.write().await.insert(
+            workflow_id.to_string(),
+            crate::workflow::debug::current()
+                .map(|session| session.cancelled.clone())
+                .unwrap_or_else(|| Arc::new(AtomicBool::new(false))),
+        );
+        // B1：per-run 状态守卫——Ok/Err/panic unwind/future 被 drop 全路径都会
+        // remove cancel_flags/pause_notifies/sensitive_values（只删条目，不动 Arc 内部值）
+        let _run_state_guard = RunStateGuard {
+            executor: self,
+            workflow_id: workflow_id.to_string(),
+        };
 
         // ── dry-run：仅编译校验，不执行 ──
         if wf.dry_run {
@@ -437,19 +442,9 @@ impl Executor {
 
                 run_record.finished_at = Some(chrono::Utc::now());
                 run_record.status = RunStatus::Success;
-                // ── 完成时保存变量快照 ——
-                let snapshot: Option<std::collections::HashMap<String, serde_json::Value>> = {
-                    let mut m = std::collections::HashMap::new();
-                    for (k, v) in &variables {
-                        m.insert(k.clone(), v.clone());
-                    }
-                    if m.is_empty() {
-                        None
-                    } else {
-                        Some(m)
-                    }
-                };
-                run_record.variables_snapshot = snapshot.unwrap_or_default();
+                // ── 完成时保存变量快照（B9：sensitive 声明项剔除后落盘，明文不进 workflow.json）──
+                run_record.variables_snapshot =
+                    super::variables::strip_sensitive_from_snapshot(&variables, &sensitive_inputs);
                 if let Some(mut wf) = store.get(workflow_id).await {
                     step_seq::sync_run_record(&mut wf, &run_record);
                     let _ = store.save(&wf).await;
@@ -460,19 +455,9 @@ impl Executor {
                 run_record.finished_at = Some(chrono::Utc::now());
                 run_record.status =
                     RunStatus::Error(self.redact_run_text(workflow_id, &e.to_string()).await);
-                // ── 失败时同样保存变量快照 ——
-                let snapshot: Option<std::collections::HashMap<String, serde_json::Value>> = {
-                    let mut m = std::collections::HashMap::new();
-                    for (k, v) in &variables {
-                        m.insert(k.clone(), v.clone());
-                    }
-                    if m.is_empty() {
-                        None
-                    } else {
-                        Some(m)
-                    }
-                };
-                run_record.variables_snapshot = snapshot.unwrap_or_default();
+                // ── 失败时同样保存变量快照（B9：sensitive 声明项剔除后落盘）──
+                run_record.variables_snapshot =
+                    super::variables::strip_sensitive_from_snapshot(&variables, &sensitive_inputs);
                 if let Some(mut wf) = store.get(workflow_id).await {
                     step_seq::sync_run_record(&mut wf, &run_record);
                     let _ = store.save(&wf).await;
@@ -485,7 +470,8 @@ impl Executor {
             Err(error) => Some(self.redact_run_text(workflow_id, &error.to_string()).await),
         };
 
-        // ── 清理取消标志与本轮脱敏材料 ──
+        // ── 清理 debug 会话的 ChatAgent 会话（B1：cancel_flags/pause_notifies/
+        // sensitive_values 由 RunStateGuard 接管，此处不再手工 remove）──
         if let Some(session) = &debug_session {
             let prefix = format!("debug:{}:", session.run_id);
             self.chat_sessions
@@ -493,9 +479,6 @@ impl Executor {
                 .await
                 .retain(|key, _| !key.starts_with(&prefix));
         }
-        self.cancel_flags.write().await.remove(workflow_id);
-        self.pause_notifies.write().await.remove(workflow_id);
-        self.sensitive_values.write().await.remove(workflow_id);
 
         let completed_on_error: Vec<String> = if result.is_err() {
             run_record

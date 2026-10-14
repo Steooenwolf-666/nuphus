@@ -658,8 +658,12 @@ impl WorkflowEngine {
             })
             .collect();
 
-        let json_path = export_dir.join(format!("{}.json", safe_name));
-        let md_path = export_dir.join(format!("{}.md", safe_name));
+        // B8：导出命名隔离——导出件带 .export 中缀，杜绝与同目录固定名冲突。
+        // 名为 "workflow" 的工作流此前导出为 workflow.json，会覆盖自身活定义；
+        // 同目录固定名（workflow.json / params.json / guide.md / canvas.layout.json）
+        // 均无 .export 中缀，该方案与其不可能冲突。
+        let json_path = export_dir.join(format!("{}.export.json", safe_name));
+        let md_path = export_dir.join(format!("{}.export.md", safe_name));
 
         tokio::fs::write(&json_path, &json_content).await?;
         tokio::fs::write(&md_path, &md_content).await?;
@@ -862,6 +866,63 @@ mod gate_tests {
         engine.restore_schedules().await;
         let restored = engine.scheduler.load_current();
         assert!(restored.schedules.is_empty());
+        let _ = tokio::fs::remove_dir_all(root).await;
+    }
+
+    /// B8 回归：名为 "workflow" 的工作流成功运行后自动导出，
+    /// 导出件必须带 .export 中缀，不得覆盖同目录的 workflow.json（活定义）。
+    #[tokio::test]
+    async fn export_never_overwrites_live_definition_for_workflow_named_workflow() {
+        let root = std::env::temp_dir().join(format!(
+            "nuphus_b8_export_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let mut engine = WorkflowEngine::new();
+        let store_root = root.join("plugin").join("workflows");
+        engine.store = WorkflowStore::with_root(store_root.clone());
+
+        let mut wf = Workflow::new("workflow");
+        wf.steps = vec![crate::workflow::types::Step {
+            id: "only".into(),
+            name: "echo".into(),
+            action: crate::workflow::types::Action::Tool {
+                tool: "mock_echo".into(),
+                with: serde_json::json!({}),
+            },
+            ..Default::default()
+        }];
+        let wf_id = wf.id.clone();
+        engine.store.save(&wf).await.unwrap();
+
+        // 预置活定义落盘内容（含独特标记），运行后必须原样保留
+        let live_path = store_root.join(&wf_id).join("workflow.json");
+        let original = std::fs::read_to_string(&live_path).unwrap();
+        assert!(original.contains(&wf_id), "预置定义应存在");
+
+        // 直接调用导出（execute_workflow 成功路径的自动导出即调用此函数）
+        let (json_path, md_path) = engine.export_workflow(&wf_id).await.unwrap();
+
+        // 活定义未被覆盖：内容与导出前一致
+        let after = std::fs::read_to_string(&live_path).unwrap();
+        assert_eq!(
+            after, original,
+            "名为 workflow 的工作流导出不得覆盖自身 workflow.json"
+        );
+
+        // 导出件落到隔离命名
+        assert!(
+            json_path.ends_with("workflow.export.json"),
+            "导出 JSON 应带 .export 中缀: {json_path}"
+        );
+        assert!(
+            md_path.ends_with("workflow.export.md"),
+            "导出 MD 应带 .export 中缀: {md_path}"
+        );
+        assert!(
+            std::path::Path::new(&json_path).exists(),
+            "导出 JSON 应真实写出"
+        );
+
         let _ = tokio::fs::remove_dir_all(root).await;
     }
 }
