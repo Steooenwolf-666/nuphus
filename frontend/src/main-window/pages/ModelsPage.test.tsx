@@ -30,6 +30,7 @@ vi.mock('../lib/api', () => ({
   switchModel: vi.fn(),
   getSupportedProviders: vi.fn(),
   getCapabilities: vi.fn(),
+  getVisionResolution: vi.fn(),
   setCapability: vi.fn(),
   listModels: vi.fn(),
   listProviderModels: vi.fn(),
@@ -88,6 +89,7 @@ import {
   getCurrentConfig,
   getProviderBaseUrl,
   getProviderContext,
+  getVisionResolution,
   listModels,
   refreshProviderModels,
   setModelSupportsVision,
@@ -154,6 +156,15 @@ beforeEach(() => {
     tts: '',
     voice: '',
     chat_agent_max_iterations: null,
+  } as never)
+  // 图像理解生效路径（后端权威）：组件挂载即拉取，必须给 resolved 值。
+  // mock 里缺这个导出时，报错发生在**属性访问**阶段（不是 Promise 拒绝），
+  // 组件内 .catch(() => {}) 拦不住 → 整个 ModelsPage 渲染崩，该文件全挂。
+  vi.mocked(getVisionResolution).mockResolvedValue({
+    strategy: 'none',
+    model: '',
+    provider: '',
+    leader_model: '',
   } as never)
   vi.mocked(getAgentModels).mockResolvedValue({
     leader: '',
