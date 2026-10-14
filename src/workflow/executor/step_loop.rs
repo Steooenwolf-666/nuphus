@@ -1,5 +1,6 @@
 //! 循环执行子步骤
 use super::*;
+use super::control_flow;
 
 impl Executor {
     /// 循环执行子步骤
@@ -93,33 +94,45 @@ impl Executor {
                 scope.insert(fe.item_var.clone(), item.clone());
                 scope.insert("_index".to_string(), serde_json::Value::from(i as i64));
 
+                // B2：break/continue 从任意嵌套深度（Seq/If/Wait 容器内）以控制流
+                // 信号抵达本层；此处消费本层信号，非本层错误照常传播。
+                let mut broke = false;
                 for sub in &def.steps {
-                    self.execute_step(
-                        sub,
-                        depth + 1,
-                        store,
-                        events,
-                        tool_exec,
-                        &mut scope,
-                        workflow_id,
-                        llm,
-                        emitter,
-                        tool_schemas,
-                        completed_ids,
-                        run_record,
-                    )
-                    .await?;
-
-                    if sub.kind_str() == "break" {
-                        return Ok("loop_broken".to_string());
-                    }
-
-                    if sub.kind_str() == "continue" {
-                        break;
+                    match self
+                        .execute_step(
+                            sub,
+                            depth + 1,
+                            store,
+                            events,
+                            tool_exec,
+                            &mut scope,
+                            workflow_id,
+                            llm,
+                            emitter,
+                            tool_schemas,
+                            completed_ids,
+                            run_record,
+                        )
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(error) => match control_flow::is_control_flow_error(&error) {
+                            Some(control_flow::ControlFlow::Break) => {
+                                broke = true;
+                                break;
+                            }
+                            Some(control_flow::ControlFlow::Continue) => break,
+                            None => return Err(error),
+                        },
                     }
                 }
+                // B3：无论退出方式（正常/continue/break），末次迭代的变量提升
+                // 都必须执行——此前 break 路径直接 return，末次迭代变量丢失。
                 for (k, v) in &scope {
                     variables.insert(k.clone(), v.clone());
+                }
+                if broke {
+                    return Ok("loop_broken".to_string());
                 }
             }
             return Ok("loop_completed".to_string());
@@ -144,33 +157,43 @@ impl Executor {
                 let mut scope = variables.clone();
                 scope.insert("_index".to_string(), serde_json::Value::from(i as i64));
 
+                // B2：控制流信号消费（语义同 for_each 分支）
+                let mut broke = false;
                 for sub in &def.steps {
-                    self.execute_step(
-                        sub,
-                        depth + 1,
-                        store,
-                        events,
-                        tool_exec,
-                        &mut scope,
-                        workflow_id,
-                        llm,
-                        emitter,
-                        tool_schemas,
-                        completed_ids,
-                        run_record,
-                    )
-                    .await?;
-
-                    if sub.kind_str() == "break" {
-                        return Ok("loop_broken".to_string());
-                    }
-
-                    if sub.kind_str() == "continue" {
-                        break;
+                    match self
+                        .execute_step(
+                            sub,
+                            depth + 1,
+                            store,
+                            events,
+                            tool_exec,
+                            &mut scope,
+                            workflow_id,
+                            llm,
+                            emitter,
+                            tool_schemas,
+                            completed_ids,
+                            run_record,
+                        )
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(error) => match control_flow::is_control_flow_error(&error) {
+                            Some(control_flow::ControlFlow::Break) => {
+                                broke = true;
+                                break;
+                            }
+                            Some(control_flow::ControlFlow::Continue) => break,
+                            None => return Err(error),
+                        },
                     }
                 }
+                // B3：break/continue 路径同样提升本轮变量后再退出
                 for (k, v) in &scope {
                     variables.insert(k.clone(), v.clone());
+                }
+                if broke {
+                    return Ok("loop_broken".to_string());
                 }
             }
             return Ok("loop_completed".to_string());
@@ -194,33 +217,44 @@ impl Executor {
                 .await?;
 
                 let mut scope = variables.clone();
+
+                // B2：控制流信号消费（语义同 for_each 分支）
+                let mut broke = false;
                 for sub in &def.steps {
-                    self.execute_step(
-                        sub,
-                        depth + 1,
-                        store,
-                        events,
-                        tool_exec,
-                        &mut scope,
-                        workflow_id,
-                        llm,
-                        emitter,
-                        tool_schemas,
-                        completed_ids,
-                        run_record,
-                    )
-                    .await?;
-
-                    if sub.kind_str() == "break" {
-                        return Ok("loop_broken".to_string());
-                    }
-
-                    if sub.kind_str() == "continue" {
-                        break;
+                    match self
+                        .execute_step(
+                            sub,
+                            depth + 1,
+                            store,
+                            events,
+                            tool_exec,
+                            &mut scope,
+                            workflow_id,
+                            llm,
+                            emitter,
+                            tool_schemas,
+                            completed_ids,
+                            run_record,
+                        )
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(error) => match control_flow::is_control_flow_error(&error) {
+                            Some(control_flow::ControlFlow::Break) => {
+                                broke = true;
+                                break;
+                            }
+                            Some(control_flow::ControlFlow::Continue) => break,
+                            None => return Err(error),
+                        },
                     }
                 }
+                // B3：break/continue 路径同样提升本轮变量后再退出
                 for (k, v) in &scope {
                     variables.insert(k.clone(), v.clone());
+                }
+                if broke {
+                    return Ok("loop_broken".to_string());
                 }
 
                 // 检查终止条件
@@ -250,33 +284,42 @@ impl Executor {
 
         // No loop mode specified → single pass
         let mut scope = variables.clone();
+        // B2：单轮执行同样消费控制流信号（break → 提升后退出；continue → 跳过剩余）
+        let mut broke = false;
         for sub in &def.steps {
-            self.execute_step(
-                sub,
-                depth + 1,
-                store,
-                events,
-                tool_exec,
-                &mut scope,
-                workflow_id,
-                llm,
-                emitter,
-                tool_schemas,
-                completed_ids,
-                run_record,
-            )
-            .await?;
-
-            if sub.kind_str() == "break" {
-                return Ok("loop_broken".to_string());
-            }
-
-            if sub.kind_str() == "continue" {
-                break;
+            match self
+                .execute_step(
+                    sub,
+                    depth + 1,
+                    store,
+                    events,
+                    tool_exec,
+                    &mut scope,
+                    workflow_id,
+                    llm,
+                    emitter,
+                    tool_schemas,
+                    completed_ids,
+                    run_record,
+                )
+                .await
+            {
+                Ok(_) => {}
+                Err(error) => match control_flow::is_control_flow_error(&error) {
+                    Some(control_flow::ControlFlow::Break) => {
+                        broke = true;
+                        break;
+                    }
+                    Some(control_flow::ControlFlow::Continue) => break,
+                    None => return Err(error),
+                },
             }
         }
         for (k, v) in &scope {
             variables.insert(k.clone(), v.clone());
+        }
+        if broke {
+            return Ok("loop_broken".to_string());
         }
         Ok("loop_completed".to_string())
     }

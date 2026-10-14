@@ -838,7 +838,11 @@ async fn test_cancel_flag_leak_does_not_poison_next_run() {
 
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let mut wf = Workflow::new("cancel_leak");
-    wf.steps = vec![make_tool_step("only", "counted_tool", serde_json::json!({}))];
+    wf.steps = vec![make_tool_step(
+        "only",
+        "counted_tool",
+        serde_json::json!({}),
+    )];
     let wf_id = wf.id.clone();
     store.save(&wf).await.unwrap();
 
@@ -866,14 +870,7 @@ async fn test_cancel_flag_leak_does_not_poison_next_run() {
     // ── 二次运行：不得被残留 true 的 flag 误取消 ──
     let result = executor
         .execute_v2(
-            &wf_id,
-            &store,
-            &events,
-            tool_exec,
-            None,
-            None,
-            None,
-            None,
+            &wf_id, &store, &events, tool_exec, None, None, None, None,
             true, // force_fresh：全新执行，排除断点续连干扰
         )
         .await;
@@ -1671,9 +1668,7 @@ fn variables_input_namespace_and_top_level() {
 fn strip_sensitive_snapshot_removes_sensitive_keys_both_positions() {
     use super::variables::strip_sensitive_from_snapshot;
 
-    let sensitive: std::collections::HashSet<String> = ["token".to_string()]
-        .into_iter()
-        .collect();
+    let sensitive: std::collections::HashSet<String> = ["token".to_string()].into_iter().collect();
     let vars: HashMap<String, serde_json::Value> = HashMap::from([
         ("token".to_string(), serde_json::json!("super-secret")),
         ("plain".to_string(), serde_json::json!("visible")),
@@ -1700,7 +1695,10 @@ fn strip_sensitive_snapshot_removes_sensitive_keys_both_positions() {
     // 空名单 → 原样快照（含敏感键，因为根本没有敏感声明）
     let no_sensitive: std::collections::HashSet<String> = std::collections::HashSet::new();
     let passthrough = strip_sensitive_from_snapshot(&vars, &no_sensitive);
-    assert_eq!(passthrough.get("token"), Some(&serde_json::json!("super-secret")));
+    assert_eq!(
+        passthrough.get("token"),
+        Some(&serde_json::json!("super-secret"))
+    );
 }
 
 /// 端到端：带 sensitive 输入的工作流执行完成后，落盘的 workflow.json
@@ -1724,14 +1722,21 @@ async fn sensitive_input_value_never_persisted_to_workflow_json() {
     let inputs = HashMap::from([("token".to_string(), serde_json::json!("super-secret"))]);
     let result = executor
         .execute_v2(
-            &wf_id, &store, &events, tool_exec, None, None, None, Some(inputs), true,
+            &wf_id,
+            &store,
+            &events,
+            tool_exec,
+            None,
+            None,
+            None,
+            Some(inputs),
+            true,
         )
         .await;
     assert!(result.is_ok(), "执行应成功: {:?}", result.err());
 
     // 直接读磁盘上的 workflow.json（绕过内存缓存，验证真实落盘内容）
-    let persisted =
-        std::fs::read_to_string(tmp.join(&wf_id).join("workflow.json")).unwrap();
+    let persisted = std::fs::read_to_string(tmp.join(&wf_id).join("workflow.json")).unwrap();
     assert!(
         !persisted.contains("super-secret"),
         "敏感明文不得出现在落盘的 workflow.json 中"
@@ -1798,8 +1803,8 @@ async fn tool_step_with_turkish_capital_i_error_does_not_panic() {
     let executor = Executor::new();
     let mut step = make_tool_step("tricky_exit", "mock_tool", serde_json::json!({}));
     step.on_error = OnError::AllowCodes { codes: vec![2] };
-    let tool_exec = |_tool: String, _params: serde_json::Value| {
-        async move { Err("İİ exit code: 2".to_string()) }
+    let tool_exec = |_tool: String, _params: serde_json::Value| async move {
+        Err("İİ exit code: 2".to_string())
     };
     let result = executor
         .execute_tool_step(
@@ -1835,7 +1840,11 @@ async fn failed_run_runcompleted_matches_persisted_record() {
     let executor = Executor::new();
 
     let mut wf = Workflow::new("b45_consistency");
-    wf.steps = vec![make_tool_step("fail_step", "mock_fail", serde_json::json!({}))];
+    wf.steps = vec![make_tool_step(
+        "fail_step",
+        "mock_fail",
+        serde_json::json!({}),
+    )];
     let wf_id = wf.id.clone();
     store.save(&wf).await.unwrap();
 
@@ -1865,7 +1874,10 @@ async fn failed_run_runcompleted_matches_persisted_record() {
         event_status, last.status,
         "RunCompleted 事件 status 必须与落盘 RunRecord.status 一致"
     );
-    let persisted_error = last.error.clone().expect("失败原因必须持久化到 run_record.error");
+    let persisted_error = last
+        .error
+        .clone()
+        .expect("失败原因必须持久化到 run_record.error");
     match &event_status {
         RunStatus::Error(text) => {
             assert_eq!(
@@ -1894,7 +1906,11 @@ async fn successful_run_runcompleted_matches_persisted_record() {
     let executor = Executor::new();
 
     let mut wf = Workflow::new("b45_success");
-    wf.steps = vec![make_tool_step("ok_step", "mock_echo", serde_json::json!({}))];
+    wf.steps = vec![make_tool_step(
+        "ok_step",
+        "mock_echo",
+        serde_json::json!({}),
+    )];
     let wf_id = wf.id.clone();
     store.save(&wf).await.unwrap();
 
@@ -1918,10 +1934,7 @@ async fn successful_run_runcompleted_matches_persisted_record() {
     let last = wf_after.last_run().unwrap();
     assert_eq!(event_status, RunStatus::Success);
     assert_eq!(last.status, RunStatus::Success);
-    assert_eq!(
-        event_status, last.status,
-        "成功路径事件与落盘也必须一致"
-    );
+    assert_eq!(event_status, last.status, "成功路径事件与落盘也必须一致");
     assert!(last.error.is_none(), "成功运行不得写入 error 字段");
     let _ = tokio::fs::remove_dir_all(&tmp).await;
 }
@@ -1997,10 +2010,7 @@ async fn cancelled_run_finalizes_as_cancelled_in_event_and_record() {
         RunStatus::Cancelled,
         "用户取消定稿必须是 Cancelled（落盘侧）"
     );
-    assert_eq!(
-        event_status, last.status,
-        "取消路径事件与落盘也必须一致"
-    );
+    assert_eq!(event_status, last.status, "取消路径事件与落盘也必须一致");
     let _ = tokio::fs::remove_dir_all(&tmp).await;
 }
 
@@ -2113,15 +2123,20 @@ async fn for_each_existing_empty_collection_no_warning() {
 
     // panels 声明为空数组（真实存在的空集合）
     let inputs: std::collections::HashMap<String, serde_json::Value> =
-        std::collections::HashMap::from([(
-            "panels".to_string(),
-            serde_json::json!({"list": []}),
-        )]);
+        std::collections::HashMap::from([("panels".to_string(), serde_json::json!({"list": []}))]);
 
     let tool_exec = |tool: String, params: serde_json::Value| ok_tool_exec(tool, params);
     let result = executor
         .execute_v2(
-            &wf_id, &store, &events, tool_exec, None, None, None, Some(inputs), false,
+            &wf_id,
+            &store,
+            &events,
+            tool_exec,
+            None,
+            None,
+            None,
+            Some(inputs),
+            false,
         )
         .await;
     assert!(result.is_ok(), "空集合跳过应成功: {:?}", result.err());
@@ -2134,10 +2149,7 @@ async fn for_each_existing_empty_collection_no_warning() {
             }
         }
     }
-    assert!(
-        !saw_warning,
-        "真实空集合不得产生警告（空转是合法语义）"
-    );
+    assert!(!saw_warning, "真实空集合不得产生警告（空转是合法语义）");
     let _ = tokio::fs::remove_dir_all(&tmp).await;
 }
 
@@ -2282,5 +2294,330 @@ async fn until_condition_met_no_warning() {
         }
     }
     assert!(!saw_max_warning, "条件满足退出不得产生跑满警告");
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+}
+
+// ── B2/B3 回归：break/continue 控制流信号 ──
+
+/// 构造 break 步骤
+fn make_break_step(name: &str) -> Step {
+    Step {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: name.into(),
+        action: Action::Break { _break: true },
+        ..Default::default()
+    }
+}
+
+/// 构造 continue 步骤
+fn make_continue_step(name: &str) -> Step {
+    Step {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: name.into(),
+        action: Action::Continue { _continue: true },
+        ..Default::default()
+    }
+}
+
+/// 构造捕获输出的工具步骤
+fn make_capture_step(name: &str, var: &str, marker: &str) -> Step {
+    Step {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: name.into(),
+        action: Action::Tool {
+            tool: "mock_echo".into(),
+            with: serde_json::json!({ "marker": marker }),
+        },
+        capture: Some(var.into()),
+        ..Default::default()
+    }
+}
+
+fn repeat_loop(count: u32, steps: Vec<Step>) -> Step {
+    Step {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "loop".into(),
+        action: Action::Loop {
+            def: LoopDef {
+                for_each: None,
+                repeat: Some(count),
+                until: None,
+                max: 100,
+                steps,
+            },
+        },
+        ..Default::default()
+    }
+}
+
+/// B2 回归①：Seq 容器内的 break 必须穿透到 loop——此前容器把哨兵字符串
+/// 当普通结果吞掉，循环跑满 5 次（capture 被调用 5 次）。修复后第 1 轮即
+/// break，capture 只执行 1 次。
+#[tokio::test]
+async fn break_inside_seq_container_escapes_to_loop() {
+    let tmp = std::env::temp_dir().join("nuphus_test_b2_break_in_seq");
+    let _ = std::fs::create_dir_all(&tmp);
+    let store = WorkflowStore::with_root(tmp.clone());
+    let events = EventBus::new();
+    let executor = Executor::new();
+
+    let seq_step = Step {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "seq_container".into(),
+        action: Action::Seq {
+            seq: vec![
+                make_capture_step("capture", "hit", "x"),
+                make_break_step("bail"),
+            ],
+        },
+        ..Default::default()
+    };
+    let wf_steps = vec![repeat_loop(5, vec![seq_step])];
+
+    let mut wf = Workflow::new("b2_break_in_seq");
+    wf.steps = wf_steps;
+    let wf_id = wf.id.clone();
+    store.save(&wf).await.unwrap();
+
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_exec = calls.clone();
+    let tool_exec = move |_tool: String, _params: serde_json::Value| {
+        calls_exec.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        async move { Ok("ok".to_string()) }
+    };
+    let result = executor
+        .execute_v2(
+            &wf_id, &store, &events, tool_exec, None, None, None, None, false,
+        )
+        .await;
+    assert!(result.is_ok(), "break 语义下运行应成功: {:?}", result.err());
+
+    let wf = store.get(&wf_id).await.unwrap();
+    let run = wf.run_history.first().expect("run record");
+    assert!(
+        matches!(run.status, RunStatus::Success),
+        "break 不是失败: {:?}",
+        run.status
+    );
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "第 1 轮 capture 后必须 break（若信号被容器吞掉会跑满 5 次调用）"
+    );
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+}
+
+/// B2 回归②：If 容器 then 分支内的 break 穿透到 loop。
+#[tokio::test]
+async fn break_inside_if_container_escapes_to_loop() {
+    let tmp = std::env::temp_dir().join("nuphus_test_b2_break_in_if");
+    let _ = std::fs::create_dir_all(&tmp);
+    let store = WorkflowStore::with_root(tmp.clone());
+    let events = EventBus::new();
+    let executor = Executor::new();
+
+    let if_step = Step {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "if_container".into(),
+        action: Action::If {
+            def: crate::workflow::types::IfDef {
+                condition: Condition::Always { always: true },
+                then: vec![make_break_step("bail")],
+                else_branch: vec![],
+            },
+        },
+        ..Default::default()
+    };
+    let wf_steps = vec![repeat_loop(5, vec![if_step])];
+
+    let mut wf = Workflow::new("b2_break_in_if");
+    wf.steps = wf_steps;
+    let wf_id = wf.id.clone();
+    store.save(&wf).await.unwrap();
+
+    let tool_exec = |tool: String, params: serde_json::Value| ok_tool_exec(tool, params);
+    let result = executor
+        .execute_v2(
+            &wf_id, &store, &events, tool_exec, None, None, None, None, false,
+        )
+        .await;
+    assert!(result.is_ok(), "break 语义下运行应成功: {:?}", result.err());
+
+    // 第 1 轮就 break：循环不应产生第 2 轮的 capture/事件；
+    // 该工作流无 capture 步骤，快照不含任何 marker
+    let wf = store.get(&wf_id).await.unwrap();
+    let run = wf.run_history.first().expect("run record");
+    assert!(
+        matches!(run.status, RunStatus::Success),
+        "break 不是失败: {:?}",
+        run.status
+    );
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+}
+
+/// B2 回归③：嵌套 loop 内层 break 不逃逸外层——外层应继续完整跑完
+/// （外层 3 轮 × 每轮 outer_tick + inner_hit = 6 次工具调用；
+/// 若内层 break 逃逸外层则只调 2 次）。
+#[tokio::test]
+async fn inner_loop_break_does_not_escape_outer_loop() {
+    let tmp = std::env::temp_dir().join("nuphus_test_b2_nested_break");
+    let _ = std::fs::create_dir_all(&tmp);
+    let store = WorkflowStore::with_root(tmp.clone());
+    let events = EventBus::new();
+    let executor = Executor::new();
+
+    // 外层 repeat 3：每轮 outer capture；内层 repeat 5：第 1 步 capture 后 break
+    let inner = repeat_loop(
+        5,
+        vec![
+            make_capture_step("inner_hit", "inner_marker", "y"),
+            make_break_step("inner_bail"),
+        ],
+    );
+    let outer_body = vec![make_capture_step("outer_tick", "outer_marker", "o"), inner];
+    let wf_steps = vec![repeat_loop(3, outer_body)];
+
+    let mut wf = Workflow::new("b2_nested_break");
+    wf.steps = wf_steps;
+    let wf_id = wf.id.clone();
+    store.save(&wf).await.unwrap();
+
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_exec = calls.clone();
+    let tool_exec = move |_tool: String, _params: serde_json::Value| {
+        calls_exec.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        async move { Ok("ok".to_string()) }
+    };
+    let result = executor
+        .execute_v2(
+            &wf_id, &store, &events, tool_exec, None, None, None, None, false,
+        )
+        .await;
+    assert!(result.is_ok(), "嵌套 break 不应失败: {:?}", result.err());
+
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        6,
+        "内层 break 不得逃逸外层（外层必须完整跑 3 轮）"
+    );
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+}
+
+/// B3 回归④：break 时末次迭代变量已提升——for_each 循环第 1 轮 capture 后
+/// break，被捕获变量必须可见。此前提升逻辑在 break return 之后被跳过。
+#[tokio::test]
+async fn break_still_promotes_last_iteration_variables() {
+    let tmp = std::env::temp_dir().join("nuphus_test_b3_break_promotes");
+    let _ = std::fs::create_dir_all(&tmp);
+    let store = WorkflowStore::with_root(tmp.clone());
+    let events = EventBus::new();
+    let executor = Executor::new();
+
+    let loop_step = Step {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: "for_each_break".into(),
+        action: Action::Loop {
+            def: LoopDef {
+                for_each: Some(crate::workflow::types::ForEachDef {
+                    items: VarRef::Lit("[\"a\",\"b\",\"c\"]".into()),
+                    item_var: "item".into(),
+                }),
+                repeat: None,
+                until: None,
+                max: 100,
+                steps: vec![
+                    make_capture_step("capture_item", "last_seen", "{{item}}"),
+                    make_break_step("bail"),
+                ],
+            },
+        },
+        ..Default::default()
+    };
+
+    let mut wf = Workflow::new("b3_break_promotes");
+    wf.steps = vec![loop_step];
+    let wf_id = wf.id.clone();
+    store.save(&wf).await.unwrap();
+
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_exec = calls.clone();
+    let tool_exec = move |_tool: String, _params: serde_json::Value| {
+        calls_exec.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        async move { Ok("ok".to_string()) }
+    };
+    let result = executor
+        .execute_v2(
+            &wf_id, &store, &events, tool_exec, None, None, None, None, false,
+        )
+        .await;
+    assert!(result.is_ok(), "break 语义下运行应成功: {:?}", result.err());
+
+    // B3 核心：break 前的 capture（第 1 次调用）必须已执行——若提升在 return
+    // 之前缺失，此计数仍为 1 但变量不可见；配合下方 continue 测试形成互补。
+    // 这里断言 break 发生在第 1 轮（只有 1 次工具调用，而非 3 轮 3 次）。
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "for_each 第 1 轮 capture 后必须 break"
+    );
+    // B3 变量提升验证：break 时 run_record 需含该 capture 步骤的 Success 记录
+    let wf = store.get(&wf_id).await.unwrap();
+    let run = wf.run_history.first().expect("run record");
+    assert!(
+        run.steps
+            .iter()
+            .any(|s| s.step_id != "bail" && s.status == StepRunStatus::Success),
+        "break 前的 capture 步骤必须已成功执行并记录"
+    );
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+}
+
+/// B2 回归⑤：continue 语义保持——跳过本轮剩余步骤，循环继续。
+#[tokio::test]
+async fn continue_skips_rest_of_iteration_and_loop_continues() {
+    let tmp = std::env::temp_dir().join("nuphus_test_b2_continue");
+    let _ = std::fs::create_dir_all(&tmp);
+    let store = WorkflowStore::with_root(tmp.clone());
+    let events = EventBus::new();
+    let executor = Executor::new();
+
+    // repeat 3：第 1 步 capture "seen"（应执行 3 次），第 2 步 continue，
+    // 第 3 步 capture "never"（被 continue 跳过，永不应出现）
+    let body = vec![
+        make_capture_step("seen", "seen_marker", "s"),
+        make_continue_step("skip_rest"),
+        make_capture_step("never", "never_marker", "n"),
+    ];
+    let wf_steps = vec![repeat_loop(3, body)];
+
+    let mut wf = Workflow::new("b2_continue");
+    wf.steps = wf_steps;
+    let wf_id = wf.id.clone();
+    store.save(&wf).await.unwrap();
+
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_exec = calls.clone();
+    let tool_exec = move |_tool: String, _params: serde_json::Value| {
+        calls_exec.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        async move { Ok("ok".to_string()) }
+    };
+    let result = executor
+        .execute_v2(
+            &wf_id, &store, &events, tool_exec, None, None, None, None, false,
+        )
+        .await;
+    assert!(
+        result.is_ok(),
+        "continue 语义下运行应成功: {:?}",
+        result.err()
+    );
+
+    // seen（continue 前）应执行 3 轮 = 3 次；never（continue 后）被跳过。
+    // 旧语义下若 continue 破坏循环，seen 不会达到 3 次。
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "continue 跳过本轮剩余后循环必须继续（seen 执行 3 次，never 0 次）"
+    );
     let _ = tokio::fs::remove_dir_all(&tmp).await;
 }

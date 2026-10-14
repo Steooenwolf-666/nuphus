@@ -9,6 +9,8 @@
 //!
 //! 核心原则：执行是确定性的，不自动调用 LLM，除非步骤失败。
 
+pub mod control_flow;
+
 use crate::agent::events::{EventEmitter, NuphusEvent};
 use crate::api::ApiClient;
 use crate::api::ToolDefinition;

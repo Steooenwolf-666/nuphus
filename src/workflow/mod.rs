@@ -138,7 +138,10 @@ impl<'a> ActiveRunGuard<'a> {
         workflow_id: &str,
         source: &WorkflowRunSource,
     ) -> crate::Result<ActiveRunGuard<'a>> {
-        let mut slot = engine.active_run.lock().unwrap();
+        let mut slot = engine
+            .active_run
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(existing) = slot.as_ref() {
             if source.is_agent() {
                 return Err(crate::NuphusError::agent(format!(
@@ -152,7 +155,10 @@ impl<'a> ActiveRunGuard<'a> {
         }
         // Agent 自身发起：豁免 busy 检查（发起者即 busy 持有者）；Ui/Schedule/Plugin 双查
         if !source.is_agent() {
-            let busy_guard = engine.busy_provider.lock().unwrap();
+            let busy_guard = engine
+                .busy_provider
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(cb) = busy_guard.as_ref() {
                 if cb() {
                     return Err(crate::NuphusError::agent(
@@ -175,7 +181,7 @@ impl<'a> ActiveRunGuard<'a> {
 
 impl Drop for ActiveRunGuard<'_> {
     fn drop(&mut self) {
-        *self.engine.active_run.lock().unwrap() = None;
+        *self.engine.active_run.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     }
 }
 
@@ -197,7 +203,10 @@ impl WorkflowEngine {
 
     /// Set the schedule execution callback (called once at Tauri startup)
     pub fn set_schedule_exec_callback(&self, cb: ScheduleExecCallback) {
-        *self.schedule_exec.lock().unwrap() = Some(cb);
+        *self
+            .schedule_exec
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cb);
     }
 
     // ── 全局执行闸门（大王铁律：无并行机制、禁止并行、系统操作更禁止并行）──
@@ -205,12 +214,18 @@ impl WorkflowEngine {
     /// 注入 Agent 执行态读取器（Tauri shell setup 注入读 AppState.busy 的闭包；
     /// 无宿主（单元测试 / headless）时为 None，视为空闲）
     pub fn set_busy_provider(&self, cb: BusyProvider) {
-        *self.busy_provider.lock().unwrap() = Some(cb);
+        *self
+            .busy_provider
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(cb);
     }
 
     /// 当前 active workflow run（None = 空闲）
     pub fn active_run_info(&self) -> Option<ActiveRunInfo> {
-        self.active_run.lock().unwrap().clone()
+        self.active_run
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     /// Set the LLM client
@@ -439,7 +454,11 @@ impl WorkflowEngine {
             crate::NuphusError::agent(format!("Workflow not found: {workflow_id}"))
         })?;
         let wf_id = workflow_id.to_string();
-        let exec_cb = self.schedule_exec.lock().unwrap().clone();
+        let exec_cb = self
+            .schedule_exec
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         self.scheduler
             .set_schedule_with_anchor(
                 &wf_id.clone(),
@@ -496,41 +515,58 @@ impl WorkflowEngine {
             "[Scheduler] Restoring {} persisted schedule(s)",
             persisted.schedules.len()
         );
+        let mut retained: std::collections::HashMap<
+            String,
+            crate::workflow::scheduler::ScheduleBinding,
+        > = std::collections::HashMap::new();
         for (wf_id, binding) in &persisted.schedules {
             let wf_id = wf_id.clone();
-            let Some(workflow) = self.store.get(&wf_id).await else {
-                tracing::warn!("[Scheduler] Removing orphan schedule for '{}'", wf_id);
-                continue;
-            };
-            let inputs = match binding.decode_inputs(&workflow.inputs) {
-                Ok(inputs) => inputs,
-                Err(error) => {
-                    tracing::error!(
-                        "[Scheduler] Removing schedule for '{}' after input decode failed: {}",
+            if let Some(workflow) = self.store.get(&wf_id).await {
+                let inputs = match binding.decode_inputs(&workflow.inputs) {
+                    Ok(inputs) => inputs,
+                    Err(error) => {
+                        tracing::error!(
+                            "[Scheduler] Removing schedule for '{}' after input decode failed: {}",
+                            wf_id,
+                            error
+                        );
+                        continue;
+                    }
+                };
+                if let Err(e) = self
+                    .set_schedule_with_inputs_and_anchor(
+                        &wf_id,
+                        binding.config.clone(),
+                        inputs,
+                        binding.anchor_at,
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        "[Scheduler] Failed to restore schedule for '{}': {}",
                         wf_id,
-                        error
+                        e
                     );
-                    continue;
                 }
-            };
-            if let Err(e) = self
-                .set_schedule_with_inputs_and_anchor(
-                    &wf_id,
-                    binding.config.clone(),
-                    inputs,
-                    binding.anchor_at,
-                )
-                .await
-            {
-                tracing::warn!(
-                    "[Scheduler] Failed to restore schedule for '{}': {}",
-                    wf_id,
-                    e
-                );
+                continue;
             }
+            // get() 返回 None 有两种含义：工作流确实不存在，或 workflow.json
+            // 存在但损坏（反序列化失败被吞成 None，见 store.rs get 实现）。
+            // 只有前者才是真正的孤儿；后者调度数据仍然有效，删了就真丢了——
+            // 保留条目并让用户修复文件后重启即可恢复。
+            if self.store.validation_load_error(&wf_id).await.is_some() {
+                tracing::error!(
+                    "[Scheduler] Keeping schedule for '{}': workflow.json exists but is invalid; fix the file and restart to restore",
+                    wf_id
+                );
+                retained.insert(wf_id, binding.clone());
+                continue;
+            }
+            tracing::warn!("[Scheduler] Removing orphan schedule for '{}'", wf_id);
         }
         // set_schedule rewrites active bindings; this also removes orphan/invalid entries.
-        if let Err(error) = self.scheduler.persist_current().await {
+        // 损坏工作流的条目经 retained 合并保住，不会被本次落盘物理删除。
+        if let Err(error) = self.scheduler.persist_current_with_retained(&retained).await {
             tracing::error!(
                 "[Scheduler] Failed to persist restored schedules: {}",
                 error

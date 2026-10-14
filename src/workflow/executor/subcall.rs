@@ -1,5 +1,6 @@
 //! 子工作流调用
 use super::*;
+use super::control_flow;
 
 impl Executor {
     /// 执行子工作流调用（wf_call 工具）
@@ -110,6 +111,14 @@ impl Executor {
                 run_record,
             )
             .await;
+
+        // B2：控制流信号（子工作流内未消费的 break/continue）原样向上传播，
+        // 不得走 outputs 映射 / 事件包装——它们只对 Ok/普通 Err 有意义。
+        if let Err(error) = &result {
+            if control_flow::is_control_flow_error(error).is_some() {
+                return result;
+            }
+        }
 
         if let Some(outputs_value) = params.get("outputs") {
             let outputs = outputs_value.as_object().ok_or_else(|| {

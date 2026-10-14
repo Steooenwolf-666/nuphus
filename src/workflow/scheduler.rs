@@ -167,12 +167,62 @@ pub fn has_frontend_step(steps: &[Step]) -> bool {
         Action::Tool { tool, .. } => FRONTEND_PREFIXES
             .iter()
             .any(|prefix| tool.starts_with(prefix)),
+        // Chat 步骤的白名单含全部 desktop/browser 工具（见 executor::CHAT_AGENT_ALLOWED_TOOLS），
+        // 可操作用户桌面——调度运行时用户未必在场，一律视为需用户在场。
+        Action::Chat { .. } => true,
         Action::Seq { seq } => has_frontend_step(seq),
         Action::Loop { def } => has_frontend_step(&def.steps),
         Action::If { def } => has_frontend_step(&def.then) || has_frontend_step(&def.else_branch),
         Action::Wait { auto, .. } => has_frontend_step(auto),
         _ => false,
     })
+}
+
+/// Call 子工作流的 frontend 检测。
+///
+/// Call 的目标是异步存储里的另一棵步骤树，同步的 `has_frontend_step` 够不着；
+/// 本函数在 async 上下文递归解析（Tool/Chat/容器/Call 全覆盖，等价于
+/// `has_frontend_step` + Call 展开）。调用图必须无环——compiler 的
+/// validate_calls 已在调度入口前静态拒绝循环调用，深度上限兜底防御。
+pub async fn has_frontend_call(steps: &[Step], store: &WorkflowStore, depth: u32) -> bool {
+    const MAX_CALL_DEPTH: u32 = 10;
+    const FRONTEND_PREFIXES: [&str; 2] = ["desktop_", "browser_"];
+    if depth > MAX_CALL_DEPTH {
+        return false;
+    }
+    for step in steps {
+        let frontend = match &step.action {
+            Action::Tool { tool, .. } => {
+                FRONTEND_PREFIXES.iter().any(|prefix| tool.starts_with(prefix))
+            }
+            // 与 has_frontend_step 同语义：chat 白名单含桌面工具
+            Action::Chat { .. } => true,
+            Action::Seq { seq } => Box::pin(has_frontend_call(seq, store, depth + 1)).await,
+            Action::Loop { def } => {
+                Box::pin(has_frontend_call(&def.steps, store, depth + 1)).await
+            }
+            Action::If { def } => {
+                Box::pin(has_frontend_call(&def.then, store, depth + 1)).await
+                    || Box::pin(has_frontend_call(&def.else_branch, store, depth + 1)).await
+            }
+            Action::Wait { auto, .. } => {
+                Box::pin(has_frontend_call(auto, store, depth + 1)).await
+            }
+            Action::Call { call, .. } => match store.get(call).await {
+                Some(sub_wf) => {
+                    Box::pin(has_frontend_call(&sub_wf.steps, store, depth + 1)).await
+                }
+                // 目标缺失/损坏：不能据此拦调度（合法场景：目标稍后创建），
+                // 交由执行期 wf_call 的既有报错路径处理
+                None => false,
+            },
+            _ => false,
+        };
+        if frontend {
+            return true;
+        }
+    }
+    false
 }
 
 fn parse_five_field_cron(expression: &str) -> Result<Schedule> {
@@ -245,7 +295,10 @@ impl SchedulerEngine {
     }
 
     pub async fn record_schedule_run(&self, record: ScheduleRunRecord) -> Result<()> {
-        let _guard = self.history_guard.lock().unwrap();
+        let _guard = self
+            .history_guard
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut history = load_schedule_runs_from(&self.history_path);
         history.runs.retain(|item| item.run_id != record.run_id);
         history.runs.insert(0, record);
@@ -253,7 +306,10 @@ impl SchedulerEngine {
     }
 
     pub fn list_schedule_runs(&self) -> PersistedScheduleRuns {
-        let _guard = self.history_guard.lock().unwrap();
+        let _guard = self
+            .history_guard
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         load_schedule_runs_from(&self.history_path)
     }
 
@@ -264,7 +320,10 @@ impl SchedulerEngine {
         from: Option<DateTime<Utc>>,
         to: Option<DateTime<Utc>>,
     ) -> Result<usize> {
-        let _guard = self.history_guard.lock().unwrap();
+        let _guard = self
+            .history_guard
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut history = load_schedule_runs_from(&self.history_path);
         let old_len = history.runs.len();
         history.runs.retain(|item| {
@@ -326,7 +385,9 @@ impl SchedulerEngine {
         let workflow = store.get(workflow_id).await.ok_or_else(|| {
             crate::NuphusError::agent(format!("Workflow not found: {workflow_id}"))
         })?;
-        if has_frontend_step(&workflow.steps) {
+        if has_frontend_step(&workflow.steps)
+            || has_frontend_call(&workflow.steps, store, 0).await
+        {
             return Err(crate::NuphusError::agent(
                 "Foreground workflows (desktop/browser) cannot use cron scheduling; they require user presence. Run manually instead.".to_string(),
             ));
@@ -486,6 +547,27 @@ impl SchedulerEngine {
             .iter()
             .map(|(id, task)| (id.clone(), task.binding.clone()))
             .collect();
+        write_persisted(&self.persist_path, &PersistedSchedules { schedules })
+    }
+
+    /// 落盘当前活跃绑定，并把 `retained` 中未活跃的条目原样合并保留。
+    ///
+    /// restore_schedules 用于保住「工作流文件损坏但调度数据有效」的条目：
+    /// 它们无法注册进 tasks（工作流读不出来），但不应被本次落盘物理删除。
+    pub async fn persist_current_with_retained(
+        &self,
+        retained: &HashMap<String, ScheduleBinding>,
+    ) -> Result<()> {
+        let mut schedules: HashMap<String, ScheduleBinding> = self
+            .tasks
+            .read()
+            .await
+            .iter()
+            .map(|(id, task)| (id.clone(), task.binding.clone()))
+            .collect();
+        for (id, binding) in retained {
+            schedules.entry(id.clone()).or_insert_with(|| binding.clone());
+        }
         write_persisted(&self.persist_path, &PersistedSchedules { schedules })
     }
 

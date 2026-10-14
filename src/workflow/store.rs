@@ -723,10 +723,16 @@ impl WorkflowStore {
         }
         drop(has_backup);
 
-        // 原子写入（先写临时文件再 rename）
-        let tmp_path = wf_dir.join("workflow.json.tmp");
+        // 原子写入（先写临时文件再 rename）。
+        // B10：tmp 文件名带唯一后缀——两个并发 save（节流保存 vs 暂停快照）共用
+        // 固定名会交错写同名 tmp，后写者 rename 时可能搬走前写者的半成品。
+        let tmp_path = wf_dir.join(format!("workflow.json.tmp.{}", uuid::Uuid::new_v4()));
         tokio::fs::write(&tmp_path, &json).await?;
-        tokio::fs::rename(&tmp_path, &final_path).await?;
+        if let Err(error) = tokio::fs::rename(&tmp_path, &final_path).await {
+            // rename 失败清理孤儿 tmp，避免垃圾文件累积
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err(error.into());
+        }
 
         // ── 清理旧备份：保留最近 3 个 ──
         self.prune_backups(&wf_dir, 3).await;
@@ -840,10 +846,16 @@ impl WorkflowStore {
             .collect();
 
         let json = serde_json::to_string_pretty(&summaries)?;
-        let tmp_path = self.root.join("index.json.tmp");
+        // B10：唯一 tmp 名，防并发 flush_index 交错写同名 tmp（同 save() 处理）
+        let tmp_path = self
+            .root
+            .join(format!("index.json.tmp.{}", uuid::Uuid::new_v4()));
         let final_path = self.root.join("index.json");
         tokio::fs::write(&tmp_path, &json).await?;
-        tokio::fs::rename(&tmp_path, &final_path).await?;
+        if let Err(error) = tokio::fs::rename(&tmp_path, &final_path).await {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return Err(error.into());
+        }
 
         *self.summary_cache.write().await = summaries;
 

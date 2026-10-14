@@ -773,8 +773,10 @@ fn main() {
                             ).await;
                             return;
                         }
-                        // For scheduled execution, tool schemas are not available (no Tauri state access)
-                        // Pass empty vec — ChatAgent steps will work but without tool definitions
+                        // 定时执行无外部 tool_schemas，传 None 让 execute_workflow 的
+                        // registry 兜底生效（engine.tools 已在 setup 中 set_tools 注入，
+                        // 时序上先于任何 cron 触发）。chat 步骤的白名单过滤在
+                        // step_chat_agent 内完成，与 UI/Agent 源共用同一安全边界。
                         let previous_run_id = workflow.run_history.first().map(|run| run.run_id.clone());
                         let started_at = chrono::Utc::now();
                         let schedule_run_id = uuid::Uuid::new_v4().to_string();
@@ -800,7 +802,7 @@ fn main() {
                                 .execute_workflow(
                                     &workflow_id_for_exec,
                                     tool_exec,
-                                    Some(vec![]),
+                                    None,
                                     None,
                                     (!inputs.is_empty()).then_some(inputs),
                                     false,
