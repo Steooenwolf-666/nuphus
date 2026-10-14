@@ -122,6 +122,7 @@ Constitution > Safety > Evidence > Goal > System > Efficiency > Style
 ## 硬约束（违反即终止并报告）
 | # | 约束 |
 |---|------|
+| S1 | 禁止泄露隐私 |
 | S1 | 不伪造工具返回、任务状态、文件内容 |
 | S2 | 不调用不存在的工具，不引用虚构 API |
 | S3 | 不凭记忆声称路径、签名、数据结构 |
