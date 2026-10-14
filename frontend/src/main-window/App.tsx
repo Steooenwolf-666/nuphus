@@ -370,7 +370,7 @@ export default function App() {
       // 卸载竞态：listen 的 promise 还没回来就清理时，unlisten 仍是 undefined，
       // 只写 unlisten?.() 会空转 → 监听器在 JS/Rust 两侧都留着（dev 双挂载、
       // HMR 必现），此后每个 nuphus-event 帧被**重复处理 N 次**。
-      // 与 useEvents.ts / LiveExecutionActivity.tsx 的写法对齐。
+      // 与 useEvents.ts 的事件订阅写法对齐。
       if (disposed) u()
       else unlisten = u
     })

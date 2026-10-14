@@ -104,7 +104,6 @@ import { SecurityPrompt } from '../layout/SecurityPrompt'
 import { Button, IconButton } from '../../ui/Button'
 import MarkdownContent from './MarkdownContent'
 import { PreviewOverlay } from './PreviewOverlay'
-import { LiveExecutionActivity } from './LiveExecutionActivity'
 import { AppearancePanel } from '../layout/AppearancePanel'
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M'
@@ -2082,9 +2081,6 @@ export function ChatPanel({
                         </React.Fragment>
                       )
                     })}
-                    <LiveExecutionActivity
-                      active={isProcessing && mode === 'workflow' && !refining}
-                    />
                   </>
                 )
               })()}
