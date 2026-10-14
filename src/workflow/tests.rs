@@ -476,6 +476,69 @@ mod compiler_tests {
         assert!(report.passed);
     }
 
+    // ── B15：repeat 编译期上限钳制 ──
+
+    /// B15 回归：repeat 超过上限（此前 u32 全域可过 schema 与反序列化，无 tick
+    /// 预算即静默空转）必须在编译期拒绝，错误信息含上限值与实际值。
+    #[test]
+    fn validate_loop_repeat_over_limit_fails() {
+        let mut wf = Workflow::new("repeat 超限");
+        wf.steps = vec![Step {
+            id: "loop1".into(),
+            name: "巨额循环".into(),
+            action: Action::Loop {
+                def: LoopDef {
+                    repeat: Some(4_000_000_000), // 40 亿：报告论断的原始场景
+                    for_each: None,
+                    until: None,
+                    max: 100,
+                    steps: vec![make_tool("l1", "体", "Read", serde_json::json!({}))],
+                },
+            },
+            ..Default::default()
+        }];
+        let report = Compiler::validate_workflow(&wf);
+        assert!(
+            !report.passed,
+            "repeat 超限必须编译期拒绝: {:?}",
+            report.errors
+        );
+        assert!(
+            report
+                .errors
+                .iter()
+                .any(|e| e.contains("repeat") && e.contains("上限")),
+            "错误信息应说明 repeat 超限: {:?}",
+            report.errors
+        );
+    }
+
+    /// B15 回归：上限内的合法 repeat 不受影响（钳制不得误伤正常批量场景）。
+    #[test]
+    fn validate_loop_repeat_within_limit_passes() {
+        let mut wf = Workflow::new("repeat 合法");
+        wf.steps = vec![Step {
+            id: "loop1".into(),
+            name: "批量循环".into(),
+            action: Action::Loop {
+                def: LoopDef {
+                    repeat: Some(100_000), // 恰好等于上限：合法
+                    for_each: None,
+                    until: None,
+                    max: 100,
+                    steps: vec![make_tool("l1", "体", "Read", serde_json::json!({}))],
+                },
+            },
+            ..Default::default()
+        }];
+        let report = Compiler::validate_workflow(&wf);
+        assert!(
+            report.passed,
+            "上限内的 repeat 必须放行: {:?}",
+            report.errors
+        );
+    }
+
     #[test]
     fn validate_loop_empty_body_warns() {
         let mut wf = Workflow::new("空 Loop");

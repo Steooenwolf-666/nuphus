@@ -25,7 +25,36 @@ impl Executor {
     {
         // ── ForEach ──
         if let Some(ref fe) = def.for_each {
-            let items_val = resolve_var_ref(&fe.items, variables);
+            // B13：区分「空集合跳过（合法语义）」与「引用了不存在的变量（设计错误）」。
+            // VarRef::Var 解析失败（resolve_var_by_path → None）说明变量名打错或
+            // 未被先前步骤捕获——此时静默空转会掩盖笔误，发可观测警告；
+            // 显式 Null / 空数组 / 空字符串等真实值仍按合法空集合处理。
+            let (items_val, resolve_missed) = match &fe.items {
+                crate::workflow::types::VarRef::Var { var } => {
+                    match super::variables::resolve_var_by_path(var, variables) {
+                        Some(v) => (v.clone(), false),
+                        None => (serde_json::Value::Null, true),
+                    }
+                }
+                crate::workflow::types::VarRef::Lit(s) => {
+                    (serde_json::Value::String(s.clone()), false)
+                }
+            };
+            if resolve_missed {
+                let var_name = match &fe.items {
+                    crate::workflow::types::VarRef::Var { var } => var.clone(),
+                    crate::workflow::types::VarRef::Lit(s) => s.clone(),
+                };
+                let message = format!(
+                    "Loop '{}' (for_each): 集合变量 '{{{{{}}}}}' 未解析到任何值（变量名打错或未被先前步骤捕获），循环跳过",
+                    step.name, var_name
+                );
+                tracing::warn!("[executor] {message}");
+                events.emit(WorkflowEvent::StepRunOutput {
+                    step_id: step.id.clone(),
+                    text: format!("[警告] {message}"),
+                });
+            }
             let items: Vec<serde_json::Value> = match items_val {
                 serde_json::Value::Array(arr) => arr,
                 serde_json::Value::String(s) => {
@@ -201,6 +230,21 @@ impl Executor {
                     return Ok("loop_until_met".to_string());
                 }
             }
+            // B14：until 跑满 max_iterations 仍未满足 → 静默返回 Ok 会掩盖
+            // 「条件写错/永假」的设计错误。发可观测警告（StepRunOutput →
+            // 前端 Inspector/timeline + tracing），运行结果本身保持 Ok——
+            // 跑满不一定是错误（如轮询等待场景的兜底退出），只提醒不阻断。
+            {
+                let message = format!(
+                    "Loop '{}' (until): 已达最大迭代次数 {} 但终止条件仍未满足，循环退出",
+                    step.name, max
+                );
+                tracing::warn!("[executor] {message}");
+                events.emit(WorkflowEvent::StepRunOutput {
+                    step_id: step.id.clone(),
+                    text: format!("[警告] {message}"),
+                });
+            }
             return Ok("loop_max_reached".to_string());
         }
 
@@ -235,21 +279,5 @@ impl Executor {
             variables.insert(k.clone(), v.clone());
         }
         Ok("loop_completed".to_string())
-    }
-}
-
-/// Resolve a VarRef to a serde_json::Value from the variable pool.
-/// 支持点号路径（root.field[.field...]），如 {{panels.list}} → variables["panels"]["list"]
-fn resolve_var_ref(
-    var_ref: &crate::workflow::types::VarRef,
-    variables: &HashMap<String, serde_json::Value>,
-) -> serde_json::Value {
-    match var_ref {
-        crate::workflow::types::VarRef::Var { var } => {
-            super::variables::resolve_var_by_path(var, variables)
-                .cloned()
-                .unwrap_or(serde_json::Value::Null)
-        }
-        crate::workflow::types::VarRef::Lit(s) => serde_json::Value::String(s.clone()),
     }
 }
