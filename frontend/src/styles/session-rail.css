@@ -651,18 +651,32 @@
   outline-offset: 2px;
 }
 
-/* ── 行尾相对时间（刚刚 / N分钟 / N小时 / N天）：行 hover 时淡出，
-   把位置让给浮出的操作按钮（交叉淡化，不挤动布局） ── */
+/* ── 行尾弱信息组（「当前」徽标 / 置顶标签 / 相对时间「刚刚 / N分钟 / N小时 / N天」）：
+   行 hover 或键盘聚焦时**整组**淡出，把行右端整片让给浮出的操作按钮
+   （交叉淡化，不挤动布局）。
+   为什么必须整组：`.sr-actions` 是 absolute 浮层（right: 6px）直接压在行右端，
+   任何没跟着淡出的元素都会被按钮图标盖住 —— 置顶标签与「当前」徽标是后加的，
+   当初只给了 .sr-time 交接，于是 hover 时「置顶」被垃圾桶图标压住（2026-10-15 补）。 ── */
 .sr-time {
   flex: none;
   font-size: var(--fz-xs);
   line-height: 1.5;
   color: var(--fg-4);
   white-space: nowrap;
+}
+/* 淡出过渡只挂 .sr-item 作用域内的元素：.sr-group-tag 是通用类（组头也在用），
+   不宜被全局加动效 */
+.sr-time,
+.sr-item .sr-group-tag,
+.sr-item .sr-current-badge {
   transition: opacity var(--dur-fast) var(--ease-out);
 }
 .sr-item:hover .sr-time,
-.sr-item:focus-within .sr-time {
+.sr-item:hover .sr-group-tag,
+.sr-item:hover .sr-current-badge,
+.sr-item:focus-within .sr-time,
+.sr-item:focus-within .sr-group-tag,
+.sr-item:focus-within .sr-current-badge {
   opacity: 0;
 }
 
@@ -791,6 +805,8 @@
   .session-rail-scrim,
   .sr-item,
   .sr-time,
+  .sr-group-tag,
+  .sr-current-badge,
   .sr-actions,
   .sr-edit-btn,
   .sr-new-chat-btn,
