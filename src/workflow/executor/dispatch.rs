@@ -1,8 +1,8 @@
 //! 步骤调度与分发
 //!
 //! Recursive step executor — 主入口分发到各步骤处理器。
-use super::*;
 use super::control_flow;
+use super::*;
 
 // ── Recursive step executor ──
 
@@ -247,8 +247,12 @@ impl Executor {
                 // B2：break/continue 是控制流信号，不是普通输出字符串——
                 // 走错误通道向上传播，最近一层 loop 捕获消费（见 control_flow.rs）。
                 // dispatch 末尾（run_record/事件层）会把该错误还原为正常完成。
-                Action::Break { .. } => Err(control_flow::control_flow_error(control_flow::ControlFlow::Break)),
-                Action::Continue { .. } => Err(control_flow::control_flow_error(control_flow::ControlFlow::Continue)),
+                Action::Break { .. } => Err(control_flow::control_flow_error(
+                    control_flow::ControlFlow::Break,
+                )),
+                Action::Continue { .. } => Err(control_flow::control_flow_error(
+                    control_flow::ControlFlow::Continue,
+                )),
                 Action::Custom(_) => Err(crate::NuphusError::agent(
                     "custom step kind not yet supported".to_string(),
                 )),
@@ -290,7 +294,10 @@ impl Executor {
         // ── 记录步骤执行结果到 RunRecord（断点续连 / has_skipped / completed_steps 数据源）──
         // B2：控制流信号（break/continue）借错误通道传播，但它是正常语义而非失败——
         // run_record/事件层还原为 Success，用户不看到红叉横幅。
-        let control_flow_signal = result.as_ref().err().and_then(control_flow::is_control_flow_error);
+        let control_flow_signal = result
+            .as_ref()
+            .err()
+            .and_then(control_flow::is_control_flow_error);
         {
             let finished_at = chrono::Utc::now();
             let record = match (&result, control_flow_signal) {

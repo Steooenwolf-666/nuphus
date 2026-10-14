@@ -192,26 +192,20 @@ pub async fn has_frontend_call(steps: &[Step], store: &WorkflowStore, depth: u32
     }
     for step in steps {
         let frontend = match &step.action {
-            Action::Tool { tool, .. } => {
-                FRONTEND_PREFIXES.iter().any(|prefix| tool.starts_with(prefix))
-            }
+            Action::Tool { tool, .. } => FRONTEND_PREFIXES
+                .iter()
+                .any(|prefix| tool.starts_with(prefix)),
             // 与 has_frontend_step 同语义：chat 白名单含桌面工具
             Action::Chat { .. } => true,
             Action::Seq { seq } => Box::pin(has_frontend_call(seq, store, depth + 1)).await,
-            Action::Loop { def } => {
-                Box::pin(has_frontend_call(&def.steps, store, depth + 1)).await
-            }
+            Action::Loop { def } => Box::pin(has_frontend_call(&def.steps, store, depth + 1)).await,
             Action::If { def } => {
                 Box::pin(has_frontend_call(&def.then, store, depth + 1)).await
                     || Box::pin(has_frontend_call(&def.else_branch, store, depth + 1)).await
             }
-            Action::Wait { auto, .. } => {
-                Box::pin(has_frontend_call(auto, store, depth + 1)).await
-            }
+            Action::Wait { auto, .. } => Box::pin(has_frontend_call(auto, store, depth + 1)).await,
             Action::Call { call, .. } => match store.get(call).await {
-                Some(sub_wf) => {
-                    Box::pin(has_frontend_call(&sub_wf.steps, store, depth + 1)).await
-                }
+                Some(sub_wf) => Box::pin(has_frontend_call(&sub_wf.steps, store, depth + 1)).await,
                 // 目标缺失/损坏：不能据此拦调度（合法场景：目标稍后创建），
                 // 交由执行期 wf_call 的既有报错路径处理
                 None => false,
@@ -385,8 +379,7 @@ impl SchedulerEngine {
         let workflow = store.get(workflow_id).await.ok_or_else(|| {
             crate::NuphusError::agent(format!("Workflow not found: {workflow_id}"))
         })?;
-        if has_frontend_step(&workflow.steps)
-            || has_frontend_call(&workflow.steps, store, 0).await
+        if has_frontend_step(&workflow.steps) || has_frontend_call(&workflow.steps, store, 0).await
         {
             return Err(crate::NuphusError::agent(
                 "Foreground workflows (desktop/browser) cannot use cron scheduling; they require user presence. Run manually instead.".to_string(),
@@ -566,7 +559,9 @@ impl SchedulerEngine {
             .map(|(id, task)| (id.clone(), task.binding.clone()))
             .collect();
         for (id, binding) in retained {
-            schedules.entry(id.clone()).or_insert_with(|| binding.clone());
+            schedules
+                .entry(id.clone())
+                .or_insert_with(|| binding.clone());
         }
         write_persisted(&self.persist_path, &PersistedSchedules { schedules })
     }

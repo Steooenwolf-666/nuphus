@@ -181,7 +181,11 @@ impl<'a> ActiveRunGuard<'a> {
 
 impl Drop for ActiveRunGuard<'_> {
     fn drop(&mut self) {
-        *self.engine.active_run.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        *self
+            .engine
+            .active_run
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     }
 }
 
@@ -566,7 +570,11 @@ impl WorkflowEngine {
         }
         // set_schedule rewrites active bindings; this also removes orphan/invalid entries.
         // 损坏工作流的条目经 retained 合并保住，不会被本次落盘物理删除。
-        if let Err(error) = self.scheduler.persist_current_with_retained(&retained).await {
+        if let Err(error) = self
+            .scheduler
+            .persist_current_with_retained(&retained)
+            .await
+        {
             tracing::error!(
                 "[Scheduler] Failed to persist restored schedules: {}",
                 error

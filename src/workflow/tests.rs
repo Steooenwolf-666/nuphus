@@ -1515,10 +1515,7 @@ mod scheduler_domain_tests {
             }],
             ..Workflow::new("b16_chat_in_seq")
         };
-        assert!(
-            has_frontend_step(&wf.steps),
-            "Seq 内 chat 应视为 frontend"
-        );
+        assert!(has_frontend_step(&wf.steps), "Seq 内 chat 应视为 frontend");
 
         // If 分支内
         let wf = Workflow {
@@ -1543,10 +1540,8 @@ mod scheduler_domain_tests {
     /// 纯工具子工作流不误伤。
     #[tokio::test]
     async fn call_into_frontend_subworkflow_is_rejected() {
-        let root = std::env::temp_dir().join(format!(
-            "nuphus_b16_call_{}",
-            uuid::Uuid::new_v4().simple()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("nuphus_b16_call_{}", uuid::Uuid::new_v4().simple()));
         let store = WorkflowStore::with_root(root.join("workflows"));
         let scheduler = SchedulerEngine::with_persist_path(root.join("schedules.json"));
 
@@ -1651,10 +1646,7 @@ mod scheduler_domain_tests {
             "损坏的工作流必须读不出来（get → None）"
         );
         assert!(
-            cold_store
-                .validation_load_error(&broken.id)
-                .await
-                .is_some(),
+            cold_store.validation_load_error(&broken.id).await.is_some(),
             "损坏文件必须被 validation_load_error 探测到（区分于不存在）"
         );
         // missing → get None + validation_load_error None → 删除
@@ -1672,7 +1664,10 @@ mod scheduler_domain_tests {
         let persisted_before = scheduler.load_current();
         assert_eq!(persisted_before.schedules.len(), 2);
         let mut retained = std::collections::HashMap::new();
-        retained.insert(broken.id.clone(), persisted_before.schedules[&broken.id].clone());
+        retained.insert(
+            broken.id.clone(),
+            persisted_before.schedules[&broken.id].clone(),
+        );
         scheduler
             .persist_current_with_retained(&retained)
             .await
@@ -1694,10 +1689,8 @@ mod scheduler_domain_tests {
     /// 最终 workflow.json 恰为某一次完整序列化。
     #[tokio::test]
     async fn concurrent_saves_produce_valid_workflow_json() {
-        let root = std::env::temp_dir().join(format!(
-            "nuphus_b10_tmp_{}",
-            uuid::Uuid::new_v4().simple()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("nuphus_b10_tmp_{}", uuid::Uuid::new_v4().simple()));
         let store = WorkflowStore::with_root(root.join("workflows"));
 
         let wf = Workflow::new("b10_concurrent");
@@ -1709,18 +1702,17 @@ mod scheduler_domain_tests {
             let store = WorkflowStore::with_root(root.join("workflows"));
             let mut wf = wf.clone();
             wf.name = format!("b10_concurrent_v{i}");
-            handles.push(tokio::spawn(async move {
-                store.save(&wf).await
-            }));
+            handles.push(tokio::spawn(async move { store.save(&wf).await }));
         }
         for handle in handles {
             handle.await.unwrap().expect("并发 save 不应失败");
         }
 
         // 最终文件必须是合法 JSON（旧实现下并发交错可能写出半成品）
-        let final_text = tokio::fs::read_to_string(root.join("workflows").join(&wf.id).join("workflow.json"))
-            .await
-            .unwrap();
+        let final_text =
+            tokio::fs::read_to_string(root.join("workflows").join(&wf.id).join("workflow.json"))
+                .await
+                .unwrap();
         let parsed: Workflow = serde_json::from_str(&final_text)
             .expect("并发 save 后 workflow.json 必须是完整合法 JSON");
         assert!(parsed.name.starts_with("b10_concurrent"));

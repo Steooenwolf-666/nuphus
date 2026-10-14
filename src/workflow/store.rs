@@ -798,13 +798,15 @@ impl WorkflowStore {
         // %Y%m%d_%H%M%S：8 数字 + 下划线 + 6 数字 = 15 字符
         ts.len() == 15
             && ts.as_bytes()[8] == b'_'
-            && ts.chars().enumerate().all(|(i, c)| {
-                if i == 8 {
-                    c == '_'
-                } else {
-                    c.is_ascii_digit()
-                }
-            })
+            && ts.chars().enumerate().all(
+                |(i, c)| {
+                    if i == 8 {
+                        c == '_'
+                    } else {
+                        c.is_ascii_digit()
+                    }
+                },
+            )
     }
 
     /// 删除工作流
@@ -938,20 +940,28 @@ mod tests {
     fn is_run_backup_name_matches_only_save_output_format() {
         use super::WorkflowStore;
         // save() 真实产物：%Y%m%d_%H%M%S = 8 数字 + '_' + 6 数字
-        assert!(WorkflowStore::is_run_backup_name("workflow.20260114_103000.json"));
+        assert!(WorkflowStore::is_run_backup_name(
+            "workflow.20260114_103000.json"
+        ));
         assert!(!WorkflowStore::is_run_backup_name("workflow.json"));
         // 用户导出件 / 旧宽松匹配会误删的形状：一律不认
         assert!(!WorkflowStore::is_run_backup_name(
             "workflow.说明.export.json"
         ));
         assert!(!WorkflowStore::is_run_backup_name("workflow.export.json"));
-        assert!(!WorkflowStore::is_run_backup_name("workflow.backup_before_x.json"));
+        assert!(!WorkflowStore::is_run_backup_name(
+            "workflow.backup_before_x.json"
+        ));
         assert!(!WorkflowStore::is_run_backup_name("workflow.123.json"));
         assert!(!WorkflowStore::is_run_backup_name(
             "workflow.20260114_1030.json"
         ));
-        assert!(!WorkflowStore::is_run_backup_name("workflow.20260114-103000.json"));
-        assert!(!WorkflowStore::is_run_backup_name("other.20260114_103000.json"));
+        assert!(!WorkflowStore::is_run_backup_name(
+            "workflow.20260114-103000.json"
+        ));
+        assert!(!WorkflowStore::is_run_backup_name(
+            "other.20260114_103000.json"
+        ));
     }
 
     /// 回归：prune 只删 `workflow.{ts}.json` 形状的备份，

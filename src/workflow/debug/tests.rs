@@ -409,10 +409,8 @@ async fn cancel_interrupts_frozen_child_workflow_and_preserves_source_history() 
 async fn empty_repeat_is_bounded_by_debug_budget() {
     // B15 钳制后 repeat 编译期上限为 100_000；budget 兜底验证只需 repeat
     // 超过 10_000 tick 预算即可，取 50_000 保持测试语义不变。
-    let (engine, workflow, directory) = setup(vec![step(
-        "loop",
-        json!({"loop":{"repeat":50000,"do":[]}}),
-    )]);
+    let (engine, workflow, directory) =
+        setup(vec![step("loop", json!({"loop":{"repeat":50000,"do":[]}}))]);
     let session = engine
         .prepare_debug(request(&workflow, "loop", DebugMode::Node))
         .await

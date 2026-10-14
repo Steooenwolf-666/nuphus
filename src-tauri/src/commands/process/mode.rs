@@ -351,13 +351,9 @@ mod tests {
             }
 
             // ③ 切回 leader：leader 条目仍在工作台（is_active=false），槽仍空
-            set_mode_impl(
-                handle.clone(),
-                handle.state::<AppState>(),
-                "leader".into(),
-            )
-            .await
-            .expect("切回必须成功");
+            set_mode_impl(handle.clone(), handle.state::<AppState>(), "leader".into())
+                .await
+                .expect("切回必须成功");
             {
                 let payload = shelf::list_shelf_sessions_inner(state.inner()).unwrap();
                 let item = shelf_item_of(&payload, &leader_session_id)
@@ -392,10 +388,7 @@ mod tests {
                 let restored: Session =
                     serde_json::from_str(backup_json).expect("backup 应为合法 Session");
                 assert_eq!(restored.id, leader_session_id, "中转的必须是原会话");
-                assert!(
-                    !restored.is_empty(),
-                    "恢复后会话内容完整（可继续对话）"
-                );
+                assert!(!restored.is_empty(), "恢复后会话内容完整（可继续对话）");
             }
             assert!(
                 state.shelf.lock().unwrap().contains(&leader_session_id),
@@ -465,9 +458,8 @@ mod tests {
 
             {
                 let mut guard = state.runtime.lock().unwrap();
-                guard.leader_agent = Some(leader_runtime_with(session_with_user(
-                    "同 mode 幂等守卫",
-                )));
+                guard.leader_agent =
+                    Some(leader_runtime_with(session_with_user("同 mode 幂等守卫")));
             }
             let sess_id = {
                 let guard = state.runtime.lock().unwrap();
@@ -481,13 +473,9 @@ mod tests {
             };
             set_current_mode(&state, "leader");
 
-            set_mode_impl(
-                handle.clone(),
-                handle.state::<AppState>(),
-                "leader".into(),
-            )
-            .await
-            .expect("同 mode 调用必须成功");
+            set_mode_impl(handle.clone(), handle.state::<AppState>(), "leader".into())
+                .await
+                .expect("同 mode 调用必须成功");
 
             {
                 let guard = state.runtime.lock().unwrap();
