@@ -67,13 +67,21 @@
    - SkinBackdrop（portal → body）、AppContextMenu（portal → body）、
      AppIsland（portal → 锚点/body）、CommandPalette / WorkflowTaskPanel /
      TenetsDialog / AnnotationsDialog / ExecutionTraceFloating（均 fixed 或 portal）
-  结论：进 content 行的实质只有 chat-area 一项；其余要么是标题栏，要么是
-   fixed/portal（行放置对其布局无任何影响，给它们 content 行只是保证它们不被
-   "auto 放置"丢进 titlebar 行所占的第一行）。故本条规则不需要任何排除项 ——
-   这正是删掉那条按不存在类名写的 `.mobile-notice{grid-row:1/3}` 的原因。 */
+   结论：进 content 行的实质只有 chat-area 一项；其余要么是标题栏，要么是
+    fixed/portal（行放置对其布局无任何影响，给它们 content 行只是保证它们不被
+    "auto 放置"丢进 titlebar 行所占的第一行）。故本条规则不需要任何排除项 ——
+    这正是删掉那条按不存在类名写的 `.mobile-notice{grid-row:1/3}` 的原因。
+   ⚠️ z-index 不放在通配规则上（2026-10-14 事故）：通配 z-index:1 会按源码顺序
+    覆盖后载入样式表（chat.css）里同特异性选择器的显式 z-index —— 内联渲染为
+    .app-shell 直接子级的全屏 overlay（ExecutionTraceFloating，z-index:200）
+    被拍平到 1，ChatPanel 经 portal 挂 body 的弹窗（z 200/9999）反而盖在其上。
+    z-index 只给真实需要层叠的内容元素（chat-area/title-bar 见下方各自规则）。 */
 .app-shell > * {
   grid-column: 1;
   grid-row: content;
+}
+/* chat-area 是实质的内容行元素，需要一个高于皮肤背景（z-index:0）的层叠位 */
+.app-shell > .chat-area {
   z-index: 1;
 }
 /* ── 皮肤背景（唯一渲染点，见 ui/SkinBackdrop.tsx）──
@@ -120,6 +128,9 @@
   /* position: relative 保留 —— 标题栏内的绝对定位后代（如 island 落点）依赖它；
      皮肤背景已不由本元素绘制（见上方 .app-skin-backdrop）。 */
   position: relative;
+  /* z-index:1：压过皮肤背景层（.app-skin-backdrop z-index:0）——原先由
+      .app-shell > * 通配提供，通配上的 z-index 已因层叠事故移除（见上）。 */
+  z-index: 1;
 }
 .title-bar-left {
   display: flex;
