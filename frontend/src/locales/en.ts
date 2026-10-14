@@ -302,7 +302,7 @@ const en: Record<string, string> = {
   'turn.ctxDelta': 'ctx',
   'turn.steps': 'steps',
 
-  // 鈹€鈹€ External Agents status bar (handoff) 鈹€鈹€
+  // ── External Agents status bar (handoff) ──
   'extAgents.title': 'Agents',
   'extAgents.titleHint': 'External agent runtime status (synced from handoff doorbell events)',
   'extAgents.empty': 'No external agents yet',
@@ -416,10 +416,10 @@ const en: Record<string, string> = {
   'settings.sessionGroups.loadFail': 'Failed to load the setting',
   'settings.sessionGroups.saveFail': 'Save failed',
 
-  // 鈹€鈹€ Welcome 鈹€鈹€
+  // ── Welcome ──
   'welcome.resume': 'Resume',
 
-  // 鈹€鈹€ External Agents config center (team.toml CRUD) 鈹€鈹€
+  // ── External Agents config center (team.toml CRUD) ──
   'extAgents.cfg.title': 'External Agents',
   'extAgents.cfg.add': 'Configure external agents',
   'extAgents.cfg.new': 'New config',
@@ -462,7 +462,7 @@ const en: Record<string, string> = {
   'extAgents.cfg.loadFail': 'Failed to load',
   'extAgents.cfg.deleteConfirm':
     'Delete this external agent config? (handoff workspace will not be deleted)',
-  // 鈹€鈹€ v8 advanced group: interaction hardening 鈹€鈹€
+  // ── v8 advanced group: interaction hardening ──
   'extAgents.cfg.launch': 'Launch command (launch)',
   'extAgents.cfg.launchHint':
     'The command Leader uses to start this agent manually (skill section 2 startup SOP). agent_dispatch performs no implicit cold start - if the window cannot be captured it fails outright',
@@ -2235,7 +2235,7 @@ const en: Record<string, string> = {
   'help.tips.settings':
     'Open Settings from the gear icon (top-right of chat): everything lives in five groups — Shortcuts, AI, Connect, Workspace, System.',
 
-  // 鈹€鈹€ Mobile PWA (src/mobile) 鈹€鈹€ shares this dictionary; language follows nuphus_language
+  // ── Mobile PWA (src/mobile) ── shares this dictionary; language follows nuphus_language
   'mobile.connecting': 'Connecting',
   'mobile.connected': 'Connected',
   'mobile.disconnected': 'Disconnected',

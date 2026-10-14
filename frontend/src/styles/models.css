@@ -12,7 +12,7 @@
   margin-bottom: var(--space-2);
 }
 
-/* 鈹€鈹€ 骞界伒鍥炬爣鎸夐挳锛堟樉绀哄瘑鐮?/ 鍒犻櫎绛夎鍐呭皬鎿嶄綔锛夆攢鈹€ */
+/* ── 幽灵图标按钮（显示密度 / 删除等行内小操作）── */
 .icon-btn-ghost {
   display: inline-flex;
   align-items: center;
@@ -39,7 +39,7 @@
   box-shadow: var(--shadow-focus);
 }
 
-/* 鈹€鈹€ 娓呴櫎瀵嗛挜鎸夐挳锛氶粯璁や綆璋冿紙fg-4/鍗婇€忔槑锛夛紝绾㈣壊浠?hover/focus 鏃跺嚭鐜?鈹€鈹€ */
+/* ── 清除密钥按钮：默认低调（fg-4/半透明），红色仅 hover/focus 时出现 ── */
 .icon-btn-clear:hover:not(:disabled) {
   color: var(--error);
   opacity: 1;
@@ -53,13 +53,13 @@
   cursor: default;
 }
 
-/* 鈹€鈹€ 绛夊鏁板瓧杈撳叆锛堜笂涓嬫枃绐楀彛绛夛級鈹€鈹€ */
+/* ── 等宽数字输入（上下文窗口等）── */
 .input-num {
   font-family: var(--font-mono);
   font-size: var(--fz-md);
 }
 
-/* 鈹€鈹€ 娴姩鍙嶉 Toast 鈹€鈹€ */
+/* ── 浮动反馈 Toast ── */
 .feedback-toast {
   /* 只负责**定位与层叠**：胶囊形态/语义来自共享层 app-pill.css 的 .app-pill（与 island
      同一套视觉，见 ui/AppPill.tsx）。原先的整块半透明绿/红底（rgba(--success-rgb, .92)）
@@ -78,14 +78,14 @@
   pointer-events: none;
 }
 
-/* 鈹€鈹€ 涓嬫媺閫夐」鍐呰仈鍏冪礌 鈹€鈹€ */
+/* ── 下拉选项内联元素 ── */
 .select-option-provider {
   color: var(--fg-4);
   font-size: var(--fz-xs);
   margin-left: 6px;
 }
 
-/* 鈹€鈹€ 妫€娴嬮敊璇彁绀?鈹€鈹€ */
+/* ── 检测错误提示 ── */
 .model-operation-status {
   margin-top: var(--space-2);
   color: var(--accent);
@@ -105,12 +105,12 @@
   line-height: 1.4;
 }
 
-/* 鈹€鈹€ 鍙樹綋涓庡伐鍏风被 鈹€鈹€ */
+/* ── 变体与工具类 ── */
 .select-menu--up {
   top: auto;
   bottom: calc(100% + 4px);
 }
-/* 鎻愰珮鐗瑰紓鎬ц鐩?components.css 鐨?top 瀹氫綅锛岄伩鍏?!important */
+/* 提高特异性覆盖 components.css 的 top 定位，避免 !important */
 .compact-select-menu.select-menu--up {
   top: auto;
   bottom: calc(100% + 4px);
@@ -352,7 +352,7 @@ button.cap-chip:disabled {
   padding: 2px 4px;
 }
 
-/* 鈹€鈹€ 妯″瀷琛屽唴 Context Window 缂栬緫锛圡odelsPage 鎵嬪姩鏍″噯鍏ュ彛锛夆攢鈹€ */
+/* ── 模型行内 Context Window 编辑（ModelsPage 手动校准入口）── */
 .model-ctx-edit-btn {
   padding: 2px;
   margin-left: 2px;
@@ -376,7 +376,7 @@ button.cap-chip:disabled {
   border-color: var(--accent);
   box-shadow: var(--shadow-focus);
 }
-/* 闅愯棌 number input 鐨勪笂涓嬬澶达紝琛屽唴淇濇寔绱у噾 */
+/* 隐藏 number input 的上下箭头，行内保持紧凑 */
 .ctx-inline-input::-webkit-outer-spin-button,
 .ctx-inline-input::-webkit-inner-spin-button {
   -webkit-appearance: none;
@@ -386,7 +386,7 @@ button.cap-chip:disabled {
   -moz-appearance: textfield;
   appearance: textfield;
 }
-/* 琛屽唴缂栬緫鍗曚綅锛圞锛夊鍣細input + 鍗曚綅鍚庣紑 */
+/* 行内编辑单位（K）容器：input + 单位后缀 */
 .ctx-inline-wrap {
   display: inline-flex;
   align-items: center;
@@ -399,7 +399,7 @@ button.cap-chip:disabled {
   flex-shrink: 0;
 }
 
-/* 鈹€鈹€ 妯″瀷鍒楄〃鍒锋柊鎸夐挳锛圫ection 鍙充笂瑙?actions锛夛細灏忚兌鍥?+ 鍥炬爣锛屽姞杞戒腑鏃嬭浆 鈹€鈹€ */
+/* ── 模型列表刷新按钮（Section 右上角 actions）：小胶囊 + 图标，加载中旋转 ── */
 .models-refresh-btn {
   display: inline-flex;
   align-items: center;
