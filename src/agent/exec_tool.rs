@@ -591,7 +591,7 @@ mod tests {
 
         // ③ 成功 → 复位闸门
         maybe_emit_vision_banner(Some(&emitter), &ToolResult::success("识别文本"));
-        assert_eq!(VISION_BANNER_SHOWN.load(Ordering::SeqCst), false);
+        assert!(!VISION_BANNER_SHOWN.load(Ordering::SeqCst));
 
         // ④ 修好后再坏 → 仍会提醒（第 2 条）
         maybe_emit_vision_banner(Some(&emitter), &ToolResult::failure(auth_error.clone()));
@@ -600,18 +600,18 @@ mod tests {
         // ⑤ 限流失败 → 不升级横幅（闸门保持 ④ 的置位状态，不受影响）
         maybe_emit_vision_banner(Some(&emitter), &ToolResult::failure(rate_limit_error));
         assert_eq!(warning_count(&emitter), 2);
-        assert_eq!(VISION_BANNER_SHOWN.load(Ordering::SeqCst), true);
+        assert!(VISION_BANNER_SHOWN.load(Ordering::SeqCst));
 
         // ⑥ emitter 缺席 → 跳过且**不消耗闸门**：先经成功复位，再无 UI 调用，
         //    闸门必须仍是 false（否则无 UI 场景会把横幅额度提前烧掉）
         maybe_emit_vision_banner(Some(&emitter), &ToolResult::success("识别文本"));
-        assert_eq!(VISION_BANNER_SHOWN.load(Ordering::SeqCst), false);
+        assert!(!VISION_BANNER_SHOWN.load(Ordering::SeqCst));
         maybe_emit_vision_banner(
             None,
             &ToolResult::failure("图像理解调用失败：API 密钥无效或未授权"),
         );
         assert_eq!(warning_count(&emitter), 2);
-        assert_eq!(VISION_BANNER_SHOWN.load(Ordering::SeqCst), false);
+        assert!(!VISION_BANNER_SHOWN.load(Ordering::SeqCst));
 
         // ⑦ 有 UI 后再次 Auth 失败 → 正常提醒（证明 ⑥ 未把额度烧掉）
         maybe_emit_vision_banner(Some(&emitter), &ToolResult::failure(auth_error));
