@@ -1553,6 +1553,9 @@ const zh: Record<string, string> = {
   'titleBar.close': '关闭',
   'titleBar.menu': '菜单',
   'titleBar.newChat': '新建会话',
+  'titleBar.about': '关于',
+  'titleBar.feedback': '反馈',
+  'titleBar.checkUpdate': '版本（检查更新）',
 
   'toast.configureApiKey': '请先配置 API Key',
   'toast.connectionLost': '连接断开，正在重试...',

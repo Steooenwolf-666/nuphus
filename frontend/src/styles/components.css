@@ -146,6 +146,66 @@
   flex: 1;
   height: 100%;
 }
+/* ── 「关于」纯文字入口 + hover 弹层 ──
+   非按钮样式：与品牌文字同灰阶弱化呈现，hover 时提亮；
+   弹层右对齐触发器，与窗口控制按钮保持间距 */
+.title-bar-about {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  margin-right: 6px;
+}
+.title-bar-about-trigger {
+  font-size: var(--fz-sm);
+  color: var(--fg-3);
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 4px;
+  border-radius: var(--radius-1);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.title-bar-about-trigger:hover,
+.title-bar-about-trigger:focus-visible {
+  color: var(--fg-1);
+  outline: none;
+}
+.title-bar-about-menu {
+  position: absolute;
+  top: calc(100% - 2px);
+  right: 0;
+  min-width: 180px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  background: var(--void-primary);
+  border: 1px solid var(--glass-2);
+  border-radius: 10px;
+  box-shadow: var(--shadow-elevated);
+  z-index: 200;
+}
+.title-bar-about-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-1);
+  background: transparent;
+  color: var(--fg-1);
+  font-size: var(--fz-sm);
+  text-decoration: none;
+  cursor: pointer;
+  text-align: left;
+}
+.title-bar-about-item:hover:not(:disabled),
+.title-bar-about-item:focus-visible {
+  background: var(--surface-hover, rgb(255 255 255 / 6%));
+  outline: none;
+}
+.title-bar-about-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .title-bar-icon {
   display: flex;
   align-items: center;

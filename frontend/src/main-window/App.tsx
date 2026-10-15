@@ -468,7 +468,11 @@ export default function App() {
       {/* ── Main UI: ready state ── */}
       {s.appState === 'ready' && (
         <ErrorBoundary>
-          <TitleBar onNewChat={s.handleNewChat} agentState={s.isProcessing ? 'working' : 'idle'} />
+          <TitleBar
+            onNewChat={s.handleNewChat}
+            agentState={s.isProcessing ? 'working' : 'idle'}
+            onOpenUpdate={() => s.setShowUpdate(true)}
+          />
           <MacosPermissionNotice mode={s.mode} onOpenSettings={() => s.setShowSecurity(true)} />
           <div className="chat-area">
             {/*

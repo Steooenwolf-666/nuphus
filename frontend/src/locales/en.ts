@@ -1631,6 +1631,9 @@ const en: Record<string, string> = {
   'titleBar.close': 'Close',
   'titleBar.menu': 'Menu',
   'titleBar.newChat': 'New Chat',
+  'titleBar.about': 'About',
+  'titleBar.feedback': 'Feedback',
+  'titleBar.checkUpdate': 'Version (Check for updates)',
 
   'toast.configureApiKey': 'Please configure API Key first',
   'toast.connectionLost': 'Connection lost, retrying...',

@@ -83,6 +83,10 @@
   .title-bar-right.title-bar-mobile-controls {
     display: flex !important;
   }
+  /* 移动端无 hover 语义，「关于」入口收进汉堡菜单体系前先隐藏 */
+  .title-bar-about {
+    display: none !important;
+  }
   .title-bar-left {
     gap: 6px !important;
   }
