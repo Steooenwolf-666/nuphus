@@ -553,7 +553,7 @@ fn emit_result(app: &tauri::AppHandle, provider: &str, ok: bool, error: Option<S
 // ============================================================================
 
 /// 查询登录状态。读盘 + 纯判定，不触发网络刷新。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn oauth_status(provider: String) -> Result<OauthStatus, String> {
     let path = get_config_path().ok_or_else(|| "配置文件未找到".to_string())?;
     oauth_status_in(&path, &provider)
@@ -583,7 +583,7 @@ fn oauth_status_in(path: &std::path::Path, provider: &str) -> Result<OauthStatus
 }
 
 /// 登出：清空三个令牌字段落盘（配置五项保留）。段未配 oauth → 幂等成功。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn oauth_logout(provider: String) -> Result<(), String> {
     let path = get_config_path().ok_or_else(|| "配置文件未找到".to_string())?;
     core_oauth::clear_oauth_tokens(&path, &provider)?;

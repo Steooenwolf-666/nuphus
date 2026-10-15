@@ -1,10 +1,10 @@
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_language() -> Result<String, String> {
     let prefs = nuphus::config::UserPreferences::load();
     Ok(prefs.language)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_browser_cdp_url() -> Result<String, String> {
     let prefs = nuphus::config::UserPreferences::load();
     Ok(prefs.browser_cdp_url.unwrap_or_default())
@@ -60,7 +60,7 @@ fn cdp_probe(base: &str) -> Result<String, String> {
 
 /// Test connectivity to an external-browser CDP endpoint (GET /json/version).
 /// Returns the remote browser's version string on success.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn test_browser_cdp_url(url: String) -> Result<String, String> {
     let base = url.trim().trim_end_matches('/').to_string();
     if !base.starts_with("http://") && !base.starts_with("https://") {
@@ -234,7 +234,7 @@ fn is_self_managed_profile(profile: Option<&std::path::Path>) -> bool {
 ///
 /// Nuphus's own managed Chrome is excluded: it is not a user-operated
 /// fingerprint browser, and the "内置浏览器（自动管理）" mode already owns it.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn detect_cdp_browsers() -> Result<Vec<DetectedBrowser>, String> {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 
@@ -376,7 +376,7 @@ pub struct BrowserConnection {
     pub user_data_dir: Option<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_browser_connection() -> Result<BrowserConnection, String> {
     let prefs = nuphus::config::UserPreferences::load();
     let url = prefs.browser_cdp_url.unwrap_or_default();
@@ -392,7 +392,7 @@ pub fn get_browser_connection() -> Result<BrowserConnection, String> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_language(lang: String) -> Result<String, String> {
     let mut prefs = nuphus::config::UserPreferences::load();
     prefs.language = lang.clone();
@@ -438,7 +438,7 @@ fn project_state_reminder(path: &str) -> String {
 }
 
 /// 读取当前项目目录（项目中心初始化数据源）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_project_dir() -> Result<serde_json::Value, String> {
     let prefs = nuphus::config::UserPreferences::load();
     Ok(project_dir_payload(&prefs.project_dir))
@@ -451,7 +451,7 @@ pub fn get_project_dir() -> Result<serde_json::Value, String> {
 /// - 切换改由 **user 内部消息** 传达（`push_user_internal`：只进 LLM 上下文、
 ///   前端历史拉取时过滤不显示），模型下一轮即以新工作目录 / 新记忆文件为准；
 /// - 覆盖全部活跃槽（leader + workflow），不再只通知 leader 一侧。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_project_dir(
     path: String,
     state: tauri::State<'_, crate::state::AppState>,
@@ -477,7 +477,7 @@ pub fn set_project_dir(
 }
 
 /// 读取项目书签（项目中心数据源；与 project_dir 同源落盘 prefs）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_project_bookmarks() -> Result<Vec<nuphus::config::ProjectBookmark>, String> {
     Ok(nuphus::config::UserPreferences::load().project_bookmarks)
 }
@@ -487,7 +487,7 @@ pub fn get_project_bookmarks() -> Result<Vec<nuphus::config::ProjectBookmark>, S
 /// `archived` 不由本命令清除：同路径书签沿用已落盘的归档标记（前端提交 `true` 时亦
 /// 沿用）——归档状态只经 [`set_project_folder_archived`] 增删，避免整表替换静默
 /// 取消归档。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_project_bookmarks(
     bookmarks: Vec<nuphus::config::ProjectBookmark>,
 ) -> Result<Vec<nuphus::config::ProjectBookmark>, String> {
@@ -529,7 +529,7 @@ pub fn set_project_bookmarks(
 /// - 未收藏但有会话的自动组 → 补一条 `archived=true` 的书签记录（否则无锚点可恢复）；
 /// - 恢复不存在的记录 → 幂等无操作；
 /// - 归档只影响会话台分组展示，**不触碰 `project_dir`**，记忆检索的项目过滤不受影响。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_project_folder_archived(
     path: String,
     archived: bool,
@@ -581,7 +581,7 @@ fn apply_folder_archived(
 /// 设置会话分组折叠上限（全局单值，设置中心入口）。
 ///
 /// 0 无意义（会把每个分组都折叠成空列表）→ 显式拒绝，避免配置静默失效。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_session_group_collapsed_limit(limit: u32) -> Result<u32, String> {
     if limit == 0 {
         return Err("invalid_limit".to_string());
@@ -600,7 +600,7 @@ pub fn set_session_group_collapsed_limit(limit: u32) -> Result<u32, String> {
 ///
 /// 生效路径：`list_shelf_sessions` 每次返回 `sort_prefs` → 会话工作台 5s 轮询即读到
 /// 新值（桌面 SessionRail / 移动端 NavBar 共用同一返回体）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_session_sort_prefs(
     group_order: String,
     sort_key: String,
@@ -640,7 +640,7 @@ fn apply_session_sort_prefs(
 ///
 /// 生效路径：`list_shelf_sessions` 每次返回 `pinned_sessions` → 会话工作台 5s 轮询即读到
 /// 新值（桌面 SessionRail / 移动端 NavBar 共用同一返回体）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_pinned_sessions(ids: Vec<String>) -> Result<Vec<String>, String> {
     let mut prefs = nuphus::config::UserPreferences::load();
     let applied = apply_pinned_sessions(&mut prefs, &ids);

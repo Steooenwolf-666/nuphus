@@ -7,6 +7,7 @@ use nuphus::agent::events::EventEmitter;
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
+mod command_conventions;
 mod commands;
 mod emitter;
 mod ext_agent;
@@ -719,8 +720,9 @@ fn main() {
                         // ── 资源门：定时触发的 workflow 同样是执行体 ──
                         // 与 Agent 轮次 / 录制会话 / 手动工具互斥（同一把资源锁，非新的状态源）。
                         // 拿不到即**明确跳过本次**（不排队、不等下一 tick 的隐式重试），记 warn。
-                        // 注：cron 注册时已拒绝含 desktop_/browser_ 步骤的工作流
-                        // （has_frontend_step），此处互斥的是「执行体并行」本身。
+                        // 注：cron 注册与每次触发都只拦"会停下来等人"的构造
+                        // （human_blocker_with_calls），界面自动化步骤不受限制；
+                        // 此处互斥的是「执行体并行」本身。
                         let (gate_lease, execution_owner) = match crate::resource_gate::acquire_execution_body_with_owner(
                             &state.automation_gate,
                             &format!("schedule_run:{workflow_id}"),

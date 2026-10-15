@@ -34,7 +34,7 @@ pub fn is_allowed_external_url(url: &str) -> bool {
 }
 
 /// 用系统默认浏览器打开外链。失败返回可读原因（前端仅提示，不打断）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_external(url: String) -> Result<(), String> {
     let url = url.trim().to_string();
     if !is_allowed_external_url(&url) {

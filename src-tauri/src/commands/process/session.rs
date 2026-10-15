@@ -3,7 +3,7 @@
 use crate::state::AppState;
 use tauri::State;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_session_info() -> Result<serde_json::Value, String> {
     Ok(serde_json::json!({
         "version": env!("CARGO_PKG_VERSION"),
@@ -15,7 +15,7 @@ pub fn get_session_info() -> Result<serde_json::Value, String> {
 /// 获取当前 Leader Agent 的完整对话历史
 /// 前端刷新后调用此命令恢复主对话，弥补实时事件丢失
 /// 当 agent 不存在或 session 为空时，从 session_backup 恢复最新记录
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_chat_history(
     state: State<'_, AppState>,
 ) -> Result<Vec<crate::state::HistoryMessage>, String> {

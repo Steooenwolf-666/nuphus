@@ -56,7 +56,7 @@ const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 ///
 /// 同目录内绝不覆盖已有文件：重名时主名追加 `-1` / `-2` … 序号
 /// （用户连续换两次同名背景图，前一张不该被悄悄替换掉）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_user_image(source_path: String) -> Result<String, String> {
     let src = Path::new(&source_path);
     if !src.is_file() {

@@ -556,13 +556,13 @@ fn notify_binding_issues<R: tauri::Runtime>(
 }
 
 /// Get current agent-level model configuration (advanced settings).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_agent_models(state: State<'_, AppState>) -> Result<AgentModels, String> {
     Ok(load_agent_models(&state.llm_config_path))
 }
 
 /// 计算某 mode 的生效模型（前端输入框显示用）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_effective_model(state: State<'_, AppState>, mode: String) -> Result<String, String> {
     let registry = nuphus::config::load_registry().map_err(|e| format!("加载模型配置失败: {e}"))?;
     Ok(effective_model(&state.llm_config_path, &registry, &mode))
@@ -575,7 +575,7 @@ pub fn get_effective_model(state: State<'_, AppState>, mode: String) -> Result<S
 /// （model 与 `get_effective_model` 复用同一 `effective_model` 解析点保证一致，
 /// provider 走 `resolve_model_provider_core`）。同 id 跨 provider（官方
 /// deepseek vs opencode-go）时前端双全等勾选靠本命令落对卡片。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_provider_context(
     state: State<'_, AppState>,
     mode: String,
@@ -591,7 +591,7 @@ pub fn get_provider_context(
 /// 删掉 provider 键写出「有 model 无 provider」的半绑定 → 解析时静默回落 leader。
 /// provider 缺省时由 `resolve_agent_binding_provider` 消歧：唯一候选自动补全，
 /// 多候选/无候选显式报错（不静默写半绑定）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_agent_model(
     state: State<'_, AppState>,
     agent: String,
@@ -1090,7 +1090,7 @@ pub async fn configure_llm(
 ///
 /// Preserves the provider entry (name / base_url / models) — only `api_key`
 /// is emptied. Idempotent: unknown providers return `Ok(())` without changes.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_provider_api_key(state: State<'_, AppState>, provider: String) -> Result<(), String> {
     let toml_config_path = get_config_path().or_else(|| {
         let fallback = state.llm_config_path.with_file_name("providers.toml");
@@ -1120,7 +1120,7 @@ pub fn clear_provider_api_key(state: State<'_, AppState>, provider: String) -> R
 ///   refine 阈值与桌面/手机上下文占用展示立即按新窗口计算
 /// - 找不到对应 provider/model 条目时返回明确错误（写盘原语对缺失静默 Ok，
 ///   此处回读校验把「未生效」暴露给 UI，禁止假装保存成功）
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_model_context_window(
     state: State<'_, AppState>,
     provider: String,
@@ -1181,7 +1181,7 @@ pub fn set_model_context_window(
 /// - 回读校验：写盘原语对「找不到条目」是静默 Ok，这里把「没写进去」暴露给 UI，
 ///   禁止假装保存成功。
 /// - 只改模型元数据，不动当前主模型 / 视觉模型绑定。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_model_supports_vision(
     state: State<'_, AppState>,
     provider: String,
@@ -1239,7 +1239,7 @@ pub fn set_model_supports_vision(
 /// - 回读校验：写盘原语对「找不到条目」是静默 Ok，这里把「没写进去」
 ///   暴露给 UI，禁止假装保存成功。
 /// - 只改模型元数据，不动当前生成能力绑定（capabilities.image_generation）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_model_supports_image_generation(
     state: State<'_, AppState>,
     provider: String,
@@ -1289,7 +1289,7 @@ pub fn set_model_supports_image_generation(
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_current_config(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let configured_providers = list_configured_providers();
 
@@ -1358,7 +1358,7 @@ pub fn get_current_config(state: State<'_, AppState>) -> Result<serde_json::Valu
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn is_llm_configured(state: State<'_, AppState>) -> Result<bool, String> {
     let guard = state.runtime.lock().map_err(|e| e.to_string())?;
 
@@ -1473,7 +1473,7 @@ pub(crate) fn resolve_effort_tiers(
     (Vec::new(), toml_default.map(String::from))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::ModelInfo>, String> {
     use nuphus::config::ModelRegistry;
 
@@ -1569,7 +1569,7 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
 /// —— 「刷新」按官方 /v1/models 同步时会移除清单外的 auto 条目，manual 条目必须
 /// 存活；能力元数据缺失时 ctx 显示未知（?），可经 RowCtxEditor 手动补充或首次
 /// 调用时探测。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn add_provider_model(provider: String, model_id: String) -> Result<(), String> {
     let model_id = model_id.trim().to_string();
     if model_id.is_empty() {
@@ -1600,14 +1600,14 @@ pub fn add_provider_model(provider: String, model_id: String) -> Result<(), Stri
 /// 模型代号不存在（调用报 model not found）或同名模型能力不同（ctx/视觉
 /// 元数据不匹配）。前端「接口地址已变更」提示条调用；仅清 models，
 /// 保留 name / provider_type / base_url / api_key。返回清除条目数（幂等）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clear_provider_models(provider: String) -> Result<usize, String> {
     let config_path =
         get_config_path().ok_or_else(|| "无法定位 config.toml 配置路径".to_string())?;
     clear_provider_models_in_config_toml(&config_path, &provider)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_default_model(_state: State<'_, AppState>) -> Result<String, String> {
     use nuphus::config::ModelRegistry;
 
@@ -1624,7 +1624,7 @@ pub fn get_default_model(_state: State<'_, AppState>) -> Result<String, String> 
 /// Read the reasoning-effort value configured for a provider
 /// (config.toml `[[providers]] reasoning_effort`). `null` = not configured /
 /// provider default (transport sends no `reasoning_effort`).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_reasoning_effort(
     _state: State<'_, AppState>,
     provider: String,
@@ -1635,7 +1635,7 @@ pub fn get_reasoning_effort(
 /// Persist a reasoning-effort value for a provider into config.toml and update
 /// the in-memory LlamaConfig so the next client build picks it up.
 /// `effort: null` or empty clears the setting (provider default).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_reasoning_effort(
     state: State<'_, AppState>,
     provider: String,
@@ -2221,7 +2221,7 @@ impl CapabilitySource for ProviderCapabilitySource<'_> {
 /// 读取某服务商已保存的接口地址（界面回填用）：未配置返回 null。
 /// 前端在切换服务商时据此还原「接口地址」输入框——否则切回页面即空，
 /// 用户会误以为配置丢失，检测/刷新也会拿着空值去回落内置默认地址。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_provider_base_url(provider: String) -> Option<String> {
     read_provider_base_url_from_config_toml(&provider)
 }
@@ -2244,7 +2244,7 @@ pub struct ProviderInfo {
     pub oauth: Option<super::oauth::OauthSummaryDto>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_supported_providers() -> Result<Vec<ProviderInfo>, String> {
     let mut providers = ProviderRegistry::builtin()
         .list_info()
@@ -2353,7 +2353,7 @@ fn custom_provider_config_path(state: &AppState) -> std::path::PathBuf {
 ///
 /// 前置校验故意放这里而不是只靠前端：命令是可被任意 invoke 的公开入口，
 /// 「name 非空」这类不变量必须在后端也成立一次。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_custom_provider(state: State<'_, AppState>, name: String) -> Result<bool, String> {
     let name = name.trim().to_string();
     if name.is_empty() {
@@ -2376,7 +2376,7 @@ pub fn remove_custom_provider(state: State<'_, AppState>, name: String) -> Resul
 /// 存在旧 `custom` 段时执行升级迁移（见 `create_custom_provider_segment`）。
 /// `oauth`：可选 OAuth 订阅配置（授权端点等五项）；Some → 该实例以 OAuth 令牌
 /// 作为请求凭证（登录后由令牌路径维护），None → 静态 api_key 模式。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_custom_provider(
     state: State<'_, AppState>,
     name: String,
@@ -2438,7 +2438,7 @@ pub fn create_custom_provider(
 /// `api_key` 空串 = 保持原密钥不变（编辑表单留空即「不修改密钥」）；非空才覆盖。
 /// `headers`：自定义标头全量提交，空数组 = 清除已存标头（见 `update_custom_provider_segment`）。
 /// `oauth`：Some → 覆盖写 OAuth 配置五项（既有令牌保留）；None → 不动 OAuth 配置。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_custom_provider(
     state: State<'_, AppState>,
     name: String,
@@ -2494,7 +2494,7 @@ pub fn update_custom_provider(
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_capabilities(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     use nuphus::config::ModelRegistry;
 
@@ -2830,7 +2830,7 @@ fn extract_context(obj: &serde_json::Value, ctx_keys: &[&str]) -> Option<usize> 
     None
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_context_limit(state: State<'_, AppState>) -> Result<usize, String> {
     // 1. Prefer backend cached value (real model window set during configure_llm /
     //    startup calibration). 0 = unknown — kept as-is (never guessed).

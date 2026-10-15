@@ -1576,7 +1576,7 @@ pub async fn execute_session_refine(
 }
 
 /// 桌面端「跳过提炼」：本地关闭弹窗 + 广播 RefineSkipped（双端同步关闭）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn refine_skip(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,

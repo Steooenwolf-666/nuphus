@@ -513,7 +513,7 @@ pub async fn overlay_pick_color(app: AppHandle, x: i32, y: i32) -> Result<(), St
 }
 
 /// Take screenshot result (for polling) — called by main window, cleared after consumption
-#[tauri::command]
+#[tauri::command(async)]
 pub fn take_capture_result() -> Result<Option<serde_json::Value>, String> {
     Ok(CAPTURE_RESULT.lock().expect("take capture result").take())
 }

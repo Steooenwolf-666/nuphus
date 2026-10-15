@@ -37,6 +37,11 @@ const GRACE_RELOAD_MS: u64 = 30_000;
 /// 重载后再等这么久仍失联才弹对话框（重载要跑完一轮页面加载）。
 const GRACE_NOTIFY_MS: u64 = 60_000;
 
+/// 主线程停摆判定阈值：Windows 约 5s 未泵消息就把窗口标成「无响应」，
+/// 这里取 3s 提前留证——**任何**原因（我们的命令、插件、将来的新代码）卡住
+/// 主线程都会留下日志，不再只能靠用户报「无响应」。
+const MAIN_THREAD_STALL_MS: Duration = Duration::from_secs(3);
+
 /// 恢复阶梯的阶段（只前进，失联解除即回到 `Watching`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HealStage {
@@ -113,6 +118,9 @@ fn run(app: AppHandle) {
             crate::emitter::perform_ui_dead_actions(&app);
         }
 
+        // ②′ 主线程停摆探针（覆盖一切未知来源的 UI 冻结）。
+        probe_main_thread(&app);
+
         // ③ 恢复阶梯。
         if liveness.is_dead() {
             let since = *dead_since.get_or_insert(wall);
@@ -129,6 +137,32 @@ fn run(app: AppHandle) {
             stage = HealStage::Watching;
             dead_since = None;
         }
+    }
+}
+
+/// 主线程停摆探针：向主线程投一条空任务，测量它被执行前的排队时长。
+///
+/// 正常时主线程在毫秒级执行该任务；若超过 [`MAIN_THREAD_STALL_MS`] 仍未执行，
+/// 说明主线程被某个同步工作占住（命令体在阻塞上下文、长事务、插件回调……），
+/// 此刻用户看到的就是「无响应」。日志里带上连接池可用数，便于区分
+/// 「DB 争用」与「其它主线程工作」。
+fn probe_main_thread(app: &AppHandle) {
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    if app
+        .run_on_main_thread(move || {
+            let _ = tx.send(());
+        })
+        .is_err()
+    {
+        return; // 主线程已不可用（应用正在退出）
+    }
+    if rx.recv_timeout(MAIN_THREAD_STALL_MS).is_err() {
+        tracing::error!(
+            "[UI-WATCHDOG] 主线程停摆 >{}ms（run_on_main_thread 未在时限内执行）——\
+             界面此刻无响应。连接池可用 {}；排查是否有同步命令体/长事务占住主线程。",
+            MAIN_THREAD_STALL_MS.as_millis(),
+            nuphus::store::db::pool_available()
+        );
     }
 }
 

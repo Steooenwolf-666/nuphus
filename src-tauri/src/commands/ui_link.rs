@@ -12,7 +12,7 @@
 use tauri::AppHandle;
 
 /// 前端心跳。`state` 用于在「死而复生」时复用共享 seq 计数器推送恢复通知。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn ui_heartbeat(app: AppHandle, state: tauri::State<'_, crate::state::AppState>) {
     let liveness = crate::emitter::ui_liveness();
     let now = std::time::SystemTime::now()

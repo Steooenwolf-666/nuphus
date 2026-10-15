@@ -982,7 +982,7 @@ pub struct RelayClientStatus {
     pub device_id: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn relay_client_status() -> RelayClientStatus {
     let mut cfg = load_config();
     // 二维码必须带 device_id（公共中继归属依据）。缺失/被外部编辑器清空时幂等补齐——

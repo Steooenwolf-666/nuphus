@@ -88,7 +88,7 @@ pub async fn interrupt(state: State<'_, AppState>) -> Result<String, String> {
 
 /// 暂停执行(弹出中断菜单:继续/追加/终止)
 /// 立即发射 ExecutionPaused 事件让前端弹出暂停菜单，不需要等 Agent 循环到检查点
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pause_execution(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -113,7 +113,7 @@ pub fn pause_execution(
 /// 继续执行(用户点击"继续"按钮)
 /// 注：不清 pause_flag 也不清 action_id，由运行时循环消费决策后自行清除。
 /// 循环进入暂停等待前会先用 action_id 查决策，已存在则直接处理不弹窗。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn continue_execution(state: State<'_, AppState>, action_id: String) -> Result<String, String> {
     nuphus::agent::pause::set_pause_decision(
         &state.signals,
@@ -126,7 +126,7 @@ pub fn continue_execution(state: State<'_, AppState>, action_id: String) -> Resu
 }
 
 /// 追加指令后继续执行(用户输入新指令后点击发送)
-#[tauri::command]
+#[tauri::command(async)]
 pub fn append_instruction(
     state: State<'_, AppState>,
     action_id: String,
@@ -181,7 +181,7 @@ pub fn append_instruction(
 /// 终止执行(用户点击"终止"按钮)
 /// 不设 cancel_flag，由循环的 pause check 读到 Terminate 决策后
 /// 注入系统提示词并走 leader_should_stop 优雅退出。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn terminate_execution(
     state: State<'_, AppState>,
     action_id: String,
@@ -200,7 +200,7 @@ pub fn terminate_execution(
 /// Agent 循环检测到 pause_flag 后，直接走 Terminate 路径：
 ///   → LLM 整理输出 → 保存结果 → 返回
 /// 与用户点暂停菜单「终止」等价，但跳过前端弹窗。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn graceful_stop(state: State<'_, AppState>) -> Result<String, String> {
     let action_id = uuid::Uuid::new_v4().to_string();
     nuphus::agent::pause::set_pause_action_id(&state.signals, &action_id);
@@ -287,7 +287,7 @@ pub async fn force_reset(state: State<'_, AppState>) -> Result<String, String> {
 
 /// 兼容壳：只回答「后端是否仍被占用」。新代码请用 [`get_execution_state`]——
 /// 追加判定需要区分 Running / Finalizing，单一布尔无法表达（见 ExecutionStage）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn is_busy(state: State<'_, AppState>) -> Result<bool, String> {
     Ok(state.busy.load(Ordering::SeqCst))
 }
@@ -314,7 +314,7 @@ pub struct ExecutionStateSnapshot {
     pub tool_calls: usize,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_execution_state(state: State<'_, AppState>) -> Result<ExecutionStateSnapshot, String> {
     let signals = nuphus::state::SignalState::read(&state.signals);
     let stage = signals.execution_stage;
@@ -328,7 +328,7 @@ pub fn get_execution_state(state: State<'_, AppState>) -> Result<ExecutionStateS
 }
 
 /// Read the backend-owned append queue for the execution control UI.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_append_queue(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     let signals = nuphus::state::SignalState::read(&state.signals);
     Ok(signals.append_queue.clone())
@@ -337,7 +337,7 @@ pub fn get_append_queue(state: State<'_, AppState>) -> Result<Vec<String>, Strin
 /// Remove one still-pending append instruction by its queue index.
 /// The active agent consumes from this same vector, so an already-consumed
 /// instruction cannot be deleted through this command.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_append_queue_item(
     state: State<'_, AppState>,
     index: usize,

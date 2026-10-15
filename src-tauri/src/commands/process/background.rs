@@ -17,7 +17,7 @@ use tauri::State;
 use crate::state::AppState;
 
 /// List still-running background tasks (dead entries are pruned on read).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_background_tasks() -> Result<Vec<BackgroundTaskView>, String> {
     let now = background_tasks::now_ms();
     Ok(background_tasks::global()
@@ -33,7 +33,7 @@ pub fn list_background_tasks() -> Result<Vec<BackgroundTaskView>, String> {
 /// 的进程树并向其输出日志附加终止事实。**不置**全局 `cancel_flag`：面板操作
 /// 不表达「中断整轮执行」的意图；后者是输入框终止按钮（强制终止）的职责，
 /// 两者互不牵连。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn kill_background_task(_state: State<'_, AppState>, id: String) -> Result<String, String> {
     let outcome = background_tasks::global().kill_one(&id)?;
     let verb = if outcome.already_gone {
@@ -57,7 +57,7 @@ pub fn kill_background_task(_state: State<'_, AppState>, id: String) -> Result<S
 ///
 /// 单列一个命令的理由：中断汇报需要「保留 M 个」这个数字，而列举是重操作
 /// （每条目一次存活探测）。这里仍走同一本账，只是过滤后计数。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn count_retained_background_tasks(_state: State<'_, AppState>) -> Result<usize, String> {
     Ok(background_tasks::global().retained_count())
 }

@@ -3,13 +3,13 @@
 use super::toml_ops::get_config_path;
 use crate::state::AppState;
 use tauri::State;
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_tool_permissions(state: State<'_, AppState>) -> Result<String, String> {
     let perms = state.runtime.lock().map_err(|e| e.to_string())?;
     Ok(serde_json::to_string(&perms.tool_permissions).unwrap_or_default())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_capability(
     key: String,
     value: String,
@@ -74,7 +74,7 @@ pub fn set_capability(
 /// 这里收敛为一次读写：要么两个字段都更新，要么都不动。
 ///
 /// `kind` ∈ { vision, stt, tts, voice, image_generation, video_generation }。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_capability_binding(
     kind: String,
     model: String,
@@ -131,7 +131,7 @@ pub struct VisionResolution {
     pub leader_model: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_vision_resolution() -> Result<VisionResolution, String> {
     let registry = nuphus::config::load_registry().map_err(|e| format!("加载模型配置失败: {e}"))?;
     let leader_model = registry.model.clone();
@@ -246,7 +246,7 @@ pub async fn test_vision_model() -> Result<VisionTestOutcome, String> {
     Ok(outcome)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_session_refine_config(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     let rt = state.runtime.lock().map_err(|e| e.to_string())?;
     Ok(serde_json::json!({
@@ -263,7 +263,7 @@ pub fn get_session_refine_config(state: State<'_, AppState>) -> Result<serde_jso
 /// tiers use their fixed ratios and ignore this value. Rejects out-of-range input
 /// rather than silently clamping — a bad value here means the caller's UI and the
 /// backend disagree, which is worth surfacing instead of hiding.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_session_refine_config(
     state: State<'_, AppState>,
     force_threshold: Option<f64>,

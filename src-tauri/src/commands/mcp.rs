@@ -7,7 +7,7 @@ use serde_json::json;
 
 /// 列出所有已配置的 MCP server。
 /// 注意：**不返回 env 字段** —— env 可能含 API token，禁止暴露给前端。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_mcp_servers() -> Result<serde_json::Value, String> {
     let cfg = nuphus::mcp::config::load_config()?;
     let servers: Vec<serde_json::Value> = cfg

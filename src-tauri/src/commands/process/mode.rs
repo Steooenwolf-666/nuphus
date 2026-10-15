@@ -159,7 +159,7 @@ pub async fn set_mode(
 
 /// 获取当前权威 mode：前端启动时调用，使 mode state 与后端镜像恢复结果一致
 /// （启动恢复 current_mode from 镜像——leader/workflow/custom 三态）。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_current_mode(state: State<'_, AppState>) -> Result<String, String> {
     Ok(state
         .current_mode
