@@ -333,12 +333,20 @@ impl SkillRegistry {
 
     /// 从 GitHub 仓库安装技能（git clone → install_from_path）
     pub fn install_from_git(&self, url: &str) -> std::result::Result<SkillManifest, String> {
+        // 临时目录名必须防并发碰撞：Windows 计时器分辨率粗（~15.6ms），两个并行
+        // 调用（CI 并行测试 / UI 同时装两个技能）的裸纳秒时间戳可能完全相同，
+        // clone 会互相踩掉对方的 work tree（"File exists" / "No such file or
+        // directory"）。pid + 纳秒 + 原子序号三重唯一（同 last_model.rs 范式）。
+        static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let tmp_dir = std::env::temp_dir().join(format!(
-            "nuphus_skill_{}",
+            "nuphus_skill_{}_{}_{}",
+            std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
-                .as_nanos()
+                .as_nanos(),
+            seq
         ));
 
         let output = std::process::Command::new("git")
