@@ -24,6 +24,7 @@ mod speech;
 mod splash;
 mod startup_guard;
 mod state;
+mod ui_watchdog;
 mod utils;
 mod video;
 
@@ -1101,6 +1102,12 @@ fn main() {
             // 每个周期强杀存活超过 MAX_TASK_LIFETIME_SECS 的后台任务（含保留项）：
             // 保障是时间驱动的，不依赖用户打开面板。
 nuphus::tools::background_tasks::start_watchdog();
+
+            // ── 界面自愈看门狗 ──
+            // 事件静默期（窗口闲置）也要巡检：心跳停摆 90s 判死后，先自动重载主界面，
+            // 仍不恢复则弹原生对话框给出「重新加载 / 重启」出口——用户不再被锁在
+            // 透明/空白窗口里（2026-10-15 用户报告，详见 ui_watchdog 头注）。
+            crate::ui_watchdog::spawn(app.handle().clone());
 
             // ── 账本变更 → 双推事件（事件驱动的显示链路，2026-10-11）──
             // lib crate 的账本不能依赖 bin crate 的发射器（反向依赖会成环），

@@ -121,6 +121,13 @@ impl UiLiveness {
         self.dead.load(Ordering::SeqCst)
     }
 
+    /// 休眠/挂起唤醒后的基线重置：挂起期间的心跳空档不是「界面死亡」的证据。
+    /// 返回 `true` 表示此前已判定失联（标题已切到告警态，调用方需还原）。
+    pub fn reset_after_resume(&self, now_ms: u64) -> bool {
+        self.last_ping_ms.store(now_ms, Ordering::SeqCst);
+        self.dead.swap(false, Ordering::SeqCst)
+    }
+
     /// 失联期间是否丢弃该事件（见 [`NuphusEvent::is_essential_when_ui_dead`]）。
     pub fn should_drop(&self, event: &NuphusEvent) -> bool {
         self.is_dead() && !event.is_essential_when_ui_dead()
@@ -134,6 +141,38 @@ pub fn ui_liveness() -> Arc<UiLiveness> {
     UI_LIVENESS
         .get_or_init(|| Arc::new(UiLiveness::new()))
         .clone()
+}
+
+/// alive→dead 迁移的可见副作用：日志 + 原生窗口标题 + HUD 提示。
+///
+/// 独立于 `TauriEventEmitter`：emit 路径与**看门狗线程**（事件静默期也要判死，
+/// 见 `ui_watchdog`）共用同一套动作，避免两处漂移。
+pub fn perform_ui_dead_actions<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    tracing::error!(
+        "[UI-LINK] main webview considered dead (no frontend heartbeat for {}s) — \
+         switching to degraded mode: non-essential events dropped",
+        UI_DEAD_AFTER_MS / 1000
+    );
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.set_title(MAIN_WINDOW_TITLE_DEAD);
+    }
+    crate::commands::hud::show(app, HUD_DEAD_TEXT, "warning");
+}
+
+/// 休眠/挂起唤醒后的基线重置（看门狗调用）：挂起期间的心跳空档不算失联。
+/// 若此前已判定失联，还原标题（与 `on_ui_revived` 同一收尾，但不推 `ui_reconnected`
+/// ——前端从未失联，只是系统睡着了）。
+pub fn perform_ui_resume_reset<R: tauri::Runtime>(app: &tauri::AppHandle<R>, now_ms: u64) -> bool {
+    let was_dead = ui_liveness().reset_after_resume(now_ms);
+    if was_dead {
+        tracing::warn!(
+            "[UI-LINK] suspend/resume: heartbeat gap is expected — liveness baseline reset, title restored"
+        );
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.set_title(MAIN_WINDOW_TITLE);
+        }
+    }
+    was_dead
 }
 
 // Runtime 泛化（默认 Wry）：生产路径零改动；测试可用 MockRuntime 构造完整事件链。
@@ -156,15 +195,7 @@ impl<R: tauri::Runtime> TauriEventEmitter<R> {
     /// alive→dead 迁移时执行一次：日志、主窗口标题（原生通道，webview 死了也可见）、
     /// HUD 提示（独立窗口，可能还活着）。
     fn on_ui_dead(&self) {
-        tracing::error!(
-            "[UI-LINK] main webview considered dead (no frontend heartbeat for {}s) — \
-             switching to degraded mode: non-essential events dropped",
-            UI_DEAD_AFTER_MS / 1000
-        );
-        if let Some(main) = self.app.get_webview_window("main") {
-            let _ = main.set_title(MAIN_WINDOW_TITLE_DEAD);
-        }
-        crate::commands::hud::show(&self.app, HUD_DEAD_TEXT, "warning");
+        perform_ui_dead_actions(&self.app);
     }
 
     /// dead→alive 迁移时执行一次：还原标题，并推一条 `ui_reconnected` 警告，
