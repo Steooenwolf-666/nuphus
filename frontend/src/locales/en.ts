@@ -1631,7 +1631,7 @@ const en: Record<string, string> = {
   'titleBar.close': 'Close',
   'titleBar.menu': 'Menu',
   'titleBar.newChat': 'New Chat',
-  'titleBar.about': 'About',
+  'titleBar.about': 'App',
   'titleBar.feedback': 'Feedback',
   'titleBar.checkUpdate': 'Version (Check for updates)',
 

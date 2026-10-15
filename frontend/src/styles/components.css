@@ -129,8 +129,10 @@
      皮肤背景已不由本元素绘制（见上方 .app-skin-backdrop）。 */
   position: relative;
   /* z-index:1：压过皮肤背景层（.app-skin-backdrop z-index:0）——原先由
-      .app-shell > * 通配提供，通配上的 z-index 已因层叠事故移除（见上）。 */
-  z-index: 1;
+      .app-shell > * 通配提供，通配上的 z-index 已因层叠事故移除（见上）。
+      2 而非 1：chat-area 在 DOM 中位于本元素之后且同为 z-index:1，
+      同层级后者的内容会盖住标题栏的 hover 弹层（「应用」菜单） */
+  z-index: 2;
 }
 .title-bar-left {
   display: flex;
@@ -146,22 +148,27 @@
   flex: 1;
   height: 100%;
 }
-/* ── 「关于」纯文字入口 + hover 弹层 ──
-   非按钮样式：与品牌文字同灰阶弱化呈现，hover 时提亮；
-   弹层右对齐触发器，与窗口控制按钮保持间距 */
+/* ── 「应用」纯文字入口 + hover 弹层 ──
+   非按钮样式：灰阶弱化，hover 提亮；触发器左右留足点击 padding。
+   弹窗复用 input-tool-menu 体系（8px 圆角 / line-1 / shadow-elevated /
+   menuPopIn / item surface-hover 动效），从触发器左对齐向下弹。
+   z-index：标题栏是 .app-shell 内 z-index:1 的层叠上下文，弹层 210 需盖过
+   chat-area（同为 1 层内），又低于全屏 overlay（200+ 同级内相对次序） */
 .title-bar-about {
   position: relative;
   display: flex;
   align-items: center;
   height: 100%;
-  margin-right: 6px;
+  margin-left: 10px;
 }
 .title-bar-about-trigger {
   font-size: var(--fz-sm);
   color: var(--fg-3);
   cursor: pointer;
   user-select: none;
-  padding: 2px 4px;
+  padding: 3px 12px;
+  /* 整体下移 2px：与品牌文字的视觉基线对齐（标题栏垂直居中的光学修正） */
+  transform: translateY(2px);
   border-radius: var(--radius-1);
   transition: color var(--dur-fast) var(--ease-out);
 }
@@ -172,39 +179,63 @@
 }
 .title-bar-about-menu {
   position: absolute;
-  top: calc(100% - 2px);
-  right: 0;
-  min-width: 180px;
-  padding: 4px;
+  /* 零间隙贴死触发器：hover 从触发器滑向弹窗若隔空隙，父容器的 mouseleave
+     会在鼠标穿越间隙时立即触发 → 弹窗在鼠标到达前关闭（hover 失联）。
+     视觉下坠感由弹窗内 padding-top 承担 */
+  top: 100%;
+  left: 0;
+  min-width: 152px;
+  padding: 8px 4px 4px;
+  background: var(--void-primary);
+  border: 1px solid var(--line-1);
+  border-radius: 8px;
+  box-shadow: var(--shadow-elevated);
+  z-index: 210;
   display: flex;
   flex-direction: column;
-  background: var(--void-primary);
-  border: 1px solid var(--glass-2);
-  border-radius: 10px;
-  box-shadow: var(--shadow-elevated);
-  z-index: 200;
+  gap: 1px;
+  animation: menuPopIn 0.12s var(--ease-out);
 }
 .title-bar-about-item {
   display: flex;
   align-items: center;
-  padding: 8px 10px;
-  border: none;
-  border-radius: var(--radius-1);
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--fg-2);
   background: transparent;
-  color: var(--fg-1);
-  font-size: var(--fz-sm);
-  text-decoration: none;
+  border: none;
+  border-radius: 6px;
   cursor: pointer;
   text-align: left;
+  text-decoration: none;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
 }
 .title-bar-about-item:hover:not(:disabled),
 .title-bar-about-item:focus-visible {
-  background: var(--surface-hover, rgb(255 255 255 / 6%));
+  background: var(--surface-hover);
+  color: var(--fg-1);
   outline: none;
 }
 .title-bar-about-item:disabled {
   opacity: 0.5;
   cursor: default;
+}
+/* keyframes 就近兜底：menuPopIn 定义在懒加载的 chat-input.css / api-health.css，
+   标题栏属首屏渲染，不能依赖它们的注入时序 */
+@keyframes menuPopIn {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .title-bar-icon {
   display: flex;

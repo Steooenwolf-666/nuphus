@@ -1553,7 +1553,7 @@ const zh: Record<string, string> = {
   'titleBar.close': '关闭',
   'titleBar.menu': '菜单',
   'titleBar.newChat': '新建会话',
-  'titleBar.about': '关于',
+  'titleBar.about': '应用',
   'titleBar.feedback': '反馈',
   'titleBar.checkUpdate': '版本（检查更新）',
 

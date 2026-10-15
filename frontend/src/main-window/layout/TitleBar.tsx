@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { getCurrentWindow, type Window } from '@tauri-apps/api/window'
 import { NuphusAvatar, type NuphusAvatarState } from '../../ui/NuphusAvatar'
 import { IconButton } from '../../ui/Button'
@@ -16,7 +16,6 @@ export function TitleBar({ onNewChat, agentState = 'idle', onOpenUpdate }: Title
   const { t } = useLanguage()
   const [menuOpen, setMenuOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
-  const aboutCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [win, setWin] = useState<Window | null>(null)
   useEffect(() => {
     // 浏览器调试环境无 Tauri 运行时，跳过窗口 API，避免整棵组件树崩溃
@@ -40,25 +39,6 @@ export function TitleBar({ onNewChat, agentState = 'idle', onOpenUpdate }: Title
   }
   const closeWindow = () => win?.close()
 
-  // 「关于」hover 弹层的延迟关闭：从触发器/弹层移出后给 160ms 缓冲，
-  // 鼠标沿间隙移入弹层不闪断；进入任一区域时取消挂起的关闭
-  const scheduleAboutClose = () => {
-    if (aboutCloseTimer.current) clearTimeout(aboutCloseTimer.current)
-    aboutCloseTimer.current = setTimeout(() => setAboutOpen(false), 160)
-  }
-  const cancelAboutClose = () => {
-    if (aboutCloseTimer.current) {
-      clearTimeout(aboutCloseTimer.current)
-      aboutCloseTimer.current = null
-    }
-  }
-  useEffect(
-    () => () => {
-      if (aboutCloseTimer.current) clearTimeout(aboutCloseTimer.current)
-    },
-    [],
-  )
-
   return (
     <header className="title-bar">
       <div className="title-bar-left" data-tauri-drag-region>
@@ -67,17 +47,13 @@ export function TitleBar({ onNewChat, agentState = 'idle', onOpenUpdate }: Title
         </div>
         <span className="title-bar-brand">Nuphus</span>
       </div>
-      <span className="title-bar-spacer" data-tauri-drag-region />
-      {/* 纯文字「关于」入口（非按钮样式）：hover 弹出 反馈 / 版本（检查更新）。
-          触发器不做拖动区（交互元素与 data-tauri-drag-region 冲突）；
-          左侧 spacer 仍承担拖动，拖动面积损失可忽略 */}
+      {/* 「应用」纯文字入口：hover 弹出 反馈 / 版本（检查更新），弹窗复用
+          input-tool-menu 体系（8px 圆角 / line-1 / menuPopIn / surface-hover）。
+          位于 spacer 左侧（拖动区在右侧承担）；触发器不做拖动区（交互元素冲突） */}
       <div
         className="title-bar-about"
-        onMouseEnter={() => {
-          cancelAboutClose()
-          setAboutOpen(true)
-        }}
-        onMouseLeave={scheduleAboutClose}
+        onMouseEnter={() => setAboutOpen(true)}
+        onMouseLeave={() => setAboutOpen(false)}
       >
         <span
           className="title-bar-about-trigger"
@@ -96,11 +72,7 @@ export function TitleBar({ onNewChat, agentState = 'idle', onOpenUpdate }: Title
           {t('titleBar.about')}
         </span>
         {aboutOpen && (
-          <div
-            className="title-bar-about-menu"
-            onMouseEnter={cancelAboutClose}
-            onMouseLeave={scheduleAboutClose}
-          >
+          <div className="title-bar-about-menu">
             <a
               className="title-bar-about-item"
               href="https://github.com/mrpulor-gh/nuphus/issues/new"
@@ -123,6 +95,7 @@ export function TitleBar({ onNewChat, agentState = 'idle', onOpenUpdate }: Title
           </div>
         )}
       </div>
+      <span className="title-bar-spacer" data-tauri-drag-region />
       {/* 桌面端：窗口控制按钮 */}
       <div className="title-bar-right title-bar-desktop-controls">
         <IconButton variant="win-btn" label={t('titleBar.minimize')} onClick={minimize}>
