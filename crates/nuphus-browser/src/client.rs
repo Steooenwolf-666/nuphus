@@ -1073,6 +1073,28 @@ fn attach_failure_message(
     }
 }
 
+/// Verdict on an existing CDP connection, combining a command probe with
+/// OS-level evidence about the browser process.
+///
+/// The distinction is the whole point. A failed command probe is *not* proof of
+/// death — CDP event floods or a busy renderer delay the response, and resetting
+/// on that false negative destroys the live page state of a perfectly healthy
+/// session. Death only becomes actionable when it is proven: the Chromium child
+/// we own has exited, or (for an instance we only attached to) the recorded debug
+/// port no longer accepts connections. Both are kernel facts, not guesses from
+/// error text, so they cannot be spoofed by a slow page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectionLiveness {
+    /// The probe round-tripped — this connection can serve commands.
+    Alive,
+    /// The probe failed *and* the browser process is provably gone. No command on
+    /// this connection can ever succeed again.
+    Dead,
+    /// The probe failed but the process is alive (or its state is unverifiable).
+    /// Ambiguous: keep what we have.
+    Unresponsive,
+}
+
 impl BrowserClient {
     /// Read the external CDP endpoint from the environment (shared by both constructors).
     fn external_cdp_url_from_env() -> Option<String> {
@@ -1173,23 +1195,50 @@ impl BrowserClient {
             return self.attach_external().await;
         }
 
-        // Idempotency + liveness probe. self.browser may be Some while the underlying CDP
-        // handler is gone (shared Chrome killed by an external process); without any check we
-        // would return Ok(()) and every later call would fail with "receiver is gone". The
-        // probe confirms the happy path cheaply; a non-confirmation leaves the existing
-        // connection in place and lets the operation itself surface a connection error.
+        // Idempotency + liveness classification. self.browser may be Some while the
+        // underlying CDP handler is gone (shared Chrome killed by an external process);
+        // without any check we would return Ok(()) and every later call would fail with
+        // "receiver is gone".
+        //
+        // Death has to be *proven*, never guessed. The original code treated every
+        // failed probe as "keep the connection" and returned Ok(()) — which is why
+        // consumers (browser_open_url, MCP tools) each had to discover the dead
+        // channel on their first real command and carry their own self-heal, paying
+        // 0–9s of dead time on every cold open. A probe that merely fails is
+        // genuinely ambiguous though (a slow page or a CDP event flood delays the
+        // response), so resetting on it alone would destroy live page state.
+        // `classify_connection_liveness` pairs the probe with OS-level evidence:
+        // only a provably gone browser process is relaunched here.
         if self.browser.is_some() {
-            if self.is_connection_alive().await {
-                let upgrade = self.launched_headless == Some(true) && !headless;
-                if !upgrade {
-                    return Ok(()); // Already launched, current mode satisfies the request
+            match self.classify_connection_liveness().await {
+                ConnectionLiveness::Alive => {
+                    let upgrade = self.launched_headless == Some(true) && !headless;
+                    if !upgrade {
+                        return Ok(()); // Already launched, current mode satisfies the request
+                    }
+                    self.close().await?;
                 }
-                self.close().await?;
-            } else {
-                tracing::debug!(
-                    "[Browser] liveness probe did not confirm alive; trusting existing connection"
-                );
-                return Ok(());
+                ConnectionLiveness::Dead => {
+                    // Relaunch here, not in the caller: `get_or_launch` promises a
+                    // client that can actually serve commands, and handing out this
+                    // one would only move the failure to the first command.
+                    tracing::info!(
+                        "[Browser] CDP connection is dead (browser process gone); \
+                         relaunching instead of returning a connection that cannot serve commands"
+                    );
+                    self.close().await?;
+                }
+                ConnectionLiveness::Unresponsive => {
+                    // Ambiguous: the process is still alive (or unverifiable), so the
+                    // page state behind this connection is worth keeping. Let a real
+                    // command surface a genuine failure rather than tearing down a
+                    // session that may be perfectly fine.
+                    tracing::debug!(
+                        "[Browser] liveness probe did not confirm alive but the browser \
+                         process is alive; trusting existing connection"
+                    );
+                    return Ok(());
+                }
             }
         }
 
@@ -1697,6 +1746,54 @@ impl BrowserClient {
         }
     }
 
+    /// Classify the existing connection (see [`ConnectionLiveness`]).
+    ///
+    /// The probe alone cannot separate "dead" from "slow", so a negative result is
+    /// corroborated with evidence about the browser process before it is trusted:
+    /// - a Chromium child spawned by this client that has exited, or
+    /// - for an instance this client only attached to, a debug port that no longer
+    ///   accepts connections.
+    ///
+    /// When neither is available the verdict is `Unresponsive`, never `Dead` —
+    /// unknown evidence must not license tearing down a live session.
+    pub async fn classify_connection_liveness(&mut self) -> ConnectionLiveness {
+        if self.is_connection_alive().await {
+            return ConnectionLiveness::Alive;
+        }
+        let browser_gone = self.browser_process_evidence_gone().await;
+        Self::verdict_from_process_evidence(browser_gone)
+    }
+
+    /// Positive evidence that the browser process behind this connection is gone.
+    ///
+    /// Two sources, in order of authority:
+    /// - a Chromium child spawned by this client that has exited;
+    /// - for an instance this client only attached to (no child handle), a debug
+    ///   port recorded in the profile dir that no longer accepts connections.
+    ///
+    /// Anything else — no child handle and no port file — is `false`: absence of
+    /// evidence is not evidence of death.
+    async fn browser_process_evidence_gone(&mut self) -> bool {
+        match self.child_process_alive() {
+            Some(alive) => !alive,
+            None => match Self::devtools_port_of(&self.profile_dir) {
+                Some(port) => !Self::loopback_port_alive(port, ATTACH_PRECHECK_TIMEOUT_MS).await,
+                None => false,
+            },
+        }
+    }
+
+    /// Turn "the probe failed" + "is the browser process provably gone?" into a
+    /// verdict. Pure, so the evidence rule can be pinned by a unit test without
+    /// launching a browser.
+    fn verdict_from_process_evidence(browser_gone: bool) -> ConnectionLiveness {
+        if browser_gone {
+            ConnectionLiveness::Dead
+        } else {
+            ConnectionLiveness::Unresponsive
+        }
+    }
+
     /// Port recorded in the profile's `DevToolsActivePort` file (Chrome writes it when
     /// launched with `--remote-debugging-port=0`), or `None` when the file is
     /// missing/unreadable — no attach target exists then.
@@ -1737,6 +1834,17 @@ impl BrowserClient {
         self.snapshot_refs.clear();
 
         let page = self.get_or_create_page().await?;
+        Self::goto_page(&page, url).await
+    }
+
+    /// Load `url` into an already-resolved page and report the outcome.
+    ///
+    /// The one navigation implementation, shared by [`Self::navigate`] (which
+    /// picks the page) and [`Self::new_tab`] (which has just claimed or created
+    /// one). Sharing it is what turns `new_tab`'s promise — "return with the
+    /// page sitting at the requested URL" — into behaviour instead of a comment
+    /// that assumed some future caller would finish the job.
+    async fn goto_page(page: &Arc<Mutex<Page>>, url: &str) -> Result<String, BrowserError> {
         let page_guard = page.lock().await;
 
         let before_url = page_guard
@@ -3871,10 +3979,16 @@ impl BrowserClient {
 
     /// New tab
     ///
-    /// 先收编已有的 about:blank 孤儿页（有则导航/复用，不再新开）：外链每点一次都
+    /// 先收编已有的 about:blank 孤儿页（有则导航过去，不再新开）：外链每点一次都
     /// new_page 会在历史标签外再开一张 blank——每张新页 = 新 renderer 进程（启动
     /// 耗时 + 常驻内存），孤儿收编是打开耗时与资源占用的双重收益。无孤儿才真正
     /// 新开。认领页与新建页同一套一次性配置（见 get_or_create_page 的注释）。
+    ///
+    /// 契约：返回时 `self.page` 一定停在 `url` 上。认领分支自己完成导航——早先
+    /// 把它留给"调用方随后会 navigate()"，而唯一的生产调用方（Tauri 的
+    /// `browser_open_url`）并不知情，于是每一次点外链都静默落在一张 blank 上
+    /// （2026-10-15 现场：`landed=about:blank`）。导航走 `goto_page`，与
+    /// `navigate` 同一份实现，不会再分化出两套语义。
     pub async fn new_tab(&mut self, url: Option<&str>) -> Result<String, BrowserError> {
         let requested = url.unwrap_or("about:blank").to_string();
 
@@ -3884,9 +3998,17 @@ impl BrowserClient {
             return Ok("New tab opened: about:blank".to_string());
         }
 
+        // 本会话自己持有的页绝不进孤儿候选：点外链不能把 Agent 正在自动化的那张
+        // 页顶掉（这正是「统一到 Agent 浏览器开新标签」的设计前提）。此前扫描声称
+        // 已排除、实际未排除，命中时会被就地导航，等于静默摧毁当前工作页。
+        let own_target_id = match self.page.as_ref() {
+            Some(page) => Some(page.lock().await.target_id().clone()),
+            None => None,
+        };
+
         // 带参数：先看有没有 blank 孤儿可收编（导航过去），没有才 new_page。
         // pages() 只读（fetch_targets 会杀死存活 Page 的命令通道，见
-        // is_connection_alive ⚠ 注释）；本会话自己的页被 self.page 持有、不在孤儿之列。
+        // is_connection_alive ⚠ 注释）；排除 own_target_id 之外不再有别的前置条件。
         // 读取块只做只读扫描——self.browser 的不可变借用随块结束归还，
         // 后面的 self 变更（page 赋值 / ensure_download_behavior）才不冲突。
         let orphan: Option<Page> = {
@@ -3906,6 +4028,9 @@ impl BrowserClient {
 
             let mut found: Option<Page> = None;
             for p in &pages {
+                if Some(p.target_id()) == own_target_id.as_ref() {
+                    continue; // 我们自己的工作页，不是孤儿
+                }
                 let u = p
                     .url()
                     .await
@@ -3924,14 +4049,17 @@ impl BrowserClient {
             self.page = Some(page_arc.clone());
             // New page, new backendNodeId space — stale @N refs must not carry over.
             self.snapshot_refs.clear();
+            // 即将导航，页内注入的 helpers 会随导航丢失，提前置位以便 batch_exec 重注入。
+            self.helpers_injected = false;
             {
                 let page_guard = page_arc.lock().await;
                 let _ = page_guard.execute(DOMEnable::default()).await;
                 let _ = Self::inject_anti_detection(&page_guard).await;
             }
             self.ensure_download_behavior().await;
-            // 认领的页此刻是 about:blank，与「新开一张再导航」终态一致：navigate
-            // 会走 get_or_create_page 命中 self.page，由它完成真正的 URL 加载。
+            // 认领的页此刻还是 about:blank —— 由 new_tab 自己加载目标 URL，
+            // 这是本函数契约的一半，不能外包给调用方。
+            Self::goto_page(&page_arc, &requested).await?;
             return Ok(format!("Reused blank tab for: {requested}"));
         }
         // Scope the browser borrow + guard: ensure_download_behavior below
@@ -5197,6 +5325,219 @@ setTimeout(function(){ document.getElementById('will-show').style.display = 'blo
 
         client.close().await.ok();
         cleanup_profile("probe_regression");
+    }
+
+    /// Regression: `launch()` must not hand out a connection that provably
+    /// cannot serve commands.
+    ///
+    /// The original code treated every failed liveness probe as "still fine" and
+    /// returned `Ok(())`. A shared Chrome closed by the user therefore left a
+    /// zombie client behind, and every consumer had to discover the dead channel
+    /// on its first real command — `cdp_window.log` shows 0–9 s of dead time on
+    /// every cold open, plus each caller carrying its own reconnect fallback.
+    ///
+    /// The fix keeps the original caution (a *failed probe alone* is ambiguous and
+    /// must NOT tear down a live session) and adds the missing half: positive
+    /// OS-level evidence that the browser process is gone makes death authoritative,
+    /// so `launch()` relaunches instead of lying.
+    #[tokio::test]
+    #[ignore = "launches real Chrome; requires Chrome installed locally"]
+    async fn launch_relaunches_when_browser_process_is_provably_gone() {
+        let mut client = isolated_client("dead_process_relaunch");
+        client.launch(true).await.expect("launch Chrome");
+
+        // A healthy connection must be reported as such — not as dead, and not
+        // torn down (a false positive here would destroy the user's tabs).
+        assert_eq!(
+            client.classify_connection_liveness().await,
+            ConnectionLiveness::Alive
+        );
+
+        // Kill the Chromium child this client spawned: positive, kernel-level
+        // evidence that this connection can never serve another command.
+        if let Some(mut child) = client.child_process.take() {
+            child.kill().await.expect("kill Chrome child");
+            child.wait().await.expect("reap Chrome child");
+        }
+        // Wait for the probe to observe the broken channel (bounded).
+        let mut verdict = client.classify_connection_liveness().await;
+        for _ in 0..20 {
+            if verdict == ConnectionLiveness::Dead {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            verdict = client.classify_connection_liveness().await;
+        }
+        assert_eq!(
+            verdict,
+            ConnectionLiveness::Dead,
+            "a dead Chromium child must be reported as Dead, not left as a zombie connection"
+        );
+
+        // The payoff: launch() now self-heals instead of returning Ok(()) on a
+        // dead connection, so no caller needs its own reconnect fallback.
+        client.launch(true).await.expect("relaunch after death");
+        assert_eq!(
+            client.classify_connection_liveness().await,
+            ConnectionLiveness::Alive
+        );
+
+        client.close().await.ok();
+        cleanup_profile("dead_process_relaunch");
+    }
+
+    /// A failed probe with the browser process still alive must stay
+    /// `Unresponsive`, never `Dead`: resetting there would destroy live page state
+    /// on a false negative (CDP event floods / busy renderer delay the probe).
+    #[test]
+    fn liveness_verdict_requires_positive_evidence() {
+        assert_eq!(
+            BrowserClient::verdict_from_process_evidence(true),
+            ConnectionLiveness::Dead
+        );
+        assert_eq!(
+            BrowserClient::verdict_from_process_evidence(false),
+            ConnectionLiveness::Unresponsive
+        );
+    }
+
+    /// Regression: `new_tab(url)` must leave `self.page` AT `url`.
+    ///
+    /// The orphan-adoption branch used to adopt the blank tab and return success
+    /// without navigating, punting the URL load to a "caller will navigate()"
+    /// that no production caller performed. Field evidence
+    /// (`%APPDATA%\Nuphus\cdp_window.log`, 2026-10-15): three consecutive
+    /// `open_url` calls returned `landed=about:blank` — the browser "opened"
+    /// every link onto a blank page.
+    ///
+    /// Arrangement: one blank page owned by this session (must be left alone) and
+    /// one blank orphan (must be adopted AND navigated).
+    #[tokio::test]
+    #[ignore = "launches real Chrome; requires Chrome installed locally"]
+    async fn new_tab_lands_on_requested_url_after_adopting_blank_orphan() {
+        let mut client = isolated_client("new_tab_orphan_navigates");
+        client.launch(true).await.expect("launch Chrome");
+
+        // Owned blank page: get_or_create_page creates one because Chrome's startup
+        // tab is chrome://new-tab-page, not about:blank.
+        client
+            .get_or_create_page()
+            .await
+            .expect("create owned page");
+        let owned_target = client
+            .page
+            .as_ref()
+            .expect("page exists")
+            .lock()
+            .await
+            .target_id()
+            .clone();
+
+        // A second blank page, not owned by this session → a true orphan.
+        {
+            let browser = client.browser.as_ref().expect("browser").clone();
+            let orphan = browser
+                .lock()
+                .await
+                .new_page("about:blank")
+                .await
+                .expect("create orphan blank page");
+            let orphan_target = orphan.target_id().clone();
+            assert_ne!(
+                orphan_target, owned_target,
+                "the orphan must be a different tab from the owned one"
+            );
+        }
+
+        let url = fixture_url("new_tab_orphan_navigates", "<h1>adopted</h1>");
+        let message = client
+            .new_tab(Some(&url))
+            .await
+            .expect("new_tab must succeed");
+        assert!(
+            message.starts_with("Reused blank tab for:"),
+            "test must exercise the orphan-adoption branch, got: {message}"
+        );
+
+        let landed = client.current_url().await.expect("current_url");
+        assert_ne!(
+            landed, "about:blank",
+            "new_tab returned success but the adopted page was never navigated"
+        );
+        assert!(
+            landed.starts_with("file:///") && landed.contains("new_tab_orphan_navigates"),
+            "adopted page must sit at the requested URL, got: {landed}"
+        );
+        let title = client
+            .evaluate("() => document.body.textContent.trim()")
+            .await
+            .expect("adopted page must serve its DOM");
+        assert_eq!(title, serde_json::json!("adopted"));
+
+        client.close().await.ok();
+        cleanup_profile("new_tab_orphan_navigates");
+    }
+
+    /// Regression: `new_tab` must never re-purpose the session's own current page.
+    ///
+    /// The orphan scan claimed to exclude `self.page` but never did. When the
+    /// session held a blank page, clicking a link navigated that tab in place —
+    /// silently destroying the page the Agent was automating, which is exactly
+    /// what "open a new tab instead of navigating the current page" forbids.
+    #[tokio::test]
+    #[ignore = "launches real Chrome; requires Chrome installed locally"]
+    async fn new_tab_never_captures_the_sessions_own_page() {
+        let mut client = isolated_client("new_tab_own_page_untouched");
+        client.launch(true).await.expect("launch Chrome");
+
+        client
+            .get_or_create_page()
+            .await
+            .expect("create owned page");
+        let owned = client.page.as_ref().expect("page exists").clone();
+        let owned_target = owned.lock().await.target_id().clone();
+
+        let url = fixture_url("new_tab_own_page_untouched", "<h1>fresh</h1>");
+        client
+            .new_tab(Some(&url))
+            .await
+            .expect("new_tab must succeed");
+
+        // The session moved to a different tab...
+        let new_target = client
+            .page
+            .as_ref()
+            .expect("page exists")
+            .lock()
+            .await
+            .target_id()
+            .clone();
+        assert_ne!(
+            new_target, owned_target,
+            "new_tab must open a tab, not take over the session's current page"
+        );
+        // ...and the old page is untouched.
+        let owned_url = {
+            let guard = owned.lock().await;
+            guard
+                .url()
+                .await
+                .unwrap_or_default()
+                .unwrap_or_else(|| "about:blank".to_string())
+        };
+        assert_eq!(
+            owned_url, "about:blank",
+            "the page the session was holding must not have been navigated"
+        );
+        // The new tab really carries the requested URL.
+        let landed = client.current_url().await.expect("current_url");
+        assert!(
+            landed.starts_with("file:///") && landed.contains("new_tab_own_page_untouched"),
+            "new tab must sit at the requested URL, got: {landed}"
+        );
+
+        client.close().await.ok();
+        cleanup_profile("new_tab_own_page_untouched");
     }
 
     /// Regression: navigate must not hang until the tool-level 30s timeout on a

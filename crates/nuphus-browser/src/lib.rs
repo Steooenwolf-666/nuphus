@@ -17,7 +17,7 @@ pub mod cookie_source;
 pub use annotation_overlay::ANNOTATION_OVERLAY_SCRIPT;
 
 pub use chrome_finder::{find_chrome, get_profile_dir as managed_profile_dir, ChromeError};
-pub use client::{BrowserClient, BrowserError, ExternalIdentity};
+pub use client::{BrowserClient, BrowserError, ConnectionLiveness, ExternalIdentity};
 pub use shared::{get_or_launch, runtime, shared_client};
 
 /// Round a byte index down to the nearest valid UTF-8 character boundary.

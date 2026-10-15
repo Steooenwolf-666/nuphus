@@ -7,7 +7,7 @@
 //! 二者不是同一件事，故并存：人不必为了看链接切到自动化浏览器，但需要让
 //! Agent 操作的那个窗口可见时（想看它进行到哪一步），走本命令把它提到前台。
 
-use nuphus::browser::{get_or_launch, runtime, BrowserClient, BrowserError};
+use nuphus::browser::{get_or_launch, runtime, BrowserError};
 
 /// 把诊断行追加到日志文件。
 ///
@@ -110,6 +110,21 @@ pub struct OpenedUrl {
 /// 点链接的时机常常正好是 Agent 在自动化某个页面时；导航会把它正在操作的那张页顶掉，
 /// 轻则打断流程，重则让它的下一步操作落到用户的页面上。
 ///
+/// ## 这里为什么没有「重连再试一次」
+///
+/// 曾经有（2026-10-09）：`get_or_launch` 拿到的连接可能已经死了（Chrome 被关掉、
+/// 上次会话遗留），于是 `new_tab` 先撞一次 `receiver is gone`，再由调用方 reconnect
+/// 重试——每次点外链白付 0–9s，还掩盖了真正的问题。
+///
+/// 根因在 `BrowserClient::launch`（crates/nuphus-browser/src/client.rs）：它把探活
+/// 失败一律当成「连接还好」并返回 Ok。现已改为**证明式判死**——只有拿到浏览器进程
+/// 确实消失的操作系统级证据（自启子进程已退出 / 记录端口不再接受连接）才 close 并
+/// 重启，其余情况保留原连接。`get_or_launch` 因此要么给出能干活的连接，要么直接报错。
+/// `new_tab` 也已在自己的契约里完成导航（不再指望调用方补 navigate）。
+///
+/// 所以这里不再自愈：连接是在本命令执行期间才被外力关掉的话，如实报错比假装成功好
+/// ——重试治不好用户连续关窗口，而一次真实的失败至少能让用户看见发生了什么。
+///
 /// 校验复用 `external::is_allowed_external_url`（只放行 http/https、拒控制字符与超长）。
 #[tauri::command]
 pub async fn browser_open_url(url: String) -> Result<OpenedUrl, String> {
@@ -135,24 +150,13 @@ pub async fn browser_open_url(url: String) -> Result<OpenedUrl, String> {
                     .await
                     .map_err(BrowserError::Launch)?;
                 let client = guard.as_mut().ok_or(BrowserError::NotStarted)?;
-                // 自愈：与 bring_to_front 同一套理由 —— 这是**由人**触发的操作，
-                // 点了打不开就是坏了，没有第二次机会（Tauri 命令层没有 nuphus-mcp 的
-                // run_op_with_reconnect）。launch() 的探活「不判死」，僵尸连接会被原样
-                // 交到这里；new_tab 往死通道发命令只会得到
-                // "send failed because receiver is gone"。
-                // 现场：CDP 浏览器被关掉后点外链必失败；先点 header 入口能成功，
-                // 因为那条路径走 bring_to_front，它会 reconnect（2026-10-09）。
+                // new_tab 返回时 self.page 一定停在 requested 上（见其契约）。
                 if let Err(e) = client.new_tab(Some(&requested)).await {
-                    if BrowserClient::is_connection_error(&e) {
-                        diag(&format!(
-                            "open_url: new_tab FAILED after {}ms ({e}); reconnecting",
-                            ms()
-                        ));
-                        client.reconnect().await?;
-                        client.new_tab(Some(&requested)).await?;
-                    } else {
-                        return Err(e);
-                    }
+                    diag(&format!(
+                        "open_url: new_tab FAILED after {}ms: {e}",
+                        ms()
+                    ));
+                    return Err(e);
                 }
                 if let Err(e) = client.bring_to_front().await {
                     diag(&format!(
@@ -161,10 +165,16 @@ pub async fn browser_open_url(url: String) -> Result<OpenedUrl, String> {
                     ));
                     return Err(e);
                 }
-                let landed = client
-                    .current_url()
-                    .await
-                    .unwrap_or_else(|_| requested.clone());
+                let landed = match client.current_url().await {
+                    Ok(url) => url,
+                    Err(e) => {
+                        diag(&format!(
+                            "open_url: current_url FAILED after {}ms ({e}); falling back to requested",
+                            ms()
+                        ));
+                        requested.clone()
+                    }
+                };
                 diag(&format!(
                     "open_url done after {}ms: pre_existed={pre_existed} landed={landed}",
                     ms()
