@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-> **Version**: 0.2.27 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
+> **Version**: 0.2.29 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -275,6 +275,22 @@ All plugins are plain-text files (.md / .json); drop them into the matching `plu
 ---
 
 ## Acknowledgements
+
+### v0.2.29 Contributors
+
+Thanks to the community contributors who submitted pull requests in this release:
+
+| Contributor | PR | Summary |
+|-------------|-----|---------|
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#105](https://github.com/mrpulor-gh/nuphus/pull/105) | Fixes session-row hover overlap and stray button hits, restores the ModelsPage test baseline (adds the missing getVisionResolution mock) |
+
+### v0.2.28 Contributors
+
+Thanks to the community contributors who submitted pull requests in this release:
+
+| Contributor | PR | Summary |
+|-------------|-----|---------|
+| [@zhoupeiyu515-ui](https://github.com/zhoupeiyu515-ui) | [#104](https://github.com/mrpulor-gh/nuphus/pull/104) | Adds quick-filter chips for popular models and multi-keyword (space-OR) filtering |
 
 ### v0.2.24 Contributors
 

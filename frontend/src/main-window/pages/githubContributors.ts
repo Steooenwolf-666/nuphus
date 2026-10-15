@@ -53,6 +53,13 @@
  * 发版杂务提交不收录。历史轮次中的 #21 条目经所有者复核不属于本仓库贡献记录，已移除，
  * 不得回填。
  *
+ * `0.2.29` 轮次取证：2026-10-15 经 `/pulls?state=closed` 与 `/compare/v0.2.28...main` API 核对，
+ * v0.2.28（2026-10-12）之后唯一合并 PR 为 #105（zhoupeiyu515-ui，会话行 hover 重叠修复 +
+ * ModelsPage 测试基线恢复，2026-10-14 合并，merge commit 4110640b；含 Zpy 署名的两个
+ * squash 内 commit，同一账号）。zhoupeiyu515-ui 已在头像墙（v0.2.24 起收录），无新提交者。
+ * 区间其余 42 个提交全为仓库所有者直推，按既定口径以 **commit 出处**收录重要功能；
+ * 纯格式 / lint / 发版杂务提交不收录。
+ *
  * ⛔ 新增记录前必须先在上面的三处找到出处并经所有者确认；不得凭印象补充贡献者或贡献内容。
  */
 
@@ -113,6 +120,22 @@ export interface GithubRound {
 
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
+  {
+    version: '0.2.29',
+    date: '2026-10-15',
+    contributors: [
+      {
+        user: 'zhoupeiyu515-ui',
+        contributions: [
+          {
+            pr: 105,
+            summary:
+              '修复会话行 hover 动画标签重叠、按钮误触，并恢复 ModelsPage 测试基线（补 mock 缺失的 getVisionResolution）',
+          },
+        ],
+      },
+    ],
+  },
   {
     version: '0.2.28',
     date: '2026-10-12',
