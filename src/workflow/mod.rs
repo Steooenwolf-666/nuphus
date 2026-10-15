@@ -349,14 +349,15 @@ impl WorkflowEngine {
         // ── Pre-execution validation（与 execute_v2 内部校验同源）──
         // tool_schemas 提前构建，供校验与执行共用
         let tool_schemas = tool_schemas.or_else(|| self.tools.as_ref().map(|t| t.get_schemas()));
-        if let Some(wf) = store.get(workflow_id).await {
+        let workflow_snapshot = store.get(workflow_id).await;
+        if let Some(wf) = workflow_snapshot.as_ref() {
             let report = match tool_schemas.as_deref() {
-                Some(schemas) => Compiler::validate_workflow_with_tools(&wf, schemas),
-                None => Compiler::validate_workflow(&wf),
+                Some(schemas) => Compiler::validate_workflow_with_tools(wf, schemas),
+                None => Compiler::validate_workflow(wf),
             };
             // Call 目标存在性 + 循环调用链静态检测
             let mut errors = report.errors;
-            errors.extend(Compiler::validate_calls(&wf, store).await);
+            errors.extend(Compiler::validate_calls(wf, store).await);
             for w in &report.warnings {
                 tracing::warn!("Workflow validation warning: {}", w);
             }
@@ -365,6 +366,22 @@ impl WorkflowEngine {
                     "Workflow validation failed: {}",
                     errors.join("; ")
                 )));
+            }
+        }
+
+        // ── 定时的运行期复检：人类阻塞点 ──
+        // 保存期判过一次不等于触发时还成立：Call 的目标可能当时缺失（放行）之后被补齐，
+        // 子工作流也可能被改出等人的构造。绑定是快照，判据必须每次触发重算——否则无人时
+        // 跑到的就是一张停下来等人的工作流，白等到各自超时。
+        // 用与保存期同一个函数（scheduler::human_blocker_with_calls），两处不可能漂移。
+        if matches!(source, WorkflowRunSource::Schedule) {
+            if let Some(wf) = workflow_snapshot.as_ref() {
+                if let Some(reason) = scheduler::human_blocker_with_calls(&wf.steps, store, 0).await
+                {
+                    return Err(crate::NuphusError::agent(format!(
+                        "定时运行未执行：{reason}。该环节需要人在场，请改用手动运行或去掉它。"
+                    )));
+                }
             }
         }
 

@@ -1454,7 +1454,9 @@ mod serialization_tests {
 
 #[cfg(test)]
 mod scheduler_domain_tests {
-    use crate::workflow::scheduler::{has_frontend_step, SchedulerEngine};
+    use crate::workflow::scheduler::{
+        human_blocker_in_step, human_blocker_in_steps, SchedulerEngine,
+    };
     use crate::workflow::store::WorkflowStore;
     use crate::workflow::types::{Action, ChatOpts, Condition, IfDef, Step, Workflow};
 
@@ -1492,16 +1494,46 @@ mod scheduler_domain_tests {
         }
     }
 
-    /// B16：chat 步骤白名单含全部 desktop/browser 工具，一律视为需用户在场——
-    /// 直接步骤与 Seq/Loop/If/Wait 容器内嵌套均要被拦。
+    fn tool_step(tool: &str) -> Step {
+        Step {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: tool.into(),
+            action: Action::Tool {
+                tool: tool.into(),
+                with: serde_json::json!({}),
+            },
+            ..Default::default()
+        }
+    }
+
+    /// `prompt` 即 wait 步骤的 `wait` 字段：空 = 不暂停，非空 = 暂停等人点继续。
+    /// auto 里放一个界面步骤：非空 prompt 时报告必须是 wait 自身（说明先判自身再下钻），
+    /// 空 prompt 时因为 auto 不含阻塞点而放行。
+    fn wait_step(prompt: &str) -> Step {
+        Step {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: prompt.into(),
+            action: Action::Wait {
+                wait: prompt.into(),
+                auto: vec![tool_step("browser_navigate")],
+            },
+            ..Default::default()
+        }
+    }
+
+    /// B16：chat 步骤的 Agent 白名单含 request_user_input 等会等人的工具，一律按需人在场——
+    /// 直接步骤与 Seq/Loop/If/Wait 容器内嵌套均要被判为阻塞点。
     #[test]
-    fn chat_step_counts_as_frontend_everywhere() {
+    fn chat_step_blocks_everywhere() {
         // 直接 chat
         let wf = Workflow {
             steps: vec![chat_step("chat1")],
             ..Workflow::new("b16_chat_direct")
         };
-        assert!(has_frontend_step(&wf.steps), "顶层 chat 应视为 frontend");
+        assert!(
+            human_blocker_in_steps(&wf.steps).is_some(),
+            "顶层 chat 应判为阻塞点"
+        );
 
         // Seq 内嵌套
         let wf = Workflow {
@@ -1515,7 +1547,10 @@ mod scheduler_domain_tests {
             }],
             ..Workflow::new("b16_chat_in_seq")
         };
-        assert!(has_frontend_step(&wf.steps), "Seq 内 chat 应视为 frontend");
+        assert!(
+            human_blocker_in_steps(&wf.steps).is_some(),
+            "Seq 内 chat 应判为阻塞点"
+        );
 
         // If 分支内
         let wf = Workflow {
@@ -1533,13 +1568,76 @@ mod scheduler_domain_tests {
             }],
             ..Workflow::new("b16_chat_in_if")
         };
-        assert!(has_frontend_step(&wf.steps), "If 内 chat 应视为 frontend");
+        assert!(
+            human_blocker_in_steps(&wf.steps).is_some(),
+            "If 内 chat 应判为阻塞点"
+        );
     }
 
-    /// B16：Call 指向含 chat/desktop 步骤的子工作流必须被拦（异步递归解析）；
-    /// 纯工具子工作流不误伤。
+    /// 判据换核：界面自动化步骤（browser_/desktop_）**不再**是不合格理由。
+    ///
+    /// 回归的是 issue #106：读取邮件 → 企业微信文档填表 → 提交这种全流程无人值守的
+    /// 自动化，此前只因出现 `browser_navigate` 就无法建定时。选择权在"人 + Agent 一同
+    /// 编译工作流"时已经行使，定时只是执行那份已决定的人工件。
+    #[test]
+    fn gui_automation_steps_do_not_block_scheduling() {
+        for tool in [
+            "browser_navigate",
+            "browser_exec",
+            "browser_click",
+            "browser_type",
+            "desktop_mouse",
+            "desktop_find_color",
+            "desktop_window_activate",
+            "Read",
+            "web_extract",
+            "system_shell",
+        ] {
+            let wf = Workflow {
+                steps: vec![tool_step(tool)],
+                ..Workflow::new("gui_not_blocking")
+            };
+            assert_eq!(
+                human_blocker_in_steps(&wf.steps),
+                None,
+                "{tool} 只是界面自动化，不该拦住定时"
+            );
+        }
+    }
+
+    /// 真正会让人无人值守跑不下去的三种构造：request_user_input、非空 wait、审批门。
+    #[test]
+    fn human_blocking_constructs_are_rejected_with_reasons() {
+        let user_input = human_blocker_in_step(&tool_step("request_user_input"))
+            .expect("request_user_input 必须判为阻塞点");
+        assert!(user_input.contains("request_user_input"), "{user_input}");
+
+        let approval = human_blocker_in_step(&tool_step("desktop_semantic_execute"))
+            .expect("desktop_semantic_execute 的审批门必须判为阻塞点");
+        assert!(approval.contains("desktop_semantic_execute"), "{approval}");
+
+        let wait =
+            human_blocker_in_step(&wait_step("等用户确认")).expect("非空 wait 必须判为阻塞点");
+        assert!(wait.contains("wait"), "{wait}");
+        assert!(
+            !wait.contains("browser_navigate"),
+            "报告必须指向 wait 自身: {wait}"
+        );
+
+        // 空 wait = 不暂停（step_wait 的既有语义）：不是阻塞点
+        assert_eq!(
+            human_blocker_in_step(&wait_step("")),
+            None,
+            "空 prompt 的 wait 步骤不会暂停，不该拦住定时"
+        );
+        // 纯空白的 prompt 同样不暂停
+        assert_eq!(human_blocker_in_step(&wait_step("   \n ")), None);
+    }
+
+    /// B16：Call 指向含 chat 步骤的子工作流必须被拦（异步递归解析）；
+    /// 纯工具子工作流不误伤——包括只含 browser_/desktop_ 的那种。
     #[tokio::test]
-    async fn call_into_frontend_subworkflow_is_rejected() {
+    async fn call_into_blocking_subworkflow_is_rejected() {
         let root =
             std::env::temp_dir().join(format!("nuphus_b16_call_{}", uuid::Uuid::new_v4().simple()));
         let store = WorkflowStore::with_root(root.join("workflows"));
@@ -1581,8 +1679,8 @@ mod scheduler_domain_tests {
             Err(error) => error,
         };
         assert!(
-            err.to_string().contains("Foreground workflows"),
-            "应报前台限制错误: {err}"
+            err.to_string().contains("无法定时执行"),
+            "应报人类阻塞点错误: {err}"
         );
 
         // 调用方 D：Call B（纯工具）→ 放行
@@ -1601,6 +1699,83 @@ mod scheduler_domain_tests {
             .expect("Call 纯工具子工作流不应被拦");
 
         scheduler.remove_schedule(&caller_pure.id).await;
+        let _ = tokio::fs::remove_dir_all(&root).await;
+    }
+
+    /// issue #106 的正面场景：全流程都是界面自动化的工作流必须能建定时。
+    /// 读邮件 → 企业微信文档填表 → 提交 → 校验，没有任何需要人判断的节点。
+    #[tokio::test]
+    async fn gui_only_workflow_can_be_scheduled() {
+        let root =
+            std::env::temp_dir().join(format!("nuphus_106_gui_{}", uuid::Uuid::new_v4().simple()));
+        let store = WorkflowStore::with_root(root.join("workflows"));
+        let scheduler = SchedulerEngine::with_persist_path(root.join("schedules.json"));
+
+        let mut gui = Workflow::new("daily_report");
+        gui.steps = vec![
+            tool_step("Read"),
+            tool_step("browser_navigate"),
+            tool_step("browser_exec"),
+            tool_step("browser_click"),
+            tool_step("browser_type"),
+            tool_step("browser_extract"),
+        ];
+        store.save(&gui).await.unwrap();
+
+        scheduler
+            .set_schedule(
+                &gui.id,
+                config("0 9 * * 1-5"),
+                std::collections::HashMap::new(),
+                &store,
+                |_| async {},
+            )
+            .await
+            .expect("纯界面自动化工作流必须允许定时（issue #106）");
+
+        scheduler.remove_schedule(&gui.id).await;
+        let _ = tokio::fs::remove_dir_all(&root).await;
+    }
+
+    /// 保存期判过不等于触发时成立：Call 的目标当时缺失（放行）之后被补成含 chat 的
+    /// 子工作流，运行期复检必须拦住——否则无人时白等到各自的超时。
+    #[tokio::test]
+    async fn schedule_survives_save_but_run_time_recheck_rejects() {
+        let root =
+            std::env::temp_dir().join(format!("nuphus_106_late_{}", uuid::Uuid::new_v4().simple()));
+        let store = WorkflowStore::with_root(root.join("workflows"));
+        let scheduler = SchedulerEngine::with_persist_path(root.join("schedules.json"));
+
+        // 目标先不落盘：此刻对 store 不可见
+        let mut late = Workflow::new("sub_added_later");
+        let late_id = late.id.clone();
+        late.steps = vec![chat_step("late_chat")];
+
+        let mut caller = Workflow::new("caller_late");
+        caller.steps = vec![call_step("c1", &late_id)];
+        store.save(&caller).await.unwrap();
+
+        // 目标此刻不存在 → 保存期放行
+        scheduler
+            .set_schedule(
+                &caller.id,
+                config("* * * * *"),
+                std::collections::HashMap::new(),
+                &store,
+                |_| async {},
+            )
+            .await
+            .expect("Call 目标缺失时保存期放行");
+
+        // 之后目标被补齐，且是会等人的那种
+        store.save(&late).await.unwrap();
+
+        let reason = crate::workflow::scheduler::human_blocker_with_calls(&caller.steps, &store, 0)
+            .await
+            .expect("补齐目标后运行期复检必须判出阻塞点");
+        assert!(reason.contains("Chat"), "{reason}");
+
+        scheduler.remove_schedule(&caller.id).await;
         let _ = tokio::fs::remove_dir_all(&root).await;
     }
 
