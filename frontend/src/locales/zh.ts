@@ -119,6 +119,7 @@ const zh: Record<string, string> = {
   'backgroundTasks.loading': '读取中…',
   'backgroundTasks.empty': '当前没有仍在运行的后台任务',
   'backgroundTasks.badgeRetained': '后台保留',
+  'backgroundTasks.startedAt': '起于 {0}',
   'backgroundTasks.kill': '结束',
   'backgroundTasks.killFailed': '结束后台任务失败',
   'backgroundTasks.killRequested': '已发出结束后台任务的请求',

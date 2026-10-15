@@ -195,6 +195,12 @@ pub fn stream_shell_blocking(
             if background {
                 // 显式保留：只解除等待，进程照跑
                 registry.set_retain(&task.id, true);
+                // HUD 收尾（A·H1）：等待解除，工具调用结束；进程转后台存活。
+                emitter.emit(NuphusEvent::HudUpdate {
+                    text: "system_shell — 已转入后台".into(),
+                    phase: "done".into(),
+                    step_kind: None,
+                });
                 let notice = bg::CancellationNotice::retained(
                     command,
                     Some(task.pid),
@@ -249,6 +255,15 @@ pub fn stream_shell_blocking(
             //
             // 登记为保留项：进程必须可被查询/结束，并且必须告诉 Agent「别重跑」。
             registry.set_retain(&task.id, true);
+            // HUD 收尾（A·H1）：工具调用在此结束（ToolResult 返回），但进程仍在
+            // 后台跑——批量收尾层对 system_shell 不发收尾（避免误报「失败」），
+            // 由本函数在三个结局点各自如实收尾。转后台不是失败，用 done 让
+            // running 计时停下。
+            emitter.emit(NuphusEvent::HudUpdate {
+                text: format!("{} — 已转入后台", "system_shell"),
+                phase: "done".into(),
+                step_kind: None,
+            });
             return ToolResult {
                 success: false,
                 output: Some(full_stdout),
@@ -297,6 +312,17 @@ pub fn stream_shell_blocking(
                 let success = status.map(|s| s.success()).unwrap_or(false);
                 registry.unregister(&task.id);
                 bg::discard_log(&task);
+                // HUD 收尾（A·H1）：正常退出路径，与主轮 done/error 语义对齐
+                let (phase, desc) = if success {
+                    ("done", "完成")
+                } else {
+                    ("error", "失败")
+                };
+                emitter.emit(NuphusEvent::HudUpdate {
+                    text: format!("system_shell — {}", desc),
+                    phase: phase.into(),
+                    step_kind: None,
+                });
                 return if success {
                     ToolResult::success(full_stdout)
                 } else {

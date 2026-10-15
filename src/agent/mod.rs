@@ -670,6 +670,14 @@ impl ReactAgent {
                                 default_note: pending.default_note.clone(),
                                 default_stage: pending.default_stage.clone(),
                             });
+                            // H3：等待用户输入不是执行——HUD 从前序工具的 running 计时
+                            // 转为等待语义（workflow_wait 无 auto-hide，常驻到用户响应，
+                            // 等待结束后由下方 done 收尾，不会永停计时）。
+                            emitter.emit(NuphusEvent::HudUpdate {
+                                text: "等待用户输入".into(),
+                                phase: "workflow_wait".into(),
+                                step_kind: None,
+                            });
                         }
                     }
                     let value = exec_tool::wait_for_user_input_async(
@@ -681,15 +689,32 @@ impl ReactAgent {
                     .await;
                     match value {
                         Some(v) => {
+                            // H3：等待结束，HUD 从 workflow_wait 收尾（done 无害：
+                            // 15s auto-hide，随后由后续工具/轮次事件接管）
+                            if let Some(ref emitter) = self.exec_emitter {
+                                emitter.emit(NuphusEvent::HudUpdate {
+                                    text: "输入已收到".into(),
+                                    phase: "done".into(),
+                                    step_kind: None,
+                                });
+                            }
                             // 非文本类型返回 JSON 字符串，解析后传给 LLM 以便直接使用 path/region 等字段
                             let parsed: serde_json::Value =
                                 serde_json::from_str(&v).unwrap_or(serde_json::Value::String(v));
                             return Ok(ToolResult::success(parsed.to_string()));
                         }
                         None => {
+                            // H3：取消/超时同样收尾，HUD 不停在 workflow_wait
+                            if let Some(ref emitter) = self.exec_emitter {
+                                emitter.emit(NuphusEvent::HudUpdate {
+                                    text: "输入已取消".into(),
+                                    phase: "done".into(),
+                                    step_kind: None,
+                                });
+                            }
                             return Ok(ToolResult::failure(
                                 "用户未提供输入或操作已取消".to_string(),
-                            ))
+                            ));
                         }
                     }
                 }

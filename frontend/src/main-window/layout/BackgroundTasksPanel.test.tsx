@@ -80,6 +80,9 @@ describe('后台任务账本面板（可见 + 可结束）', () => {
     expect(screen.getByText('PID 42140')).toBeInTheDocument()
     // 751000ms → 12m31s（本地格式化，不自算起点）
     expect(screen.getByText(/12m31s/)).toBeInTheDocument()
+    // 绝对起点可对时（C 项）：起点时刻 + title 完整日期
+    expect(screen.getByText(/起于/)).toBeInTheDocument()
+    expect(screen.getByText(/起于/)).toHaveAttribute('title')
     expect(screen.getByText('后台保留')).toBeInTheDocument()
     expect(screen.getByText('C:/data/background_tasks/bg-3.log')).toBeInTheDocument()
   })

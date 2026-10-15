@@ -124,6 +124,7 @@ const en: Record<string, string> = {
   'backgroundTasks.loading': 'Loading…',
   'backgroundTasks.empty': 'No background tasks are still running',
   'backgroundTasks.badgeRetained': 'Retained',
+  'backgroundTasks.startedAt': 'since {0}',
   'backgroundTasks.kill': 'End',
   'backgroundTasks.killFailed': 'Failed to end background task',
   'backgroundTasks.killRequested': 'End request sent for the background task',

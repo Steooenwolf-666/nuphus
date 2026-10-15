@@ -250,6 +250,17 @@ export function BackgroundTasksPanel({ executionStage }: BackgroundTasksPanelPro
                         <span className="bgt-elapsed">
                           <IconClock3 size={10} /> {formatElapsed(task.elapsed_ms)}
                         </span>
+                        {/* 绝对起点：elapsed 是进程存活时长，与本轮耗时语义不同；
+                            给出绝对时刻用户才能与执行追踪的轮次对时 */}
+                        <span
+                          className="bgt-started"
+                          title={new Date(task.started_at_ms).toLocaleString()}
+                        >
+                          {t(
+                            'backgroundTasks.startedAt',
+                            new Date(task.started_at_ms).toLocaleTimeString(),
+                          )}
+                        </span>
                         {task.retain && (
                           <span className="bgt-badge">{t('backgroundTasks.badgeRetained')}</span>
                         )}
