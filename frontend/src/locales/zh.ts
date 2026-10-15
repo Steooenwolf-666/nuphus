@@ -1,7 +1,8 @@
-import { editorZh } from './workflowEditor'
+import { editorZh, editorEn, toolbarZh, toolbarEn } from './workflowEditor'
 
 const zh: Record<string, string> = {
   ...editorZh,
+  ...toolbarZh,
   'workflowCanvas.variable.outputSection': '输出变量',
   'workflowCanvas.variable.consumers': '引用此输出的步骤：',
   'workflowCanvas.variable.renameHint': '确认新名称后将预览受影响引用，可一次应用并撤销。',

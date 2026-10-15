@@ -558,7 +558,7 @@ describe('ModelsPage 自定义模型（Custom 配置入口 → 创建具名实�
   it('本地模型独立成组，不出现在云端「模型提供商」列表里', async () => {
     providerList = [
       provider({ id: 'deepseek', name: 'DeepSeek', base_url: 'https://api.deepseek.com' }),
-      provider({ id: 'opencode-go', name: 'Opencode GO 套餐', base_url: 'https://go.example/v1' }),
+      provider({ id: 'opencode-go', name: 'OpenCode Go', base_url: 'https://go.example/v1' }),
       provider({ id: 'local', name: 'Local', base_url: 'http://localhost:11434/v1' }),
     ]
 
@@ -582,7 +582,7 @@ describe('ModelsPage 自定义模型（Custom 配置入口 → 创建具名实�
     expect(cloud).toBeDefined()
     expect(cloud?.items.some(i => /local/i.test(i))).toBe(false)
     // 远程网关（Opencode GO）仍属模型提供商
-    expect(cloud?.items).toContain('Opencode GO 套餐')
+    expect(cloud?.items).toContain('OpenCode Go')
   })
 
   // ════════════════════════════════════════════════════════════════

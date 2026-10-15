@@ -6,6 +6,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { invoke as bridgeInvoke } from '../../core/bridge'
 import { showAppFeedback } from '../../ui/islandChannel'
+import { useLanguage } from '../../locales'
 
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   try {
@@ -66,16 +67,17 @@ const TOOLTIP: Record<NonNullable<ToolMode>, string> = {
 interface ToolBtn {
   mode: ToolMode
   icon: React.ElementType
-  label: string
+  /** i18n key（locales workflowEditor.ts 的 toolbar.* 段） */
+  labelKey: string
   desc: string
 }
 
-const TOOLS: ToolBtn[] = [
-  { mode: 'screenshot', icon: IconCamera, label: '截图', desc: '截图保存' },
-  { mode: 'picker', icon: IconCrop, label: '选区', desc: '获取坐标' },
-  { mode: 'mouse_pos', icon: IconCrosshair, label: '鼠标', desc: '实时坐标' },
-  { mode: 'color_picker', icon: IconDropper, label: '取色', desc: '屏幕取色' },
-  { mode: 'ocr', icon: IconType, label: '字典', desc: '文字识别' },
+const TOOLS: { mode: ToolMode; icon: React.ElementType; labelKey: string; desc: string }[] = [
+  { mode: 'screenshot', icon: IconCamera, labelKey: 'toolbar.screenshot', desc: '截图保存' },
+  { mode: 'picker', icon: IconCrop, labelKey: 'toolbar.picker', desc: '获取坐标' },
+  { mode: 'mouse_pos', icon: IconCrosshair, labelKey: 'toolbar.mousePos', desc: '实时坐标' },
+  { mode: 'color_picker', icon: IconDropper, labelKey: 'toolbar.colorPicker', desc: '屏幕取色' },
+  { mode: 'ocr', icon: IconType, labelKey: 'toolbar.ocr', desc: '文字识别' },
 ]
 
 /**
@@ -89,6 +91,7 @@ const STAGGER_STEP_MS = 40
 const staggerStyle = (index: number) =>
   ({ '--stagger-delay': `${index * STAGGER_STEP_MS}ms` }) as React.CSSProperties
 export function DesktopToolbar() {
+  const { t } = useLanguage()
   // Sub-panel state
   const [activeTool, setActiveTool] = useState<ToolMode>(null)
   const [result, setResult] = useState<ToolResult | null>(null)
@@ -344,19 +347,19 @@ export function DesktopToolbar() {
           <IconButton
             key={tool.mode}
             variant={activeTool === tool.mode ? 'desktop-toolbar-active' : 'desktop-toolbar'}
-            label={tool.label}
+            label={t(tool.labelKey)}
             onClick={() => handleToolClick(tool.mode)}
             title={tool.desc}
             style={staggerStyle(i)}
           >
             <tool.icon size={15} />
-            <span className="desktop-toolbar-label">{tool.label}</span>
+            <span className="desktop-toolbar-label">{t(tool.labelKey)}</span>
           </IconButton>
         ))}
 
         <IconButton
           variant="desktop-toolbar"
-          label="登记应用"
+          label={t('toolbar.registerApp')}
           disabled={loading}
           title="通过本地选择器登记未被自动发现的桌面应用；不会立即启动应用"
           style={staggerStyle(TOOLS.length)}
@@ -379,7 +382,7 @@ export function DesktopToolbar() {
           }}
         >
           <IconAppWindow size={15} />
-          <span className="desktop-toolbar-label">登记应用</span>
+          <span className="desktop-toolbar-label">{t('toolbar.registerApp')}</span>
         </IconButton>
 
         {/* ── 鼠标坐标：读数 + 关闭**并排成一组**，且**常驻不受 hover 显隐约束** ──

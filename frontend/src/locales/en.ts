@@ -1,7 +1,8 @@
-import { editorEn } from './workflowEditor'
+import { editorEn, toolbarEn } from './workflowEditor'
 
 const en: Record<string, string> = {
   ...editorEn,
+  ...toolbarEn,
   'workflowCanvas.variable.outputSection': 'Output variable',
   'workflowCanvas.variable.consumers': 'Steps referencing this output:',
   'workflowCanvas.variable.renameHint':

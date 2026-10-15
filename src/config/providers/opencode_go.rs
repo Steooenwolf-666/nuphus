@@ -10,7 +10,7 @@ impl Provider for OpenCodeGoProvider {
         "opencode-go"
     }
     fn display_name(&self) -> &'static str {
-        "OpenCode Go 套餐"
+        "OpenCode Go"
     }
     fn default_base_url(&self) -> &'static str {
         "https://opencode.ai/zen/go/v1"
