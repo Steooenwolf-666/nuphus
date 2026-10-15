@@ -8,7 +8,9 @@ import { useLanguage } from '../../locales'
 interface TitleBarProps {
   onNewChat?: () => void
   agentState?: NuphusAvatarState
-  /** 「关于」弹层的「版本（检查更新）」入口：复用既有更新弹窗（App 的 setShowUpdate） */
+  /**
+   * 品牌 logo 弹层的「版本（检查更新）」入口：复用既有更新弹窗（App 的 setShowUpdate）
+   */
   onOpenUpdate?: () => void
 }
 
@@ -45,55 +47,53 @@ export function TitleBar({ onNewChat, agentState = 'idle', onOpenUpdate }: Title
         <div className="title-bar-icon">
           <NuphusAvatar state={agentState} size={20} />
         </div>
-        <span className="title-bar-brand">Nuphus</span>
-      </div>
-      {/* 「应用」纯文字入口：hover 弹出 反馈 / 版本（检查更新），弹窗复用
-          input-tool-menu 体系（8px 圆角 / line-1 / menuPopIn / surface-hover）。
-          位于 spacer 左侧（拖动区在右侧承担）；触发器不做拖动区（交互元素冲突） */}
-      <div
-        className="title-bar-about"
-        onMouseEnter={() => setAboutOpen(true)}
-        onMouseLeave={() => setAboutOpen(false)}
-      >
-        <span
-          className="title-bar-about-trigger"
-          role="button"
-          tabIndex={0}
-          aria-haspopup="true"
-          aria-expanded={aboutOpen}
-          onClick={() => setAboutOpen(v => !v)}
-          onKeyDown={e => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault()
-              setAboutOpen(v => !v)
-            }
-          }}
+        {/* 品牌文字 logo 承接原「应用」入口：hover 弹出 反馈（GitHub 主页）/
+            版本（检查更新）。触发器不做拖动区（交互元素冲突） */}
+        <div
+          className="title-bar-about"
+          onMouseEnter={() => setAboutOpen(true)}
+          onMouseLeave={() => setAboutOpen(false)}
         >
-          {t('titleBar.about')}
-        </span>
-        {aboutOpen && (
-          <div className="title-bar-about-menu">
-            <a
-              className="title-bar-about-item"
-              href="https://github.com/mrpulor-gh/nuphus/issues/new"
-              target="_blank"
-              rel="noreferrer"
-            >
-              {t('titleBar.feedback')}
-            </a>
-            <button
-              type="button"
-              className="title-bar-about-item"
-              disabled={!onOpenUpdate}
-              onClick={() => {
-                setAboutOpen(false)
-                onOpenUpdate?.()
-              }}
-            >
-              {t('titleBar.checkUpdate')}
-            </button>
-          </div>
-        )}
+          <span
+            className="title-bar-brand title-bar-about-trigger"
+            role="button"
+            tabIndex={0}
+            aria-haspopup="true"
+            aria-expanded={aboutOpen}
+            onClick={() => setAboutOpen(v => !v)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                setAboutOpen(v => !v)
+              }
+            }}
+          >
+            Nuphus
+          </span>
+          {aboutOpen && (
+            <div className="title-bar-about-menu">
+              <a
+                className="title-bar-about-item"
+                href="https://github.com/mrpulor-gh/nuphus"
+                target="_blank"
+                rel="noreferrer"
+              >
+                {t('titleBar.feedback')}
+              </a>
+              <button
+                type="button"
+                className="title-bar-about-item"
+                disabled={!onOpenUpdate}
+                onClick={() => {
+                  setAboutOpen(false)
+                  onOpenUpdate?.()
+                }}
+              >
+                {t('titleBar.checkUpdate')}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
       <span className="title-bar-spacer" data-tauri-drag-region />
       {/* 桌面端：窗口控制按钮 */}

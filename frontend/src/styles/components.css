@@ -148,10 +148,9 @@
   flex: 1;
   height: 100%;
 }
-/* ── 「应用」纯文字入口 + hover 弹层 ──
-   非按钮样式：灰阶弱化，hover 提亮；触发器左右留足点击 padding。
+/* ── 品牌 logo hover 弹层（原「应用」入口由品牌文字承接）──
    弹窗复用 input-tool-menu 体系（8px 圆角 / line-1 / shadow-elevated /
-   menuPopIn / item surface-hover 动效），从触发器左对齐向下弹。
+   menuPopIn / item surface-hover 动效），从品牌文字左对齐向下弹。
    z-index：标题栏是 .app-shell 内 z-index:1 的层叠上下文，弹层 210 需盖过
    chat-area（同为 1 层内），又低于全屏 overlay（200+ 同级内相对次序） */
 .title-bar-about {
@@ -159,22 +158,17 @@
   display: flex;
   align-items: center;
   height: 100%;
-  margin-left: 10px;
 }
 .title-bar-about-trigger {
-  font-size: var(--fz-sm);
-  color: var(--fg-3);
   cursor: pointer;
   user-select: none;
-  padding: 3px 12px;
-  /* 整体下移 2px：与品牌文字的视觉基线对齐（标题栏垂直居中的光学修正） */
-  transform: translateY(2px);
   border-radius: var(--radius-1);
   transition: color var(--dur-fast) var(--ease-out);
 }
 .title-bar-about-trigger:hover,
 .title-bar-about-trigger:focus-visible {
-  color: var(--fg-1);
+  /* 保持品牌色相，仅提亮（若改 color 会把 spark-primary 盖成前景色，视觉变暗） */
+  filter: brightness(1.25);
   outline: none;
 }
 .title-bar-about-menu {
