@@ -1,7 +1,7 @@
 # 验证约束
 
 默认只允许最小验证。验证是成本，不是流程。
-禁止无用户明确指令的构建（debug / release）版本、全量测试。
+禁止无用户明确指令的构建（debug / release）**版本产物**、全量测试。验证性的 `check` / `test` 不属于「构建版本」（见 §D：Nuphus 仓库 Rust 验证一律 `--release` 增量）。
 
 ## 允许验证的唯一条件
 
@@ -62,10 +62,11 @@
 
 ## D. Nuphus 仓库
 
-- `cargo check -p <crate>` 确认编译；**禁止全量 `cargo build` / `--release` 产物构建**（release link 慢且与逻辑验证无关）。
-- 改逻辑 + 加/改测试后，允许精确到模块跑 `cargo test -p <crate> --lib <模块路径>`；**多处改动攒一批一次验**，禁止每个小改动跑一轮。
+- **总则：Rust 验证一律 `--release` 增量**（check / test 同此）。理由：首次全量构建 release 后缓存复用，后续验证更快；只维护一份 release target，磁盘占用小；不被运行中的 app 锁（debug target 会被 nuphus.exe 占用报 os error 32）。
+- `cargo check --release -p <crate>` 确认编译；禁止用验证流程做**产物构建**（`cargo build --release` 出安装包属发版任务，验证不产产物）。
+- 改逻辑 + 加/改测试后，允许精确到模块跑 `cargo test --release -p <crate> --lib <模块路径或过滤器>`；**多处改动攒一批一次验**，禁止每个小改动跑一轮。注意 test 过滤器是连续子串匹配，用真实测试名的连续片段。
 - 注释 / 文案 / 排版类改动（零行为影响）→ 禁止跑构建验证，纯属堆验证数量。
-- 被运行中 nuphus.exe 锁定 → 报告用户定时机，禁 kill 自身。
+- 运行中的 nuphus.exe 只锁 debug target，不影响 `--release` 验证；确需操作被锁的 debug 路径 → 报告用户定时机，禁 kill 自身。
 - 桌面自动化/UIA → 真机或 `#[ignore]`。
 - CI 失败先归因三分：代码 / 环境 / 配置；归因到环境不得改代码绕过，网络类先重试。
 - 推送前本地只跑 CI 主干同项：fmt + tsc + prettier 全量，其余不跑。
