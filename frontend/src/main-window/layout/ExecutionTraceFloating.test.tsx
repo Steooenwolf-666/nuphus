@@ -545,3 +545,76 @@ describe('history folding by step', () => {
     expect(container.querySelectorAll('.term-cmd')).toHaveLength(60)
   })
 })
+
+/**
+ * UI 卡片模式：thinking 展开的常驻「收起」出口。
+ *
+ * 背景：卡片模式展开的 thinking 正文可达数万字符，唯一入口（摘要行）被推出视口数屏，
+ * 用户只能长距离回滚才能收起。故在内容区右下角加一个不随内容滚动的按钮：随展开态出现、
+ * 收起后消失。范围只到 UI 卡片模式（终端模式 thinking 默认展开，收起入口是摘要行本身）。
+ */
+describe('UI 卡片模式：thinking 展开的常驻收起出口', () => {
+  function renderThinking(text = 'x'.repeat(20000)) {
+    const entries: TimelineEntry[] = [{ id: 'think-1', kind: 'thinking', text }]
+    return render(
+      <ExecutionTraceFloating
+        timeline={entries}
+        stepIndex={1}
+        progress={{ iteration: 1, max: 200, calls: 1 }}
+        isProcessing={false}
+        completed={false}
+        expandedCalls={new Set()}
+        onToggleExpand={vi.fn()}
+        visible
+      />,
+    )
+  }
+
+  const fabOf = (c: HTMLElement) => c.querySelector('.exec-trace-collapse-fab')
+  const summaryOf = (c: HTMLElement) =>
+    c.querySelector('.exec-terminal-thinking-summary') as HTMLElement
+
+  it('展开 thinking 时出现右下角收起按钮，点击后正文收起且按钮消失', () => {
+    const { container } = renderThinking()
+    // 初始：thinking 默认收起 → 无正文、无按钮
+    expect(container.querySelector('.term-thinking-body')).toBeNull()
+    expect(fabOf(container)).toBeNull()
+
+    fireEvent.click(summaryOf(container))
+    expect(container.querySelector('.term-thinking-body')).not.toBeNull()
+    expect(fabOf(container)).not.toBeNull()
+
+    fireEvent.click(fabOf(container) as HTMLElement)
+    expect(container.querySelector('.term-thinking-body')).toBeNull()
+    expect(fabOf(container)).toBeNull()
+  })
+
+  it('终端模式不渲染该按钮（范围只到 UI 卡片模式）', () => {
+    const { container } = renderThinking()
+    fireEvent.click(screen.getByTitle('终端模式'))
+    // 终端模式 thinking 默认展开（正文在），但该按钮不出现
+    expect(container.querySelector('.term-thinking-body')).not.toBeNull()
+    expect(fabOf(container)).toBeNull()
+  })
+
+  it('展开的 thinking 不在当前 timeline 时按钮不出现（防陈旧 id 幽灵常驻）', () => {
+    const utils = renderThinking()
+    fireEvent.click(summaryOf(utils.container))
+    expect(fabOf(utils.container)).not.toBeNull()
+
+    // 换看另一轮：本轮无 thinking 条目
+    utils.rerender(
+      <ExecutionTraceFloating
+        timeline={[{ id: 'call-1', kind: 'tool_call', toolName: 'Read', status: 'success' }]}
+        stepIndex={1}
+        progress={{ iteration: 1, max: 200, calls: 1 }}
+        isProcessing={false}
+        completed={false}
+        expandedCalls={new Set()}
+        onToggleExpand={vi.fn()}
+        visible
+      />,
+    )
+    expect(fabOf(utils.container)).toBeNull()
+  })
+})

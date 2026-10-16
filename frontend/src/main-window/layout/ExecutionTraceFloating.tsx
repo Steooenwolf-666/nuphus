@@ -948,6 +948,27 @@ export function ExecutionTraceFloating({
     prevTimelineIdsRef.current = currentIds
   }, [displayTimeline])
 
+  /**
+   * 卡片模式（UI）内处于展开态的 thinking 条数：>0 时显示右下角收起按钮。
+   *
+   * 判定必须按**当前 timeline** 过滤，不能直接看 expandedThinking.size —— 该集合在组件
+   * 生命周期内持久，收起后条目仍在（只是被折叠），但切换轮次/换看一轮后集合里会留下已
+   * 消失的 id，直接看 size 会让按钮幽灵常驻（收无可收，点了没反应）。
+   *
+   * 终端模式恒为 0：终端模式 thinking 默认展开（collapsedThinking 是"手动收起集"），
+   * 那里的收起入口是摘要行本身，本按钮只服务 UI 卡片模式（大王定版范围）。
+   */
+  const uiExpandedThinking = useMemo(
+    () =>
+      terminalMode
+        ? 0
+        : displayTimeline.reduce(
+            (n, e) => (e.kind === 'thinking' && expandedThinking.has(e.id) ? n + 1 : n),
+            0,
+          ),
+    [terminalMode, displayTimeline, expandedThinking],
+  )
+
   // 折叠条节点在这里生成一次、两条渲染路径共用：终端模式与卡片模式的文案、交互、
   // 续展逻辑不可能漂移（两处各写一遍的东西，通常还会漂第二次）。
   const foldBarNode = foldable ? (
@@ -1479,6 +1500,25 @@ export function ExecutionTraceFloating({
 
             {/* ── Memories ── (removed: moved to StatusBar hover) */}
           </div>
+        )}
+
+        {/* ── UI 卡片模式：thinking 展开的常驻收起出口 ──
+            卡片模式展开的 thinking 正文可达数万字符，可点击的摘要行会被推出视口数屏，
+            用户只能长距离回滚才能收起；内容空白处又不应承接收起（与拖选复制冲突）。
+            故在内容区右下角放一个不随内容滚动的按钮：随展开态出现、收起后消失。
+            定位包含块是 .execution-trace-center（position: relative）——按钮是它的直接
+            子级、不在滚动容器内，故浮在视口位置（手法同 .chat-jump-bottom）。 */}
+        {uiExpandedThinking > 0 && (
+          <button
+            type="button"
+            className="exec-trace-collapse-fab"
+            onClick={() => setExpandedThinking(new Set())}
+            title="收起思考内容"
+            aria-label="收起思考内容"
+          >
+            <IconChevronUp size={14} />
+            <span>收起</span>
+          </button>
         )}
 
         {/* ── Footer Actions ── */}
