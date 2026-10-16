@@ -174,6 +174,8 @@ Analyze → Execute → Verify → Decide
 ```
 目标达成 ∧ 产物已验证 ∧ 证据链可追溯 ∧ 下游可集成 ∧ 无错误残留
 ```
+
+最终交付 = 你发出的最后一条纯文本消息；交付之后不得再调用任何工具。
 "#;
 
 // ═══════════════════════════════════════════════════════
@@ -1302,6 +1304,40 @@ mod tests {
         assert!(prompt.contains("用户执行中追加的新指令代表最新最高优先级意图"));
         assert!(prompt.contains("核心路径跑通却继续研究旁支会阻碍交付"));
         assert!(!prompt.contains("干净环境连续 3 次成功"));
+    }
+
+    /// 最终交付机制句必须进入 Leader 与 Exec 的提示词。
+    ///
+    /// 由来：循环以「最后一条不含工具调用的消息」作为最终产出（`sub_task_loop.rs`），
+    /// 交付之后再调工具会把交付降级；撞迭代上限时只剩系统兜底串，Leader 拿不到交付物。
+    /// L0_RUNTIME 由 Leader 与 Exec 共享注入，故这一句是两方的共同契约。
+    /// WorkAgent 侧已有等价条款（Output Discipline「最终回复必须单独以 `text` 直接交付」），
+    /// 不重复表达以免稀释。
+    #[test]
+    fn delivery_mechanism_line_reaches_leader_and_exec() {
+        const LINE: &str = "交付之后不得再调用任何工具";
+
+        let ctx = LeaderContext {
+            soul: String::new(),
+            relation: None,
+        };
+        assert!(
+            build_leader_base_prompt(&ctx).contains(LINE),
+            "Leader 提示词缺最终交付机制句"
+        );
+
+        let exec = build_exec_prompt(
+            "test-model",
+            None,
+            None,
+            "",
+            GoalType::ScriptingExec,
+            "",
+            None,
+            false,
+            None,
+        );
+        assert!(exec.contains(LINE), "Exec 提示词缺最终交付机制句");
     }
 
     /// L2 Skill Routing 必须指向真实存在的 skill——路由悬空 = Agent 按时机去读

@@ -1581,11 +1581,14 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
             if ctx_window > 200_000 {
                 let ctx_tokens = self.agent.session.api_input_tokens;
 
-                // Attention dilution warning — once per refine cycle
+                // Attention dilution warning — once per refine cycle.
+                // 文案只给「系统给不了的信息」（上下文占用量）+ 时序要求：措辞是「在最终交付
+                // 之前写入记忆」，与交付终止律（prompt.rs 的 L0_RUNTIME）对齐——旧文案的
+                // 「建议立即执行」会让模型在交出最终回复之后再去调工具，把交付降级。
                 if !self.agent.context_hint_shown && ctx_tokens > 200_000 {
                     self.agent.session.push_user_internal(
                         format!(
-                            "[系统提示词] 当前上下文实际用量 {}K / 模型窗口 {}K tokens。\n\n注意力权重优先级：系统提示词 > 当前目标 > 推理链路 > 工具输出 > 历史对话。长上下文极易导致系统提示词（Constitution/身份/规则）被稀释遗忘，需主动回顾。\n\n建议立即执行 leader_memory_update 持久化当前阶段、关键决策、阻塞项。此后可继续，复杂子任务请用 task_dispatch 隔离。",
+                            "[系统提示词] 当前上下文 {}K / {}K tokens。如需跨会话保留结论，请在最终交付之前写入记忆。",
                             ctx_tokens / 1_000,
                             ctx_window / 1_000,
                         )
@@ -1594,12 +1597,13 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                     self.agent.last_memory_hint_at = ctx_tokens;
                 }
 
-                // Periodic memory save reminder — every ~100K tokens
+                // Periodic memory save reminder — every ~100K tokens（与首次提示用同一句：
+                // 同一机制出现两种措辞，等于又变成两套规则）。
                 let next_milestone = ((self.agent.last_memory_hint_at / 100_000) + 1) * 100_000;
                 if ctx_tokens >= next_milestone {
                     self.agent.session.push_user_internal(
                         format!(
-                            "[系统提示词] 当前上下文实际用量 {}K / 模型窗口 {}K tokens。建议执行 leader_memory_update 保存当前阶段的关键决策和进度，避免注意力稀释后丢失上下文。",
+                            "[系统提示词] 当前上下文 {}K / {}K tokens。如需跨会话保留结论，请在最终交付之前写入记忆。",
                             ctx_tokens / 1_000,
                             ctx_window / 1_000,
                         )
