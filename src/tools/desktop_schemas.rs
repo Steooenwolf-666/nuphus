@@ -374,7 +374,7 @@ impl ToolRegistry {
                 json_props! {
                     "color" => obj!("type"="string","description"="Target color: 'R,G,B' (e.g. '59,130,246'), hex '3B82F6', or '#3B82F6'. Supports delta: 'R,G,B,Dr,Dg,Db' or '3B82F6-0A0A0A'"),
                     "region" => obj!("type"="object","description"="Search region {x,y,width,height}"),
-                    "direction" => obj!("type"="string","enum"=["left_top","right_top","left_bottom","right_bottom"],"default"="left_top","description"="Scan direction from corner")
+                    "direction" => obj!("type"="string","enum"=["left_top","left_bottom","right_top","right_bottom","column_left_top","column_right_top","column_left_bottom","column_right_bottom","center"],"default"="left_top","description"="Scan order: row-major from a corner (left_top/left_bottom/right_top/right_bottom), column-major (column_*), or from center outward (center)")
                 },
                 &["color"]),
             tool_def("desktop_find_multi_color",
@@ -384,9 +384,20 @@ impl ToolRegistry {
                     "offsets" => obj!("type"="string","description"="偏移点序列，格式: dx|dy|color,dx|dy|color,...  如 '1|0|FF0000,0|1|00FF00'。color 前加 ! 表示该点不应为此色"),
                     "region" => obj!("type"="object","description"="Search region {x,y,width,height}"),
                     "min_match_ratio" => obj!("type"="number","default"=0.8,"description"="Min ratio of matching offset points (0.0-1.0)"),
-                    "direction" => obj!("type"="string","enum"=["left_top","right_top","left_bottom","right_bottom"],"default"="left_top","description"="Scan direction from corner")
+                    "direction" => obj!("type"="string","enum"=["left_top","left_bottom","right_top","right_bottom","column_left_top","column_right_top","column_left_bottom","column_right_bottom","center"],"default"="left_top","description"="Scan order: row-major from a corner (left_top/left_bottom/right_top/right_bottom), column-major (column_*), or from center outward (center)")
                 },
                 &["anchor","offsets"]),
+            tool_def("desktop_wait_for",
+                "等待画面进入指定状态：change=区域画面发生任何变化；stable=画面静止 stable_ms 毫秒以上（等动画/加载结束）；color=区域出现指定颜色（等元素渲染出来）。超时返回 met:false（是数据不是错误，可据此走分支）。",
+                json_props! {
+                    "condition" => obj!("type"="string","enum"=["change","stable","color"],"description"="change: wait until region pixels differ from a baseline; stable: wait until region stays unchanged; color: wait until a color appears"),
+                    "region" => obj!("type"="object","description"="Observed region {x,y,width,height}；省略=全屏"),
+                    "color" => obj!("type"="string","description"="condition=color 时的目标颜色：'R,G,B' / hex / 带容差格式（同 desktop_find_color）"),
+                    "timeout_ms" => obj!("type"="integer","minimum"=1,"maximum"=300000,"default"=10000,"description"="Total wait budget (ms)"),
+                    "interval_ms" => obj!("type"="integer","minimum"=50,"default"=200,"description"="Polling interval (ms)"),
+                    "stable_ms" => obj!("type"="integer","minimum"=0,"default"=500,"description"="condition=stable 时要求静止的时长（ms）")
+                },
+                &["condition"]),
 
             // ═══ Dict OCR / Find Text ═══
             tool_def("desktop_find_text",

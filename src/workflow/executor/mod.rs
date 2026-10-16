@@ -94,6 +94,7 @@ pub(crate) const CHAT_AGENT_ALLOWED_TOOLS: &[&str] = &[
     "desktop_find_image",
     "desktop_find_multi_color",
     "desktop_find_text",
+    "desktop_wait_for",
     // 浏览器全量（23）
     "browser_navigate",
     "browser_screenshot",

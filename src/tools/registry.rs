@@ -806,7 +806,7 @@ impl ToolRegistry {
             .map(|g| g.is_some())
             .unwrap_or(false);
         // builtin tools + browser (always) + desktop (conditional)
-        self.tools.len() + 17 + if has_desktop { 22 } else { 0 }
+        self.tools.len() + 17 + if has_desktop { 23 } else { 0 }
     }
 
     /// Check if empty

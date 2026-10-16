@@ -97,6 +97,7 @@ function toolPhaseTag(toolName: string): string | null {
     'desktop_screen_size',
     'desktop_find_image',
     'desktop_find_color',
+    'desktop_wait_for',
     'browser_screenshot',
     'browser_navigate',
     'memory_search',
