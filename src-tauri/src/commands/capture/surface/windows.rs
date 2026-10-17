@@ -854,12 +854,24 @@ extern "system" fn ll_mouse(code: i32, w: usize, l: isize) -> isize {
                 let (px, py) = (info.pt.x, info.pt.y);
                 match w as u32 {
                     WM_MOUSEMOVE => {
+                        let moved = ov.app.last_mouse.x != px || ov.app.last_mouse.y != py;
                         ov.app.last_mouse = Point { x: px, y: py };
                         resolve_cursor(&ov.app, px, py);
                         ov.app.on_move(px, py, ov.screen_w, ov.screen_h);
-                        // 单点拾取 HUD（放大镜/色值）跟随鼠标：Hover 相位下 `on_move`
-                        // 不动状态、也不置脏，这里显式置脏（重绘仍由 tick 16ms 合并）。
-                        if ov.point_pick {
+                        // 放大镜跟随鼠标：Hover 相位下 `on_move` 不改选区、也不置脏，
+                        // 必须在这里显式置脏（重绘仍由 tick 16ms 合并）。
+                        //
+                        // 是否需要刷由 `paint::phase_tracks_mouse` 判定 —— 与绘制分支
+                        // **同一真源**。此前这里只判 `point_pick`，框选类的放大镜画了
+                        // 却不刷新 → 「放大镜不跟随鼠标」（2026-10-17 大王报障）。
+                        // 仅在鼠标真的位移时置脏，避免同位置重复消息白刷帧。
+                        if moved
+                            && super::paint::phase_tracks_mouse(
+                                ov.app.phase,
+                                ov.point_pick,
+                                ov.pick_color,
+                            )
+                        {
                             ov.app.dirty = true;
                         }
                     }

@@ -807,6 +807,24 @@ fn draw_selection_frame(buf: &mut [u32], bw: i32, bh: i32, s: &Sel) {
     );
 }
 
+/// 当前相位是否需要「鼠标跟随类」重绘（放大镜 / 取色 HUD）。
+///
+/// **单一真源**：绘制分支（本文件 ③.5 / ③.6）与 `windows.rs` 的鼠标移动置脏分支
+/// 都必须用它，禁止各写一份判断 —— 2026-10-17 的真 bug 就是两侧不一致：
+/// 框选类放大镜画了，但鼠标移动只在 `point_pick` 时置脏，于是它不跟随鼠标。
+///
+/// 语义与绘制条件逐条对齐：
+/// - 取色（`point_pick && pick_color`）：除 Exiting 外都画 HUD → 都跟随
+/// - 框选类（`!point_pick`）：仅 Hover / Dragging 画放大镜 → 仅这两相位需要刷
+/// - 鼠标坐标（`point_pick && !pick_color`）：本就不画 HUD，无需重绘
+pub fn phase_tracks_mouse(phase: Phase, point_pick: bool, pick_color: bool) -> bool {
+    if point_pick {
+        // 与 ③.5 的 `pick_color && phase != Exiting` 完全一致
+        return pick_color && phase != Phase::Exiting;
+    }
+    matches!(phase, Phase::Hover | Phase::Dragging)
+}
+
 /// 确认/调整态 HUD（8 节点 + OK/X）与取色 HUD —— 两种模式共用。
 fn draw_hud(
     buf: &mut [u32],
@@ -862,14 +880,16 @@ fn draw_hud(
 
     // ③.5 取色 HUD：跟着鼠标的放大镜 + 实时色值条（仅取色模式）。
     //      HUD 像素不参与取色真值（真值由 session/toolbar 侧从冻结帧数据取），只做视觉定位。
-    if point_pick && pick_color && app.phase != Phase::Exiting {
+    //      绘制判据与 windows.rs 的置脏判据同源（phase_tracks_mouse）。
+    if phase_tracks_mouse(app.phase, point_pick, pick_color) {
         draw_color_picker_hud(app, frozen, buf, bw, bh);
     }
 
     // ③.6 框选类模式的放大镜（截图 / 选区 / OCR）：像素级瞄准辅助。
     //      框选时用户要看清边界落点，故与取色共用同一放大镜本体，但不画十字与色值条；
     //      确认态（已有选区 + 8 节点/OK-X）不再显示，避免遮挡。
-    if !point_pick && matches!(app.phase, Phase::Hover | Phase::Dragging) {
+    //      是否需要重绘由 `phase_tracks_mouse` 判定（与 windows.rs 置脏同一真源）。
+    if !point_pick && phase_tracks_mouse(app.phase, false, false) {
         draw_selection_magnifier(app, frozen, buf, bw, bh);
     }
 }
@@ -969,5 +989,54 @@ mod hud_tests {
         assert!(lit > 0, "必须有像素写出");
         // 越界保护：右下角起步不应 panic，也不该写到缓冲外（fill_rect 自带 clamp）
         let _ = draw_hud_text(&mut buf, bw, bh, bw - 3, bh - 3, "AB", 0xFFFF_FFFF);
+    }
+
+    /// 鼠标跟随重绘的相位判据（`phase_tracks_mouse`）。
+    ///
+    /// 2026-10-17 真 bug 钉死：框选类放大镜只在 Hover / Dragging 绘制，
+    /// 而鼠标移动当时只在 `point_pick` 时置脏 → 画了不刷新 = 不跟随鼠标。
+    /// 该谓词是绘制（③.5 / ③.6）与置脏（windows.rs）的**同一真源**。
+    #[test]
+    fn phase_tracks_mouse_matches_draw_conditions() {
+        // ① 取色：除 Exiting 外都画 HUD → 都跟随
+        for phase in [
+            Phase::Hover,
+            Phase::Dragging,
+            Phase::Confirm,
+            Phase::Moving,
+            Phase::Adjusting,
+        ] {
+            assert!(
+                phase_tracks_mouse(phase, true, true),
+                "取色在 {phase:?} 必须跟随鼠标（HUD）"
+            );
+        }
+        assert!(
+            !phase_tracks_mouse(Phase::Exiting, true, true),
+            "Exiting 已撤 HUD，不该再刷"
+        );
+
+        // ② 鼠标坐标模式（point_pick 但非取色）：不画 HUD，无需跟随
+        for phase in [Phase::Hover, Phase::Confirm] {
+            assert!(
+                !phase_tracks_mouse(phase, true, false),
+                "鼠标坐标模式无 HUD，{phase:?} 不该刷"
+            );
+        }
+
+        // ③ 框选类：只有 Hover / Dragging 画放大镜，其余相位不得白刷
+        assert!(phase_tracks_mouse(Phase::Hover, false, false));
+        assert!(phase_tracks_mouse(Phase::Dragging, false, false));
+        for phase in [
+            Phase::Confirm,
+            Phase::Moving,
+            Phase::Adjusting,
+            Phase::Exiting,
+        ] {
+            assert!(
+                !phase_tracks_mouse(phase, false, false),
+                "框选类在 {phase:?} 不画放大镜，不该跟随"
+            );
+        }
     }
 }
