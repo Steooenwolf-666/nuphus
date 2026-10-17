@@ -185,13 +185,13 @@ impl ToolRegistry {
     pub(crate) fn register_execute_shell(&mut self) {
         self.register(ToolDef {
             name: "system_shell".to_string(),
-            description: "Execute a shell command (PowerShell on Windows, sh on Unix). Default timeout 180s. Foreground commands (default) are killed with their process tree when the user cancels.".to_string(),
+            description: "Execute a shell command (PowerShell on Windows, sh on Unix). Default timeout 180s; timeout > 300s automatically switches to background (the process tree survives and output goes to a file — read that file instead of re-running). Foreground commands (default) are killed with their process tree when the user cancels.".to_string(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "command": { "type": "string", "description": "PowerShell command on Windows, sh on Unix. On Windows use ; not &&" },
-                    "timeout": { "type": "integer", "minimum": 1, "maximum": 1800, "default": 180, "description": "Max seconds this call waits for the command. On timeout: default (background=false) kills the process tree; with background=true the process is kept running as a retained background task (pid + output file are reported back) — read its output file instead of re-running." },
-                    "background": { "type": "boolean", "default": false, "description": "true = the whole process tree survives a timeout or a user cancel (long jobs whose progress must not be thrown away); it is reported back with pid + output file and is auto-terminated by the system after a max lifetime. false = default: killed on timeout or cancel." },
+                    "timeout": { "type": "integer", "minimum": 1, "maximum": 1800, "default": 180, "description": "Max seconds this call waits for the command. NOTE: values above 300 automatically switch to background (you do NOT need to pass background:true), because a foreground run that long would be killed on timeout and force a full re-run. On timeout: default (background=false) kills the process tree; with background=true the process is kept running as a retained background task (pid + output file are reported back) — read its output file instead of re-running." },
+                    "background": { "type": "boolean", "description": "Leave unset to let the 300s rule decide. true = the whole process tree survives a timeout or a user cancel (long jobs whose progress must not be thrown away); it is reported back with pid + output file and is auto-terminated by the system after a max lifetime. Explicit false = always foreground: killed on timeout or cancel (overrides the auto rule, so it is only for commands you WANT killed on timeout)." },
                     "cwd": { "type": "string", "description": "Working directory for the command" }
                 },
                 "required": ["command"]
@@ -262,33 +262,60 @@ const SLEEP_SLICE: Duration = Duration::from_millis(150);
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+/// 前台等待上限（秒）。超过此时长的调用默认转后台。
+///
+/// 依据：前端主循环对单个工具的等待名额有限，长任务耗在「等它跑完」上，
+/// 一旦超时整条命令重跑，前面白干。故超过 300s 的调用自动改走后台保留
+/// （进程树存活 + 输出落文件），调用方读文件拿结果，不必重跑。
+pub const FOREGROUND_TIMEOUT_CAP_SECS: u64 = 300;
+
 /// shell 的入参。独立成 struct：默认值与分支都必须能被单测直接断言，
 /// 不能只藏在闭包里靠人眼读。
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShellRequest {
     pub command: String,
     pub timeout_secs: u64,
-    /// 调用方**显式**要求保留在后台。默认 false = 前台，取消时杀进程树。
+    /// 是否后台保留。默认 false = 前台，取消时杀进程树。
+    ///
+    /// 两处会被自动置 true（见 [`Self::from_params`]）：
+    /// ① 调用方显式传 `background: true`；
+    /// ② `timeout > FOREGROUND_TIMEOUT_CAP_SECS` 且调用方**未显式**传
+    ///    `background: false` —— 长任务留在前台必然超时重跑，白烧时间。
+    /// 显式 `background: false` 始终被尊重（调用方可能就想被超时杀掉）。
     pub background: bool,
+    /// `background` 是否由「长 timeout」规则自动置位（而非调用方显式要求）。
+    ///
+    /// 供执行体在返回文案里说明「已自动转后台」—— 调用方看到 pid + 输出文件
+    /// 才知道该去读文件，而不是以为命令还在前台等。
+    pub background_auto: bool,
     pub cwd: Option<String>,
 }
 
 impl ShellRequest {
     pub fn from_params(params: &serde_json::Value) -> Self {
+        let timeout_secs = params
+            .get("timeout")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(180);
+
+        // 三态：显式 true / 显式 false / 未传。必须区分「未传」与「显式 false」，
+        // 否则调用方明确要求前台被杀时会被规则强改。
+        let explicit_background = params.get("background").and_then(|v| v.as_bool());
+        let (background, background_auto) = match explicit_background {
+            Some(v) => (v, false),
+            None if timeout_secs > FOREGROUND_TIMEOUT_CAP_SECS => (true, true),
+            None => (false, false),
+        };
+
         Self {
             command: params
                 .get("command")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
-            timeout_secs: params
-                .get("timeout")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(180),
-            background: params
-                .get("background")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
+            timeout_secs,
+            background,
+            background_auto,
             cwd: params
                 .get("cwd")
                 .and_then(|v| v.as_str())
@@ -550,13 +577,22 @@ pub fn run_system_shell(request: &ShellRequest, ctx: &ToolCtx) -> Result<ToolRes
             let produced = stdout.map(|d| d.snapshot()).unwrap_or(produced);
             if request.background {
                 registry.set_retain(&task.id, true);
+                let trigger = if request.background_auto {
+                    format!(
+                        "（timeout {}s 超过 {}s 前台上限，已自动转后台）",
+                        request.timeout_secs, FOREGROUND_TIMEOUT_CAP_SECS
+                    )
+                } else {
+                    "（调用方声明了 background=true）".to_string()
+                };
                 let message = format!(
-                    "命令已超过等待上限 ({}s)，**仍在后台继续运行**（未终止，因为调用方声明了 background=true）。\n\
+                    "命令已超过等待上限 ({}s)，**仍在后台继续运行**（未终止，{}）。\n\
                      进程 PID {}（任务 {}）已登记为保留的后台任务。\n\
                      输出持续追加到：{}\n\
                      最长存活 {} 分钟，到点由系统兜底结束；期间可随时结束它（面板，或 Agent 侧 process_kill 按 PID 结束）。\n\
                      **勿重复执行同一命令** —— 重复触发会让长任务从零重跑。",
                     request.timeout_secs,
+                    trigger,
                     pid,
                     task.id,
                     output_path.as_deref().unwrap_or("(未开启输出文件)"),
@@ -741,10 +777,92 @@ mod tests {
     #[test]
     fn shell_request_reads_timeout_and_cwd() {
         let r = ShellRequest::from_params(
-            &serde_json::json!({"command": "x", "timeout": 600, "cwd": "C:/tmp"}),
+            &serde_json::json!({"command": "x", "timeout": 200, "cwd": "C:/tmp"}),
         );
-        assert_eq!(r.timeout_secs, 600);
+        assert_eq!(r.timeout_secs, 200);
         assert_eq!(r.cwd.as_deref(), Some("C:/tmp"));
+        assert!(
+            !r.background,
+            "未超 300s 上限时仍走前台（默认值不得被规则波及）"
+        );
+    }
+
+    // ── 长 timeout 自动转后台（避免超时重跑白烧时间）──
+
+    /// 核心规则：timeout 超过 300s 且调用方未表态 → 自动后台。
+    #[test]
+    fn shell_request_auto_backgrounds_when_timeout_exceeds_cap() {
+        let r = ShellRequest::from_params(
+            &serde_json::json!({"command": "yarn build", "timeout": 600}),
+        );
+        assert!(
+            r.background,
+            "timeout 600s > 300s 上限，必须自动转后台，否则超时后整条命令要重跑"
+        );
+        assert!(r.background_auto, "必须标记为规则自动置位");
+        assert_eq!(r.timeout_secs, 600, "timeout 本身不得被改写");
+    }
+
+    /// 边界：恰好 300s 不触发（规则是「大于」而非「大于等于」）。
+    #[test]
+    fn shell_request_at_cap_is_not_auto_backgrounded() {
+        let r = ShellRequest::from_params(
+            &serde_json::json!({"command": "x", "timeout": FOREGROUND_TIMEOUT_CAP_SECS}),
+        );
+        assert!(
+            !r.background,
+            "恰好 {FOREGROUND_TIMEOUT_CAP_SECS}s 仍在前台上限内，不该转后台"
+        );
+        assert!(!r.background_auto);
+    }
+
+    /// 显式 background=false + 长 timeout：必须尊重调用方意愿。
+    ///
+    /// 调用方可能就想让命令被超时杀掉（例如带副作用且不该留残影的探测）。
+    /// 规则只在「未表态」时生效，不得强改显式选择。
+    #[test]
+    fn shell_request_explicit_false_wins_over_auto_rule() {
+        let r = ShellRequest::from_params(
+            &serde_json::json!({"command": "x", "timeout": 600, "background": false}),
+        );
+        assert!(
+            !r.background,
+            "显式 background=false 必须压过自动规则，否则调用方无法要求被超时杀掉"
+        );
+        assert!(!r.background_auto, "显式表态不该标记为自动");
+    }
+
+    /// 显式 background=true + 短 timeout：照常后台，且不算自动。
+    #[test]
+    fn shell_request_explicit_true_with_short_timeout() {
+        let r = ShellRequest::from_params(
+            &serde_json::json!({"command": "x", "timeout": 30, "background": true}),
+        );
+        assert!(r.background);
+        assert!(!r.background_auto, "显式 true 不该标记为规则自动置位");
+    }
+
+    /// 工具 schema 的描述必须把这条规则讲给模型听。
+    ///
+    /// 描述是模型唯一能看到的约束来源：若不写，模型不会知道「传大 timeout
+    /// 就等于自动后台」，仍会按前台语义理解返回值。
+    #[test]
+    fn shell_tool_description_documents_auto_background() {
+        let mut registry = crate::tools::registry::ToolRegistry::new();
+        registry.register_execute_shell();
+        let def = registry
+            .get("system_shell")
+            .expect("system_shell registered");
+        assert!(
+            def.description.contains("300"),
+            "描述必须点明 300s 这个阈值：{}",
+            def.description
+        );
+        assert!(
+            def.description.to_lowercase().contains("background"),
+            "描述必须说明长任务会自动转后台：{}",
+            def.description
+        );
     }
 
     #[test]
@@ -830,6 +948,7 @@ mod tests {
             command: command.to_string(),
             timeout_secs,
             background,
+            background_auto: false,
             cwd: None,
         }
     }
