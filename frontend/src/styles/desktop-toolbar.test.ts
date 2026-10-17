@@ -70,7 +70,8 @@ describe('② dock 定位与排布：对齐 .chat-header-right', () => {
 
   it('fixed + 垂直居中 + 右缘 20px', () => {
     expect(dock).toMatch(/position:\s*fixed/)
-    expect(dock).toMatch(/top:\s*50%/)
+    // 视觉重心上移：45%（大王 2026-10-17 定），配合 translateY(-50%) 仍以自身中心对齐
+    expect(dock).toMatch(/top:\s*45%/)
     expect(dock).toMatch(/transform:\s*translateY\(-50%\)/)
     expect(dock).toMatch(/right:\s*20px/)
   })
@@ -119,9 +120,9 @@ describe('② dock 定位与排布：对齐 .chat-header-right', () => {
   })
 })
 
-describe('③ hover 逐次显形：从上到下错峰，收起无拖尾', () => {
+describe('③ 渐显渐隐：is-shown 驱动，无逐个错峰，收起无拖尾', () => {
   const btn = ruleBody(toolbarCss, '.desktop-toolbar-btn')
-  const hover = ruleBody(toolbarCss, '.desktop-toolbar-dock:hover .desktop-toolbar-btn')
+  const shown = ruleBody(toolbarCss, '.desktop-toolbar-dock.is-shown .desktop-toolbar-btn')
 
   it('默认态 opacity:0 + translateY(-4px)，但仍占布局盒（不得 display:none）', () => {
     expect(btn).toMatch(/opacity:\s*0/)
@@ -130,23 +131,22 @@ describe('③ hover 逐次显形：从上到下错峰，收起无拖尾', () => 
     expect(btn).not.toMatch(/pointer-events:\s*none/)
   })
 
-  it('hover 态翻到 opacity:1 + translateY(0)', () => {
-    expect(hover).toMatch(/opacity:\s*1/)
-    expect(hover).toMatch(/transform:\s*translateY\(0\)/)
+  it('显形态由 .is-shown 驱动（不再是 :hover），翻到 opacity:1 + translateY(0)', () => {
+    expect(shown).toMatch(/opacity:\s*1/)
+    expect(shown).toMatch(/transform:\s*translateY\(0\)/)
+    // 显隐阈值必须来自 JS 的防抖+常驻状态，CSS 不得残留 :hover 版显隐规则
+    const hoverRule = ruleBody(toolbarCss, '.desktop-toolbar-dock:hover .desktop-toolbar-btn')
+    expect(hoverRule).toBe('')
   })
 
-  it('错峰走 CSS 变量 --stagger-delay，且带 0ms 兜底（未注入变量的元素不失效）', () => {
-    expect(hover).toMatch(/transition-delay:\s*var\(--stagger-delay,\s*0ms\)/)
+  it('不做逐个错峰：CSS 中不得残留 --stagger-delay 消费点', () => {
+    expect(toolbarCss).not.toContain('--stagger-delay')
   })
 
-  it('错峰只作用于 opacity / transform，后三个属性保持 0 延迟', () => {
-    const delays = hover.match(/transition-delay:([^;]*);/s)?.[1] ?? ''
-    // 不能按 ',' 裸切：var(--stagger-delay, 0ms) 内部自带逗号。
-    // 先整体吃掉 var(...) 再切其余裸值。
-    const values = delays.match(/var\([^)]*\)|[^,\s]+/g) ?? []
-    expect(values).toHaveLength(5)
-    expect(values.slice(0, 2).every(v => v.startsWith('var(--stagger-delay'))).toBe(true)
-    expect(values.slice(2).every(v => v === '0ms')).toBe(true)
+  it('渐显渐隐走 opacity/transform 的中档时长（不再用 120ms 快档）', () => {
+    const transition = btn.match(/transition:\s*([^;]*);/s)?.[1] ?? ''
+    expect(transition).toMatch(/opacity var\(--dur-med\) var\(--ease-out\)/)
+    expect(transition).toMatch(/transform var\(--dur-med\) var\(--ease-out\)/)
   })
 
   it('transition 显式列出属性且**不含 all**（all 会把 delay 套到背景/颜色上）', () => {
@@ -161,8 +161,11 @@ describe('③ hover 逐次显形：从上到下错峰，收起无拖尾', () => 
     expect(btn).toMatch(/transition-delay:\s*0ms\s*;/)
   })
 
-  it(':active 压感叠加在入场位移之上，且选择器带 dock:hover 以压过显隐规则', () => {
-    const active = ruleBody(toolbarCss, '.desktop-toolbar-dock:hover .desktop-toolbar-btn:active')
+  it(':active 压感叠加在入场位移之上，且选择器带 dock.is-shown 以压过显隐规则', () => {
+    const active = ruleBody(
+      toolbarCss,
+      '.desktop-toolbar-dock.is-shown .desktop-toolbar-btn:active',
+    )
     expect(active).toMatch(/transform:\s*translateY\(0\) scale\(0\.94\)/)
     expect(toolbarCss).not.toMatch(/^\.desktop-toolbar-btn:active\s*\{/m)
   })
@@ -177,12 +180,12 @@ describe('③ hover 逐次显形：从上到下错峰，收起无拖尾', () => 
     // 逐条规则取声明块：**不能**用跨块的 [\s\S]* 贪心匹配 —— 那会一路吃到
     // media 块之外的 hover 规则里，把「块内没写」判成「块内写了」。
     const base = ruleBody(block, '.desktop-toolbar-btn')
-    const hoverInBlock = ruleBody(block, '.desktop-toolbar-dock:hover .desktop-toolbar-btn')
+    const shownInBlock = ruleBody(block, '.desktop-toolbar-dock.is-shown .desktop-toolbar-btn')
     expect(base).toMatch(/transform:\s*none/)
     expect(base).toMatch(/transition-delay:\s*0ms/)
     expect(base).toMatch(/transition:\s*opacity var\(--transition-fast\)/)
-    // hover 态的入场位移也要一并关掉，否则会被块外显隐规则的 translateY(0) 顶掉
-    expect(hoverInBlock).toMatch(/transform:\s*none/)
+    // 显形态的入场位移也要一并关掉，否则会被块外显隐规则的 translateY(0) 顶掉
+    expect(shownInBlock).toMatch(/transform:\s*none/)
   })
 
   it('结果浮窗的 toolbarFadeIn 入场动画仍在（被 .desktop-toolbar-result 引用，禁止删除）', () => {
@@ -211,14 +214,14 @@ describe('④ 坐标读数 + 关闭**常驻**（不受整列 hover 显隐约束�
     expect(pos).not.toMatch(/opacity:/)
   })
 
-  it('不存在 .desktop-toolbar-dock:hover .desktop-toolbar-pos 显隐规则', () => {
-    const hoverRule = ruleBody(toolbarCss, '.desktop-toolbar-dock:hover .desktop-toolbar-pos')
-    expect(hoverRule).toBe('')
-    // 更强的一条：任何 dock:hover 规则都不得引用 .desktop-toolbar-pos
-    // （防换一种写法绕过上一条 —— 空转断言等于没断言）
-    const dockHoverRules = toolbarCss.match(/\.desktop-toolbar-dock:hover[^{]*\{[^}]*\}/g) ?? []
-    expect(dockHoverRules.length).toBeGreaterThan(0)
-    for (const r of dockHoverRules) expect(r).not.toContain('.desktop-toolbar-pos')
+  it('不存在任何 dock 的 hover/is-shown 规则给读数加显隐（防该 bug 复活）', () => {
+    // 显隐已从 :hover 改为 .is-shown（JS 防抖+常驻驱动）——两种写法都必须堵死。
+    // 空转断言等于没断言：先确认真的扫到了门控规则，再逐条检查不涉及读数。
+    const gated = toolbarCss.match(/\.desktop-toolbar-dock[.:][^{]*\{[^}]*\}/g) ?? []
+    expect(gated.length).toBeGreaterThan(0)
+    for (const r of gated) {
+      if (/opacity:|visibility:/.test(r)) expect(r).not.toContain('.desktop-toolbar-pos')
+    }
   })
 
   it('读数与关闭在同一行分组内（原实现关闭在读数下方）', () => {

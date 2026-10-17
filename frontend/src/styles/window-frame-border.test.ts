@@ -44,9 +44,13 @@ describe('窗口最外圈 1px 主题内描边', () => {
     expect(body).toContain('box-shadow: inset 0 0 0 1px var(--line-2)')
   })
 
-  // 三个全屏宿主：顶部实色工具栏会盖断盒阴影，故统一走 ::after 覆盖层。
+  // 三个全屏宿主：顶部实色工具栏会盖断盒阴影，故统一走覆盖层伪元素。
   // z 50：高于宿主内部全部常驻层（preview 侧最高 13），低于应用级浮层；
   // pointer-events:none 保证不截获任何交互。
+  //
+  // ⚠️ 工具页例外：它的内部 `.tools-page` 自带 `position:fixed; z-index:200`，
+  // 建立了独立堆叠上下文，会盖掉宿主自身的 ::after。故描边必须画在
+  // `.tools-page` 自己的 ::after 上（见 components.css 的注释）。
   const hosts: Array<{ name: string; css: string; selector: string }> = [
     { name: '文件预览 .pv-page', css: previewCss, selector: '.pv-page::after' },
     { name: '模型页 .models-page-host', css: modelsCss, selector: '.models-page-host::after' },
@@ -54,6 +58,12 @@ describe('窗口最外圈 1px 主题内描边', () => {
       name: '画布 .canvas-workbench-host',
       css: shellCss,
       selector: '.canvas-workbench-host::after',
+    },
+    {
+      // 描边挂在子元素 .tools-page 上（宿主的 ::after 会被其 z-index:200 盖住）
+      name: '工具页 .tools-page',
+      css: shellCss,
+      selector: '.tools-page-host > .tools-page::after',
     },
   ]
 

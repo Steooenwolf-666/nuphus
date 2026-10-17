@@ -1168,6 +1168,39 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ── 内置工具页：独立全屏宿主（App 层挂载；已从画布移出）──
+   与 .models-page-host 同档层级（2500），压过画布（100）与设置中心（60~90 组）。
+   内部 .tools-page 本身是 fixed inset:0 且自带顶栏，这里只做层级与描边兜底，
+   不改它的布局契约。 */
+.tools-page-host {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-0);
+}
+
+/* 窗口最外圈：主题化 1px 内描边（同 .app-shell / .models-page-host 的窗口描边契约）
+   
+   ⚠️ 绘制方式必须用**子元素覆盖层**而不是宿主的 ::after：
+   内部 `.tools-page` 自身是 `position: fixed; z-index: 200`（tools.css:8-12），
+   它建立了独立的堆叠上下文并压过宿主的任何 ::after（伪元素的 z-index 只在
+   宿主堆叠上下文内比较，宿主自身若无 z-index 就整体被盖）。画布宿主
+   `.canvas-workbench-host` 的子元素不建堆叠上下文，故它的 ::after 能生效 ——
+   两者不能照抄同一写法。
+   
+   故把描边画在 `.tools-page` 自己的 ::after 上：同级堆叠上下文内 z-index:50
+   高于内部全部内容层，且 pointer-events:none 不挡交互。 */
+.tools-page-host > .tools-page::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  pointer-events: none;
+}
+
 /* ── Canvas unified workbench: direct full-screen editor surface ── */
 .canvas-workbench-host {
   position: fixed;
@@ -1227,21 +1260,4 @@
 }
 .canvas-workbench-host .wfc-page .wfc-toolbar {
   z-index: 1;
-}
-.canvas-workbench-host .workflow-workbench-header {
-  position: relative;
-  z-index: 10;
-}
-
-/* Embedded tools stay inside the canvas workbench body; never cover the shared Header. */
-.canvas-workbench-host .tools-page--embedded {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  min-height: 0;
-}
-.canvas-workbench-host .workflow-workbench-body--tools {
-  position: relative;
-  z-index: 0;
-  overflow: hidden;
 }

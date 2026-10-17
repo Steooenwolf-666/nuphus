@@ -16,7 +16,8 @@
   /* 右缘对齐 header 图标列：.chat-header 的 right:16px + padding:4px = 20px。
      依据 chat-messages.css:48,55（当前文件实际值，非记忆值）。 */
   right: 20px;
-  top: 50%;
+  /* 视觉重心略高于几何中线（大王 2026-10-17 定：整体上移） */
+  top: 45%;
   transform: translateY(-50%);
   /* 层级与 .chat-header-left / .chat-header-right 同为10（chat-messages.css:66）。
    2026-10-12 大王钦定：工具条不是弹窗，不该有任何「压过别的浮层」的特权；
@@ -71,8 +72,8 @@
   opacity: 0;
   transform: translateY(-4px);
   transition:
-    opacity var(--transition-fast),
-    transform var(--transition-fast),
+    opacity var(--dur-med) var(--ease-out),
+    transform var(--dur-med) var(--ease-out),
     background var(--transition-fast),
     color var(--transition-fast),
     border-color var(--transition-fast);
@@ -80,13 +81,13 @@
   transition-delay: 0ms;
 }
 
-/* hover 显形：第 n 个按钮延迟 n × 步长（--stagger-delay 由 JSX 注入）。
-   列表顺序 = opacity, transform, background, color, border-color，
-   后三者保持 0 延迟，按钮自身的 hover 提亮不被错峰拖累。 */
-.desktop-toolbar-dock:hover .desktop-toolbar-btn {
+/* 显形：整列同时渐显（渐显渐隐，不做逐个错峰 —— 错峰在防抖+常驻语义下只会
+   让「3s 常驻」的起点模糊）。.is-shown 由 DesktopToolbar 的进出去抖逻辑挂上/摘掉。
+   只给 opacity / transform 上过渡时长，背景/颜色仍走快档，hover 提亮不拖沓。 */
+.desktop-toolbar-dock.is-shown .desktop-toolbar-btn {
   opacity: 1;
   transform: translateY(0);
-  transition-delay: var(--stagger-delay, 0ms), var(--stagger-delay, 0ms), 0ms, 0ms, 0ms;
+  transition-delay: 0ms;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -96,7 +97,7 @@
     transition-delay: 0ms;
     transition: opacity var(--transition-fast);
   }
-  .desktop-toolbar-dock:hover .desktop-toolbar-btn {
+  .desktop-toolbar-dock.is-shown .desktop-toolbar-btn {
     transform: none;
   }
 }
@@ -106,10 +107,10 @@
   border-color: var(--glass-3);
   color: var(--spark-primary);
 }
-/* 按压缩放必须叠加在入场位移之上；选择器带 dock:hover 前缀是为了压过
-   .desktop-toolbar-dock:hover .desktop-toolbar-btn 的 transform（0,3,0 > 0,2,0）。
-   未 hover 时按钮不可见，:active 本就无从触发，故不再单独写低特异性版本。 */
-.desktop-toolbar-dock:hover .desktop-toolbar-btn:active {
+/* 按压缩放必须叠加在入场位移之上；选择器带 dock.is-shown 前缀是为了压过
+   .desktop-toolbar-dock.is-shown .desktop-toolbar-btn 的 transform（0,3,0 > 0,2,0）。
+   未显形时按钮不可见，:active 本就无从触发，故不再单独写低特异性版本。 */
+.desktop-toolbar-dock.is-shown .desktop-toolbar-btn:active {
   transform: translateY(0) scale(0.94);
 }
 .desktop-toolbar-btn.active {
@@ -117,15 +118,23 @@
   border-color: color-mix(in srgb, var(--accent) 42%, transparent);
 }
 
-/* ── 工具按钮文字标签 ──
+/* ── 工具按钮 hover 浮层 ──
    按钮列只有 30px 宽（「截图 / 选区 / 鼠标 / 取色 / 字典」放不下），常态隐藏；
-   hover 时绝对定位向左浮出，既给出名称又不撑开按钮列宽度 / 不扩大热区。 */
+   hover 时绝对定位向左浮出，既给出名称又不撑开按钮列宽度 / 不扩大热区。
+
+   浮层是**唯一的提示通道**：主行名称 + 副行快捷键（或说明）。
+   按钮上不再挂 title —— 原生的灰框提示会和本浮层同时出现，同一个按钮两套提示。
+   所以 `aria-label` 仍然保留（读屏与无浮层场景的可访问名），title 全部去掉。 */
 
 .desktop-toolbar-label {
   position: absolute;
   top: 50%;
   right: calc(100% + 8px);
   transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   padding: 4px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -142,6 +151,13 @@
   transition:
     opacity var(--transition-fast),
     visibility var(--transition-fast);
+}
+/* 副行（快捷键 / 说明）：弱化一档，与主行拉开层次 */
+.desktop-toolbar-label-hint {
+  color: var(--spark-tertiary);
+  font-size: var(--fs-micro);
+  font-family: var(--font-mono);
+  line-height: 1;
 }
 .desktop-toolbar-btn:hover .desktop-toolbar-label {
   opacity: 1;
@@ -187,6 +203,12 @@
 }
 .desktop-toolbar-pos:hover {
   background: color-mix(in srgb, var(--panel-bg) 100%, transparent);
+}
+/* 被拒态：资源门拒绝（典型 automation_busy）时读数位改显示原因。
+   用 --error 以示「这不是坐标，是错误」，仍可点击关闭。 */
+.desktop-toolbar-pos--error {
+  color: var(--error);
+  cursor: default;
 }
 
 /* 关闭钮：与读数同一行的收尾控件，视觉沿用同一份磨砂配方（不占列、不吃错峰） */

@@ -33,6 +33,7 @@ import {
   IconCopy,
   IconCheck,
   IconAppWindow,
+  IconWrench,
 } from '../../ui/Icons'
 
 import { Pipette as IconDropper } from 'lucide-react'
@@ -61,38 +62,45 @@ interface ToolBtn {
   icon: React.ElementType
   /** i18n key（locales workflowEditor.ts 的 toolbar.* 段） */
   labelKey: string
-  desc: string
+  /** 快捷键（显示在 hover 浮层第二行） */
+  hint?: string
+  /** 补充说明（显示在 hover 浮层第二行，hint 缺省时） */
+  detail?: string
 }
 
-const TOOLS: { mode: ToolMode; icon: React.ElementType; labelKey: string; desc: string }[] = [
+const TOOLS: ToolBtn[] = [
   {
     mode: 'screenshot',
     icon: IconCamera,
     labelKey: 'toolbar.screenshot',
-    desc: '截图保存 · Ctrl+1',
+    hint: 'Ctrl+1',
+    detail: '截图保存',
   },
-  { mode: 'picker', icon: IconCrop, labelKey: 'toolbar.picker', desc: '获取坐标 · Ctrl+2' },
-  { mode: 'mouse_pos', icon: IconCrosshair, labelKey: 'toolbar.mousePos', desc: '实时坐标' },
+  {
+    mode: 'picker',
+    icon: IconCrop,
+    labelKey: 'toolbar.picker',
+    hint: 'Ctrl+2',
+    detail: '框选区域',
+  },
   {
     mode: 'color_picker',
     icon: IconDropper,
     labelKey: 'toolbar.colorPicker',
-    desc: '屏幕取色 · Ctrl+3',
+    hint: 'Ctrl+3',
+    detail: '屏幕取色',
   },
-  { mode: 'ocr', icon: IconType, labelKey: 'toolbar.ocr', desc: '文字识别' },
+  { mode: 'mouse_pos', icon: IconCrosshair, labelKey: 'toolbar.mousePos', detail: '实时坐标' },
+  { mode: 'ocr', icon: IconType, labelKey: 'toolbar.ocr', detail: '文字识别' },
 ]
 
 /**
- * hover 入场错峰步长（ms）：第 n 个按钮延迟 n × 步长，由 CSS 的 --stagger-delay 消费。
- * 取 40ms —— 与 --transition-fast(120ms) 相邻，6 个按钮总时长约 320ms：
- * 看得清「从上到下逐次显示」，又不会拖到像加载动画。
+ * 渐显后的常驻时长（ms）：3 秒。
+ * 常驻期间鼠标移开也不渐隐；再次进入会续期。
  */
-const STAGGER_STEP_MS = 40
+const HOVER_HOLD_MS = 3000
 
-/** 把错峰步长交给样式层：只写 CSS 变量，不在 JS 里做定时器（卸载后无残留回调） */
-const staggerStyle = (index: number) =>
-  ({ '--stagger-delay': `${index * STAGGER_STEP_MS}ms` }) as React.CSSProperties
-export function DesktopToolbar() {
+export function DesktopToolbar({ onOpenTools }: { onOpenTools?: () => void } = {}) {
   const { t } = useLanguage()
   // Sub-panel state
   const [activeTool, setActiveTool] = useState<ToolMode>(null)
@@ -117,15 +125,110 @@ export function DesktopToolbar() {
   // Dictionary OCR settings panel
   const [showOcrDict, setShowOcrDict] = useState(false)
 
+  // ── 显隐：边缘防抖 + 渐显后常驻 3s ──
+  // 语义（大王 2026-10-17 定）：
+  //   ① 鼠标进入 dock → 需连续停留 HOVER_ENTER_DELAY_MS 才渐显（扫过右缘的误触不触发）
+  //   ② 渐显后无论鼠标在不在，都保持 HOLD_MS 常驻；期间再次进入/停留会续期
+  //   ③ 常驻结束后鼠标已不在 dock → 渐隐；仍在 → 继续常驻
+  //   ④ 工具面板打开、取色/截图遮罩流程中、坐标工具激活 → 强制常驻（不因移开鼠标消失）
+  // 用定时器而不是 CSS :hover：CSS 无法表达「进入防抖」与「延时保持」，且
+  // JS 侧必须知道当前是否显形才能正确续期。
+  const [dockShown, setDockShown] = useState(false)
+  const dockRef = useRef<HTMLDivElement | null>(null)
+  const enterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 鼠标当前是否在 dock 上。**不用 `el.matches(':hover')`**：jsdom 不支持该伪类
+   *  （恒为 false），且在定时器回调里读 DOM 也不如自己记账可靠。 */
+  const hoveringRef = useRef(false)
+
+  /** 续期常驻窗口：从此刻起再保持 HOVER_HOLD_MS。
+   *  到点时鼠标仍在 dock 上 → 递归续期（用 ref 持有自身，避免 useCallback 自引用）。 */
+  const renewHoldRef = useRef<() => void>(() => {})
+  const renewHold = useCallback(() => {
+    if (holdTimerRef.current) clearTimeout(holdTimerRef.current)
+    holdTimerRef.current = setTimeout(() => {
+      holdTimerRef.current = null
+      if (hoveringRef.current) {
+        renewHoldRef.current()
+        return
+      }
+      setDockShown(false)
+    }, HOVER_HOLD_MS)
+  }, [])
+  renewHoldRef.current = renewHold
+
+  /** 强制常驻（面板/遮罩流程期间）：显形且不安排任何收起 */
+  const pinShown = useCallback(() => {
+    if (enterTimerRef.current) {
+      clearTimeout(enterTimerRef.current)
+      enterTimerRef.current = null
+    }
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current)
+      holdTimerRef.current = null
+    }
+    setDockShown(true)
+  }, [])
+
+  /** 鼠标进入：立即显形（不做防抖延迟 —— 悬停必须跟手） */
+  const onDockEnter = useCallback(() => {
+    hoveringRef.current = true
+    if (enterTimerRef.current) {
+      clearTimeout(enterTimerRef.current)
+      enterTimerRef.current = null
+    }
+    setDockShown(true)
+    renewHold()
+  }, [renewHold])
+
+  /** 鼠标离开：显形后靠常驻计时器自然渐隐（3s 内再进入会续期） */
+  const onDockLeave = useCallback(() => {
+    hoveringRef.current = false
+    if (enterTimerRef.current) {
+      clearTimeout(enterTimerRef.current)
+      enterTimerRef.current = null
+    }
+  }, [])
+
+  // 卸载清理：两个定时器都必须撤，否则卸载后仍会 setState
+  useEffect(() => {
+    return () => {
+      if (enterTimerRef.current) clearTimeout(enterTimerRef.current)
+      if (holdTimerRef.current) clearTimeout(holdTimerRef.current)
+    }
+  }, [])
+
+  // 「面板/流程进行中」→ 强制常驻。这类状态下列表必须可见（否则用户无法收尾）。
+  const dockPinned = activeTool !== null || showOcrDict || loading || pickingSlotIndex !== null
+  useEffect(() => {
+    if (dockPinned) pinShown()
+  }, [dockPinned, pinShown])
+
   // ── Mouse position polling ──
+  // ⚠️ 失败必须可见：`desktop_mouse_position` 走资源门，Agent 轮次 / 工作流运行
+  // 期间会被以 `automation_busy` 拒绝。**旧实现静默 catch 掉**，读数值就永远停在
+  // 初值 (0, 0) —— 用户看到「点击无效」，实际是被拒且无人告知。
+  // 现在：连续失败即停轮询并把原因显示在读数位上（点开才知道为什么没数）。
+  const [posError, setPosError] = useState<string | null>(null)
   useEffect(() => {
     if (activeTool === 'mouse_pos') {
+      let failures = 0
+      setPosError(null)
       const poll = async () => {
         try {
           const r = await bridgeInvoke<{ x: number; y: number }>('desktop_mouse_position')
-          if (r) setCursorPos(r)
-        } catch {
-          /* ignore */
+          if (r) {
+            setCursorPos(r)
+            setPosError(null)
+            failures = 0
+          }
+        } catch (e) {
+          failures += 1
+          // 单次抖动不打断（60ms 轮询，偶发一次失败不代表资源被占）
+          if (failures === 1) return
+          if (cursorInterval.current) clearInterval(cursorInterval.current)
+          cursorInterval.current = null
+          setPosError(String(e))
         }
       }
       poll()
@@ -133,6 +236,7 @@ export function DesktopToolbar() {
     } else {
       if (cursorInterval.current) clearInterval(cursorInterval.current)
       cursorInterval.current = null
+      setPosError(null)
     }
     return () => {
       if (cursorInterval.current) clearInterval(cursorInterval.current)
@@ -371,32 +475,43 @@ export function DesktopToolbar() {
 
   return (
     <>
-      {/* ── Dock：右侧固定按钮列。常驻占位 + hover 从上到下逐次显形 ──
+      {/* ── Dock：右侧固定按钮列。渐显渐隐（进入防抖 180ms / 渐显后常驻 3s）──
           列排布直接落在 dock 上（竖向 / gap 4px / 右对齐），同 .chat-header-right：
           按钮等宽 30px，flex-end 与 center 视觉等价，用 flex-end 与 header 一致。
-          热区 = 这一列按钮的真实盒子，dock 不加任何 padding/margin/inset 撑大。 */}
-      <div className="desktop-toolbar-dock">
-        {/* Tool buttons —— 下标即错峰序号：第 i 个延迟 i × STAGGER_STEP_MS 入场 */}
-        {TOOLS.map((tool, i) => (
+          热区 = 这一列按钮的真实盒子，dock 不加任何 padding/margin/inset 撑大。
+          .is-shown 由 dockShown 状态驱动，CSS 只负责 opacity/transform 过渡。 */}
+      <div
+        ref={dockRef}
+        className={`desktop-toolbar-dock${dockShown ? ' is-shown' : ''}`}
+        onMouseEnter={onDockEnter}
+        onMouseLeave={onDockLeave}
+      >
+        {/* Tool buttons —— 整列同时渐显，不做逐个错峰（见 CSS .is-shown 注释）。
+            提示只在 .desktop-toolbar-label 里出：主行名称 + 副行快捷键/说明。
+            **不再挂 title** —— 原生灰框会和自定义浮层同时出现（双重提示）。 */}
+        {TOOLS.map(tool => (
           <IconButton
             key={tool.mode}
             variant={activeTool === tool.mode ? 'desktop-toolbar-active' : 'desktop-toolbar'}
             label={t(tool.labelKey)}
+            nativeTitle={false}
             onClick={() => handleToolClick(tool.mode)}
-            title={tool.desc}
-            style={staggerStyle(i)}
           >
             <tool.icon size={15} />
-            <span className="desktop-toolbar-label">{t(tool.labelKey)}</span>
+            <span className="desktop-toolbar-label">
+              <span className="desktop-toolbar-label-name">{t(tool.labelKey)}</span>
+              {(tool.hint || tool.detail) && (
+                <span className="desktop-toolbar-label-hint">{tool.hint ?? tool.detail}</span>
+              )}
+            </span>
           </IconButton>
         ))}
 
         <IconButton
           variant="desktop-toolbar"
           label={t('toolbar.registerApp')}
+          nativeTitle={false}
           disabled={loading}
-          title="通过本地选择器登记未被自动发现的桌面应用；不会立即启动应用"
-          style={staggerStyle(TOOLS.length)}
           onClick={async () => {
             setLoading(true)
             try {
@@ -416,8 +531,31 @@ export function DesktopToolbar() {
           }}
         >
           <IconAppWindow size={15} />
-          <span className="desktop-toolbar-label">{t('toolbar.registerApp')}</span>
+          <span className="desktop-toolbar-label">
+            <span className="desktop-toolbar-label-name">{t('toolbar.registerApp')}</span>
+            <span className="desktop-toolbar-label-hint">登记未被自动发现的应用</span>
+          </span>
         </IconButton>
+
+        {/* ── 工具：内置工具页入口（整页独立界面，不在画布内）──
+            列末位；工具页自身有整页壳与关闭按钮，这里只负责打开，不做任何面板内嵌。 */}
+        {onOpenTools && (
+          <IconButton
+            variant="desktop-toolbar"
+            label={t('toolbar.tools')}
+            nativeTitle={false}
+            onClick={() => {
+              setActiveTool(null)
+              onOpenTools()
+            }}
+          >
+            <IconWrench size={15} />
+            <span className="desktop-toolbar-label">
+              <span className="desktop-toolbar-label-name">{t('toolbar.tools')}</span>
+              <span className="desktop-toolbar-label-hint">PDF / 图片 / 视频 / 音频</span>
+            </span>
+          </IconButton>
+        )}
 
         {/* ── 鼠标坐标：读数 + 关闭**并排成一组**，且**常驻不受 hover 显隐约束** ──
             为什么必须常驻：整列平时 opacity:0，只在 hover dock 时才显形。若坐标
@@ -428,20 +566,33 @@ export function DesktopToolbar() {
             关闭钮与读数同级并排（原实现把它排在列末尾、落在读数「下方」）。 */}
         {activeTool === 'mouse_pos' && (
           <div className="desktop-toolbar-pos-group" role="group" aria-label="鼠标坐标">
-            <button
-              type="button"
-              className="desktop-toolbar-pos"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(`${cursorPos.x},${cursorPos.y}`)
-                } catch {
-                  /* ignore */
-                }
-              }}
-              title="点击复制坐标"
-            >
-              ({cursorPos.x}, {cursorPos.y})
-            </button>
+            {posError ? (
+              // 被拒（典型：automation_busy 任务执行中）时给出可见原因 —— 静默停在
+              // (0, 0) 会让人以为「点击无效」，实际是后端资源门拒绝。
+              <button
+                type="button"
+                className="desktop-toolbar-pos desktop-toolbar-pos--error"
+                onClick={() => setActiveTool(null)}
+                title={`实时坐标不可用：${posError}（点击关闭）`}
+              >
+                坐标不可用
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="desktop-toolbar-pos"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(`${cursorPos.x},${cursorPos.y}`)
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+                title="点击复制坐标"
+              >
+                ({cursorPos.x}, {cursorPos.y})
+              </button>
+            )}
             <button
               type="button"
               className="desktop-toolbar-pos-close"

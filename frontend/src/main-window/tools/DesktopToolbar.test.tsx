@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DesktopToolbar } from './DesktopToolbar'
 
@@ -73,7 +73,6 @@ describe('DesktopToolbar 常驻按钮列结构（废弃 Ctrl+U / 废弃拖拽 / 
     Array.from(dock().children).filter(el =>
       el.classList.contains('desktop-toolbar-btn'),
     ) as HTMLElement[]
-  const delays = () => column().map(el => el.style.getPropertyValue('--stagger-delay'))
 
   it('无 props 即可渲染：按钮列直接挂在 dock 上，不再有把手 / 竖条两层', () => {
     render(<DesktopToolbar />)
@@ -84,16 +83,63 @@ describe('DesktopToolbar 常驻按钮列结构（废弃 Ctrl+U / 废弃拖拽 / 
     for (const btn of column()) expect(btn.parentElement).toBe(dock())
   })
 
-  it('按钮列顺序：截图 → 选区 → 鼠标 → 取色 → 字典 → 登记应用（DOM 序 = 视觉从上到下）', () => {
+  it('按钮列顺序：截图 → 选区 → 取色 → 鼠标 → 字典 → 登记应用（DOM 序 = 视觉从上到下）', () => {
     render(<DesktopToolbar />)
     expect(column().map(el => el.getAttribute('aria-label'))).toEqual([
       '截图',
       '选区',
-      '鼠标',
       '取色',
+      '鼠标',
       '字典',
       '登记应用',
     ])
+  })
+
+  it('传入 onOpenTools 时列末追加「内置工具」入口，点击即打开工具页', () => {
+    const onOpenTools = vi.fn()
+    render(<DesktopToolbar onOpenTools={onOpenTools} />)
+    // 入口必须是列内最后一个按钮（大王要求：入口在工具条最后）
+    expect(column().map(el => el.getAttribute('aria-label'))).toEqual([
+      '截图',
+      '选区',
+      '取色',
+      '鼠标',
+      '字典',
+      '登记应用',
+      '内置工具',
+    ])
+    fireEvent.click(screen.getByRole('button', { name: '内置工具' }))
+    expect(onOpenTools).toHaveBeenCalledOnce()
+    // 打开整页工具界面不得触发任何遮罩抓屏
+    expect(invoke).not.toHaveBeenCalledWith('start_overlay_mask', expect.anything())
+  })
+
+  it('未传 onOpenTools 时不渲染「内置工具」入口（保持无 props 可用的既有契约）', () => {
+    render(<DesktopToolbar />)
+    expect(screen.queryByRole('button', { name: '内置工具' })).toBeNull()
+  })
+
+  /**
+   * 2026-10-17 大王定：浮层已足够承载提示，**不得再挂 title** ——
+   * 原生灰框会和自定义浮层同时冒出来，同一个按钮两套提示。
+   * 快捷键统一进浮层第二行。
+   */
+  it('列内按钮一律不挂 title；快捷键只出现在 hover 浮层里', () => {
+    render(<DesktopToolbar onOpenTools={() => {}} />)
+    for (const btn of column()) {
+      expect(btn.getAttribute('title')).toBeNull()
+      // 可访问名仍在（读屏不依赖浮层）
+      expect(btn.getAttribute('aria-label')).toBeTruthy()
+    }
+    // 有快捷键的三个：浮层第二行必须是 Ctrl+N
+    const hintOf = (name: string) =>
+      screen.getByRole('button', { name }).querySelector('.desktop-toolbar-label-hint')?.textContent
+    expect(hintOf('截图')).toBe('Ctrl+1')
+    expect(hintOf('选区')).toBe('Ctrl+2')
+    expect(hintOf('取色')).toBe('Ctrl+3')
+    // 无快捷键的按钮：第二行给用途说明（不是空行）
+    expect(hintOf('鼠标')).toBe('实时坐标')
+    expect(hintOf('字典')).toBe('文字识别')
   })
 
   it('置顶已整体移除：无置顶按钮、不落盘 pinned 键', async () => {
@@ -159,45 +205,112 @@ describe('DesktopToolbar 常驻按钮列结构（废弃 Ctrl+U / 废弃拖拽 / 
   })
 })
 
-describe('DesktopToolbar hover 错峰：从上到下逐次显示（CSS 变量，无 JS 定时器）', () => {
+describe('DesktopToolbar 显隐：边缘 hover 防抖 + 渐显后常驻 3s（无 CSS :hover 显隐）', () => {
   beforeEach(() => {
     invoke.mockReset()
     localStorage.clear()
+    vi.useFakeTimers()
   })
-  afterEach(cleanup)
+  afterEach(() => {
+    vi.useRealTimers()
+    cleanup()
+  })
 
   const dock = () => document.querySelector('.desktop-toolbar-dock') as HTMLElement
-  const column = () =>
-    Array.from(dock().children).filter(el =>
+  const shown = () => dock().classList.contains('is-shown')
+  /** 推进假定时器并把由此产生的 React 状态更新包进 act */
+  const tick = (ms: number) => act(() => void vi.advanceTimersByTime(ms))
+
+  it('初始未显形（渐显前不占视觉，但仍占布局盒）', () => {
+    render(<DesktopToolbar />)
+    expect(shown()).toBe(false)
+  })
+
+  it('进入即显形 —— 不做任何延迟（悬停必须跟手）', () => {
+    render(<DesktopToolbar />)
+    fireEvent.mouseEnter(dock())
+    // 不推进定时器：mouseEnter 同步生效
+    expect(shown()).toBe(true)
+  })
+
+  it('快速划过也会显形（没有防抖窗口可以“滑过不触发”）', () => {
+    render(<DesktopToolbar />)
+    fireEvent.mouseEnter(dock())
+    fireEvent.mouseLeave(dock())
+    expect(shown()).toBe(true)
+
+    // 离开后仍按常驻规则：满 3s 才渐隐（不因“划过去”而提前消失）
+    tick(2900)
+    expect(shown()).toBe(true)
+    tick(100)
+    expect(shown()).toBe(false)
+  })
+
+  it('渐显后鼠标离开，仍常驻满 3s 才渐隐', () => {
+    render(<DesktopToolbar />)
+    fireEvent.mouseEnter(dock())
+    expect(shown()).toBe(true)
+
+    fireEvent.mouseLeave(dock())
+    // 2.9s 时仍常驻
+    tick(2900)
+    expect(shown()).toBe(true)
+    // 到 3s 才渐隐
+    tick(100)
+    expect(shown()).toBe(false)
+  })
+
+  it('常驻期内再次进入 → 续期（重新计满 3s 才渐隐）', () => {
+    render(<DesktopToolbar />)
+    fireEvent.mouseEnter(dock())
+    expect(shown()).toBe(true)
+
+    // 常驻已过 2s，此时再次进入 → 续期（此刻起重新计 3s）
+    tick(2000)
+    fireEvent.mouseEnter(dock())
+    fireEvent.mouseLeave(dock())
+    tick(2900)
+    expect(shown()).toBe(true)
+    tick(100)
+    expect(shown()).toBe(false)
+  })
+
+  it('鼠标一直按在 dock 上：到点即自动续期，永不停留在渐隐态', () => {
+    render(<DesktopToolbar />)
+    fireEvent.mouseEnter(dock())
+    expect(shown()).toBe(true)
+
+    // 不 mouseLeave：连续多个常驻周期都必须保持显形
+    for (let i = 0; i < 5; i++) {
+      tick(3000)
+      expect(shown()).toBe(true)
+    }
+  })
+
+  it('工具面板打开期间强制常驻：鼠标移开也不渐隐', () => {
+    render(<DesktopToolbar />)
+    fireEvent.mouseEnter(dock())
+    // 打开取色面板（activeTool 非空 → 钉住）
+    fireEvent.click(screen.getByRole('button', { name: '取色' }))
+    fireEvent.mouseLeave(dock())
+    tick(10000)
+    expect(shown()).toBe(true)
+  })
+
+  it('按钮本体不带 transition-delay / opacity —— 显隐全部交给 CSS 类', () => {
+    render(<DesktopToolbar />)
+    const column = Array.from(dock().children).filter(el =>
       el.classList.contains('desktop-toolbar-btn'),
     ) as HTMLElement[]
-
-  it('第 i 个按钮的 --stagger-delay 等于 i × 步长（首个 0ms，末位 200ms）', () => {
-    render(<DesktopToolbar />)
-    const d = column().map(el => el.style.getPropertyValue('--stagger-delay'))
-    expect(d).toEqual(['0ms', '40ms', '80ms', '120ms', '160ms', '200ms'])
-  })
-
-  it('错峰严格递增且步长恒为 40ms（逐项相减，不是"大概是 40"）', () => {
-    render(<DesktopToolbar />)
-    const ms = column().map(el => parseInt(el.style.getPropertyValue('--stagger-delay'), 10))
-    for (let i = 1; i < ms.length; i++) {
-      expect(ms[i] - ms[i - 1]).toBe(40)
-      expect(ms[i]).toBeGreaterThan(ms[i - 1])
-    }
-    expect(ms[0]).toBe(0)
-  })
-
-  it('按钮本体不带 transition-delay / opacity —— 延迟只经 --stagger-delay 交给 hover 规则', () => {
-    render(<DesktopToolbar />)
-    for (const btn of column()) {
-      // 收起必须零延迟；若这里被写成错峰，鼠标快速划过会留下逐个消失的拖尾
+    for (const btn of column) {
       expect(btn.style.transitionDelay).toBe('')
       expect(btn.style.opacity).toBe('')
+      // 逐个错峰已废止：不得再注入 --stagger-delay
+      expect(btn.style.getPropertyValue('--stagger-delay')).toBe('')
     }
   })
 
-  it('鼠标工具激活后：读数与关闭并排成一组，且都不占按钮列、不吃错峰', () => {
+  it('鼠标工具激活后：读数与关闭并排成一组，且都不占按钮列', () => {
     render(<DesktopToolbar />)
     fireEvent.click(screen.getByRole('button', { name: '鼠标' }))
 
@@ -212,11 +325,12 @@ describe('DesktopToolbar hover 错峰：从上到下逐次显示（CSS 变量，
     expect(Array.from(group.children).indexOf(readout)).toBeLessThan(
       Array.from(group.children).indexOf(close),
     )
-    // 两者都不是列成员、也不吃错峰
-    expect(column()).toHaveLength(6)
-    expect(column().includes(close)).toBe(false)
-    expect(close.style.getPropertyValue('--stagger-delay')).toBe('')
-    expect(readout.style.getPropertyValue('--stagger-delay')).toBe('')
+    // 两者都不是列成员
+    const column = Array.from(dock().children).filter(el =>
+      el.classList.contains('desktop-toolbar-btn'),
+    )
+    expect(column).toHaveLength(6)
+    expect(column.includes(close)).toBe(false)
   })
 
   it('点关闭后读数与关闭钮一起消失（常驻直到点关闭）', () => {
@@ -227,6 +341,29 @@ describe('DesktopToolbar hover 错峰：从上到下逐次显示（CSS 变量，
     fireEvent.click(screen.getByRole('button', { name: '关闭鼠标坐标' }))
     expect(document.querySelector('.desktop-toolbar-pos-group')).toBeNull()
     expect(screen.queryByTitle('点击复制坐标')).toBeNull()
+  })
+
+  /**
+   * 反向钉死「坐标读数为 (0,0) 但没人告诉用户为什么」这个 2026-10-17 报障形态：
+   * 轮询被拒（automation_busy）时**必须**把原因摆到读数位上，不得静默停在初值。
+   */
+  it('坐标轮询被拒：读数位改显示「坐标不可用」，不再静默停在 (0, 0)', async () => {
+    invoke.mockRejectedValue(new Error('automation_busy: 任务执行正在被占用，请稍后再试'))
+    render(<DesktopToolbar />)
+    fireEvent.click(screen.getByRole('button', { name: '鼠标' }))
+
+    // 第一次失败被容忍（防单次抖动），第二次才落错误态 —— 轮询 60ms
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(200)
+    })
+    const errBtn = document.querySelector('.desktop-toolbar-pos--error') as HTMLElement
+    expect(errBtn).toBeTruthy()
+    // 初值的 (0, 0) 必须消失——那正是让人误判「点击无效」的东西
+    expect(screen.queryByText('(0, 0)')).toBeNull()
+    expect(errBtn.textContent).toBe('坐标不可用')
+    expect(errBtn.getAttribute('title')).toContain('automation_busy')
+    // 关闭钮仍在（用户能收尾）
+    expect(screen.getByRole('button', { name: '关闭鼠标坐标' })).toBeTruthy()
   })
 
   it('关闭钮不带 inline 颜色（配色归 CSS 的 --error token，不写死十六进制）', () => {
