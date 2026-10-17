@@ -133,6 +133,9 @@ export interface SessionAPI {
   canvasWorkflowId: string | null
   openCanvas: (id?: string | null) => void
   closeCanvas: () => void
+  /** 内置工具页：独立全屏界面（已从画布移出，入口在桌面工具条末尾） */
+  showTools: boolean
+  setShowTools: (v: boolean) => void
 
   // ── Execution ──
   showExecTrace: boolean
@@ -915,6 +918,17 @@ export function useSession(): SessionAPI {
           // 命令面板的「画布」不带指定工作流：显式传空 → 由工作台自选，
           // 避免沿用上次从列表点选的目标工作流
           modals.openCanvas()
+        },
+      },
+      {
+        id: 'tools',
+        label: t('cmd.tools'),
+        desc: t('cmd.toolsDesc'),
+        category: t('cmd.category.shortcuts'),
+        action: () => {
+          setCmdPaletteOpen(false)
+          // 内置工具页：独立全屏界面（与桌面工具条列末入口同一开关）
+          modals.setShowTools(true)
         },
       },
       {

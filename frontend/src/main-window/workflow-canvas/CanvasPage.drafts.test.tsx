@@ -204,8 +204,15 @@ describe('Canvas save coordination', () => {
     const actions = screen.getByLabelText('画布操作')
     expect(primary.parentElement).toBe(actions.parentElement)
     expect(screen.queryByText('增强模式')).not.toBeInTheDocument()
-    expect(within(primary).getByRole('button', { name: '保存' })).toBeInTheDocument()
-    expect(within(primary).getByRole('button', { name: '运行' })).toBeInTheDocument()
+    // 2026-10-17：保存 / 运行移出工具栏（无 header 挂载点时降级回工具栏末尾，
+    // 但不再是主行的成员）。这里只钉「主行继续承载标题与徽标」这一契约。
+    expect(within(primary).queryByRole('button', { name: '保存' })).toBeNull()
+    expect(within(primary).queryByRole('button', { name: '运行' })).toBeNull()
+    // 降级路径下四项仍可用（本测试无 header 挂载点）
+    const fallback = document.querySelector('.workflow-workbench-actions-group') as HTMLElement
+    expect(fallback).toBeTruthy()
+    expect(within(fallback).getByRole('button', { name: '保存' })).toBeInTheDocument()
+    expect(within(fallback).getByRole('button', { name: '运行' })).toBeInTheDocument()
     expect(within(actions).getByRole('button', { name: '节点调试' })).toBeInTheDocument()
     expect(document.querySelector('.wfc-title')).toHaveAttribute(
       'title',

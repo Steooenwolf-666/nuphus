@@ -8,6 +8,8 @@ const messages: Record<string, [string, string]> = {
   'toolbar.colorPicker': ['取色', 'Pick color'],
   'toolbar.ocr': ['字典', 'OCR'],
   'toolbar.registerApp': ['登记应用', 'Register app'],
+  // 内置工具页入口（工具条列末）。与 toolbar.ocr 的「字典」区分：这里指 PDF/图片/视频等内置工具。
+  'toolbar.tools': ['内置工具', 'Built-in tools'],
   'problem.resize': ['调整底部面板高度', 'Resize bottom panel'],
   'problem.resizeHint': [
     '拖动或按上下方向键调整高度；双击恢复默认',

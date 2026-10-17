@@ -106,6 +106,8 @@ const WorkflowPage = lazy(() =>
 const CanvasWorkbenchPage = lazy(() =>
   import('./workflow/CanvasWorkbenchPage').then(m => ({ default: m.CanvasWorkbenchPage })),
 )
+// 内置工具页：独立全屏界面（从画布移出；入口在桌面工具条末尾）
+const ToolsPage = lazy(() => import('./tools/ToolsPage').then(m => ({ default: m.ToolsPage })))
 // ── 插件市场体系不开源阶段：入口改为 GitHub 贡献者页（GithubPage，原筹备页已下线）。
 //    市场 ready 后恢复下面两个 lazy 声明与挂载块即可（可逆）。
 // const PluginAppsPage = lazy(() =>
@@ -1087,6 +1089,16 @@ export default function App() {
               </div>
             </Suspense>
           )}
+          {/* ── 内置工具页：独立全屏宿主（从画布移出；入口在桌面工具条末尾）──
+              与模型页同一宿主模式：fixed inset:0 + 自带顶栏关闭按钮；
+              层级取 2500 与 .models-page-host 同档，压过画布（100）与设置中心。 */}
+          {s.showTools && (
+            <Suspense fallback={null}>
+              <div className="tools-page-host">
+                <ToolsPage onClose={() => s.setShowTools(false)} />
+              </div>
+            </Suspense>
+          )}
           {/* ── 设置中心：居中弹窗（左导航 + 右内容；子页一律复用 pages/* 现有实现）── */}
           {showSettingsCenter && (
             <Suspense fallback={null}>
@@ -1191,7 +1203,7 @@ export default function App() {
       )}
 
       {/* ── Desktop toolbar：右侧固定竖条，hover 显隐（无快捷键 / 无关闭） ── */}
-      <DesktopToolbar />
+      <DesktopToolbar onOpenTools={() => s.setShowTools(true)} />
     </div>
   )
 }

@@ -85,12 +85,6 @@
   max-width: min(20vw, 240px);
   flex-shrink: 1;
 }
-.wfc-overflow-label {
-  display: none;
-}
-.wfc-more-menu .wfc-overflow-label {
-  display: inline;
-}
 
 .wfc-toolbar .wfc-btn,
 .wfc-toolbar .wfc-badge,
@@ -299,6 +293,31 @@
   background: var(--accent-hover);
   border-color: var(--accent-hover);
   color: var(--on-accent);
+}
+
+/* ── 画布主操作组（撤销 / 重做 / 保存 / 运行）──
+   挂在 .workflow-workbench-header 右端（CanvasPage 经 portal 注入），
+   与左侧「关闭 / 标题」同一行，属画布级动作。
+   本组是 header 的直接子元素，处在 flex 行尾：放在 .workflow-workbench-drag
+   之后即为最右端。 */
+.workflow-workbench-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+.workflow-workbench-actions-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* 纯图标按钮：方形、无文字内边距，与旁边的文字按钮同高 */
+.wfc-btn--icon {
+  width: var(--control-h);
+  padding: 0;
+  justify-content: center;
 }
 
 .wfc-icon-btn {

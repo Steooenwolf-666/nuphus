@@ -186,6 +186,55 @@ describe('I-4 load failure fallback', () => {
 })
 
 describe('I-2 undo/redo invalidates dirty drafts', () => {
+  /**
+   * 2026-10-17：撤销/重做/保存/运行从 `.wfc-toolbar` 移到**画布 header**
+   * （`.workflow-workbench-header` 右端挂载点，CanvasPage 经 portal 注入）。
+   * 单测直接渲染 CanvasPage、没有 header 挂载点 → 走降级路径落回工具栏末尾。
+   * 因此这里断言：主路径存在时不得留在工具栏；本用例覆盖的是降级契约。
+   */
+  it('有 header 挂载点时主操作组由 portal 注入；无挂载点时降级回工具栏', async () => {
+    // ① 无挂载点（本测试环境）：四项必须仍可用（降级），不能被吞掉
+    const plain = await renderCanvas()
+    const fallback = document.querySelector('.wfc-toolbar .workflow-workbench-actions-group')
+    expect(fallback).toBeTruthy()
+    expect(
+      within(fallback as HTMLElement).getByRole('button', { name: '撤销（Ctrl+Z）' }),
+    ).toBeTruthy()
+    expect(
+      within(fallback as HTMLElement).getByRole('button', { name: '重做（Ctrl+Shift+Z）' }),
+    ).toBeTruthy()
+    plain.unmount()
+
+    // ② 有挂载点：四项进 header，工具栏内不再有这一组
+    const host = document.createElement('div')
+    host.id = 'workflow-workbench-actions'
+    document.body.appendChild(host)
+    try {
+      await renderCanvas()
+      expect(within(host).getByRole('button', { name: '撤销（Ctrl+Z）' })).toBeTruthy()
+      expect(within(host).getByRole('button', { name: '运行' })).toBeTruthy()
+      expect(document.querySelector('.wfc-toolbar .workflow-workbench-actions-group')).toBeNull()
+    } finally {
+      host.remove()
+    }
+  })
+
+  it('外部输入与定时常驻在工具栏，且「更多」排在最右端（尾部）', async () => {
+    await renderCanvas()
+    const toolbar = document.querySelector('.wfc-toolbar') as HTMLElement
+    for (const name of [/^外部输入/, /^定时/]) {
+      const btn = screen.getByRole('button', { name })
+      expect(btn.closest('.wfc-more-menu')).toBeNull()
+      expect(btn.closest('.wfc-toolbar')).toBe(toolbar)
+    }
+    // 「更多」必须是工具栏这一行里的最后一个可交互元素
+    const summary = toolbar.querySelector('.wfc-more > summary')
+    expect(summary).toBeTruthy()
+    const tail = summary!.closest('.wfc-more')!
+    const siblings = Array.from(tail.parentElement!.children)
+    expect(siblings[siblings.length - 1]).toBe(tail)
+  })
+
   it('discards an uncommitted name draft on undo so the flushed save keeps the undone value', async () => {
     await renderCanvas()
     await openNode('first')

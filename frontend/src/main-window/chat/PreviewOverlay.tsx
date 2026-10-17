@@ -397,7 +397,7 @@ function PdfPreview({ path }: { path: string }) {
 
 /**
  * 文件内容预览（无壳、可内嵌）。
- * 供 PreviewOverlay（全屏覆盖层）与 ToolsPage（同窗口内嵌面板）复用：
+ * 供 PreviewOverlay（全屏覆盖层）与 ToolsPage（独立整页里的预览区）复用：
  * 按扩展名渲染 图片 / PDF（pdf.js 翻页）/ 视频 / 音频 / MD / HTML 沙箱 / 代码高亮，
  * 其余类型直接调系统默认程序打开（失败可见）。
  */
@@ -410,7 +410,7 @@ export function FilePreviewContent({
   /**
    * HTML 预览桥（可选）：仅 PreviewOverlay 全屏预览传入——iframe 引用 + onLoad
    * 钩子，供父窗口在 iframe 就绪后注册 postMessage listener 收标注回流。
-   * ToolsPage 内嵌面板不传，行为不变。
+   * ToolsPage 的预览区不传，行为不变。
    */
   iframeRef?: React.RefObject<HTMLIFrameElement>
   onIframeLoad?: () => void

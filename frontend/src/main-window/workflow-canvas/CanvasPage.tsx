@@ -10,6 +10,7 @@ import { editorText } from './editorText'
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { InspectorDraftContext, InspectorDraftStore } from './inspectorDrafts'
 import { buildVariableCatalogIndex } from './variableCatalog'
 import { actionSummary } from './actionSummary'
@@ -1914,6 +1915,78 @@ function CanvasInner({
         .filter((step): step is WorkflowStep => !!step)
     : []
 
+  /**
+   * 画布主操作组的 portal 挂载点（`.workflow-workbench-header` 右端）。
+   *
+   * 为什么用 portal 而不是直接把按钮写在 `.wfc-toolbar` 里：撤销/重做/保存/运行
+   * 是**画布级**动作，视觉归属画布 header（与关闭、标题同一行）；而它们依赖本组件
+   * 内部的 IR / 历史栈 / 运行态，无法上提到 workbench 页。portal 让两者各归其位。
+   *
+   * 目标节点挂载后才存在（父组件先渲染），故用 state + effect 解析。
+   * ⚠️ 这两个 Hook 必须位于下方早退 `return` 之前，否则触发
+   * 「Rendered more hooks than during the previous render」。
+   */
+  const [actionsHost, setActionsHost] = useState<HTMLElement | null>(null)
+  useEffect(() => {
+    setActionsHost(document.getElementById('workflow-workbench-actions'))
+  }, [])
+
+  /**
+   * 画布主操作组的四个按钮（撤销 / 重做 / 保存 / 运行）。
+   * 抽成变量是因为它有**两个落点**：header 挂载点（主路径）与工具栏末尾（降级路径）。
+   * 两处共用同一份元素，避免「降级版」与「主路径版」行为漂移。
+   */
+  const canvasActions = (
+    <>
+      <button
+        type="button"
+        className="wfc-btn wfc-btn--icon"
+        onClick={undo}
+        disabled={readOnly}
+        aria-label={editorText('撤销（Ctrl+Z）', t)}
+        title={editorText('撤销（Ctrl+Z）', t)}
+      >
+        <Undo2 size={13} />
+      </button>
+      <button
+        type="button"
+        className="wfc-btn wfc-btn--icon"
+        onClick={redo}
+        disabled={readOnly}
+        aria-label={editorText('重做（Ctrl+Shift+Z）', t)}
+        title={editorText('重做（Ctrl+Shift+Z）', t)}
+      >
+        <Redo2 size={13} />
+      </button>
+      <button
+        type="button"
+        className="wfc-btn"
+        onClick={() => void save()}
+        disabled={!dirty || snapshot.running}
+        title={editorText('保存（Ctrl+S，保存前强制校验）', t)}
+      >
+        <Save size={13} /> {editorText('保存', t)}
+      </button>
+      <button
+        type="button"
+        className="wfc-btn wfc-btn--primary"
+        onClick={() => void runWorkflow()}
+        disabled={snapshot.running || gateLocked || !!replayRunId}
+        title={
+          gateLocked && !snapshot.running
+            ? gateLockNotice
+            : lastRunError
+              ? editorText('运行（R）：上次运行失败，从头完整执行（不再续连）', t)
+              : lastRunPaused
+                ? editorText('续跑（R）：自动跳过已完成步骤，从暂停处继续', t)
+                : editorText('运行（R）：执行工作流', t)
+        }
+      >
+        <Play size={13} /> {lastRunPaused ? editorText('续跑', t) : editorText('运行', t)}
+      </button>
+    </>
+  )
+
   if (!ir || !steps || !projection) {
     return (
       <div className="wfc-page">
@@ -1948,6 +2021,15 @@ function CanvasInner({
   return (
     <WorkflowTraceContext.Provider value={{ workflowId, refreshKey: snapshot.timeline.length }}>
       <div className="wfc-page">
+        {/* ── 画布主操作组（撤销 / 重做 / 保存 / 运行）→ 挂到画布 header 右端 ──
+            2026-10-17 大王定：这四项属画布级动作，归 header，不留在 .wfc-toolbar 内。
+            挂载点缺失（如直接渲染 CanvasPage 的场景）时回落到工具栏末尾 ——
+            核心动作绝不能因为拿不到挂载点而从界面上消失。 */}
+        {actionsHost &&
+          createPortal(
+            <div className="workflow-workbench-actions-group">{canvasActions}</div>,
+            actionsHost,
+          )}
         {/* ── 工具栏 ── */}
         <div className="wfc-toolbar">
           <div className="wfc-toolbar-row wfc-toolbar-row--primary">
@@ -2004,32 +2086,6 @@ function CanvasInner({
             )}
 
             <div className="wfc-toolbar-spacer" />
-            <button
-              type="button"
-              className="wfc-btn"
-              onClick={() => void save()}
-              disabled={!dirty || snapshot.running}
-              title={editorText('保存（Ctrl+S，保存前强制校验）', t)}
-            >
-              <Save size={13} /> {editorText('保存', t)}
-            </button>
-            <button
-              type="button"
-              className="wfc-btn wfc-btn--primary"
-              onClick={() => void runWorkflow()}
-              disabled={snapshot.running || gateLocked || !!replayRunId}
-              title={
-                gateLocked && !snapshot.running
-                  ? gateLockNotice
-                  : lastRunError
-                    ? editorText('运行（R）：上次运行失败，从头完整执行（不再续连）', t)
-                    : lastRunPaused
-                      ? editorText('续跑（R）：自动跳过已完成步骤，从暂停处继续', t)
-                      : editorText('运行（R）：执行工作流', t)
-              }
-            >
-              <Play size={13} /> {lastRunPaused ? editorText('续跑', t) : editorText('运行', t)}
-            </button>
           </div>
           <div className="wfc-toolbar-row" aria-label={ui('画布操作', 'Canvas actions')}>
             {/* 添加节点：与「外部输入」同组（都是画布级新增动作），紧贴其左侧 */}
@@ -2101,6 +2157,59 @@ function CanvasInner({
             >
               {ui('节点调试', 'Debug node')}
             </button>
+            {/* ── 外部输入 / 定时：2026-10-17 大王定，从「更多」移出常驻显示 ──
+                放在 ToolbarOverflow **之前**：More 必须留在工具栏最右端（尾部），
+                否则它会被后续兄弟节点挤到中间，失去「末尾兜底」的语义。
+                定时按钮保留启用状态点（.wfc-schedule-dot）。 */}
+            <button
+              type="button"
+              className="wfc-btn"
+              onClick={() => {
+                setInputsEditorFocus(null)
+                setInputsEditorOpen(true)
+              }}
+              title={
+                readOnly
+                  ? editorText('运行中 · 画布只读', t)
+                  : editorText('编辑工作流外部输入声明', t)
+              }
+            >
+              <Braces size={13} /> {editorText('外部输入', t)}
+            </button>
+
+            {replayRunId && onExitReplay && (
+              <button
+                type="button"
+                className="wfc-btn wfc-btn--primary"
+                onClick={onExitReplay}
+                title={editorText('返回当前工作流画布', t)}
+              >
+                {editorText('返回当前画布', t)}
+              </button>
+            )}
+
+            <button
+              type="button"
+              className="wfc-btn"
+              onClick={() => setScheduleOpen(true)}
+              title={
+                ir.schedule?.enabled
+                  ? editorText('定时运行已启用', t)
+                  : editorText('设置定时运行', t)
+              }
+            >
+              <Clock3 size={13} /> {editorText('定时', t)}
+              {ir.schedule && (
+                <span className={`wfc-schedule-dot${ir.schedule.enabled ? ' is-enabled' : ''}`} />
+              )}
+            </button>
+
+            {/* 降级落点：拿不到 header 挂载点时，主操作组回落到工具栏末尾。
+                必须排在 More **之前** —— More 始终是工具栏尾部（大王定）。 */}
+            {!actionsHost && (
+              <div className="workflow-workbench-actions-group">{canvasActions}</div>
+            )}
+
             <ToolbarOverflow
               menuRef={moreMenuRef}
               actions={[
@@ -2123,30 +2232,6 @@ function CanvasInner({
                 >
                   {ui('AI 局部修改', 'AI scoped edit')}
                 </button>,
-                <button
-                  key="undo"
-                  type="button"
-                  className="wfc-btn"
-                  onClick={undo}
-                  disabled={readOnly}
-                  aria-label={editorText('撤销（Ctrl+Z）', t)}
-                  title={editorText('撤销（Ctrl+Z）', t)}
-                >
-                  <Undo2 size={13} />
-                  <span className="wfc-overflow-label">{ui('撤销', 'Undo')}</span>
-                </button>,
-                <button
-                  key="redo"
-                  type="button"
-                  className="wfc-btn"
-                  onClick={redo}
-                  disabled={readOnly}
-                  aria-label={editorText('重做（Ctrl+Shift+Z）', t)}
-                  title={editorText('重做（Ctrl+Shift+Z）', t)}
-                >
-                  <Redo2 size={13} />
-                  <span className="wfc-overflow-label">{ui('重做', 'Redo')}</span>
-                </button>,
               ]}
             >
               <button
@@ -2167,49 +2252,6 @@ function CanvasInner({
                   detailedNodes
                     ? 'workflowEditor.summary.compact'
                     : 'workflowEditor.summary.detail',
-                )}
-              </button>
-
-              <button
-                type="button"
-                className="wfc-btn"
-                onClick={() => {
-                  setInputsEditorFocus(null)
-                  setInputsEditorOpen(true)
-                }}
-                title={
-                  readOnly
-                    ? editorText('运行中 · 画布只读', t)
-                    : editorText('编辑工作流外部输入声明', t)
-                }
-              >
-                <Braces size={13} /> {editorText('外部输入', t)}
-              </button>
-
-              {replayRunId && onExitReplay && (
-                <button
-                  type="button"
-                  className="wfc-btn wfc-btn--primary"
-                  onClick={onExitReplay}
-                  title={editorText('返回当前工作流画布', t)}
-                >
-                  {editorText('返回当前画布', t)}
-                </button>
-              )}
-
-              <button
-                type="button"
-                className="wfc-btn"
-                onClick={() => setScheduleOpen(true)}
-                title={
-                  ir.schedule?.enabled
-                    ? editorText('定时运行已启用', t)
-                    : editorText('设置定时运行', t)
-                }
-              >
-                <Clock3 size={13} /> {editorText('定时', t)}
-                {ir.schedule && (
-                  <span className={`wfc-schedule-dot${ir.schedule.enabled ? ' is-enabled' : ''}`} />
                 )}
               </button>
             </ToolbarOverflow>

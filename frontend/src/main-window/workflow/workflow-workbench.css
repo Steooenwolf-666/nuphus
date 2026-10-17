@@ -78,10 +78,3 @@
 .workflow-workbench-body > .page {
   min-height: 100%;
 }
-.workflow-workbench-body--tools {
-  padding: 0;
-}
-.workflow-workbench-body--tools .tools-page--embedded {
-  min-height: 520px;
-  height: 100%;
-}
