@@ -2,17 +2,27 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DesktopToolbar } from './DesktopToolbar'
 
-const { invoke, showAppFeedback } = vi.hoisted(() => ({
+const { invoke, showAppFeedback, listen, unlisten } = vi.hoisted(() => ({
   invoke: vi.fn(),
   showAppFeedback: vi.fn(),
+  listen: vi.fn(),
+  unlisten: vi.fn(),
 }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('../../ui/islandChannel', () => ({ showAppFeedback }))
+// 热键通道走 core/bridge 的 listen（Tauri/WebSocket 双模式适配层）
+vi.mock('../../core/bridge', () => ({
+  invoke,
+  listen: (...args: unknown[]) => listen(...args),
+}))
 
 describe('user-selected desktop application registration', () => {
   beforeEach(() => {
     invoke.mockReset()
     showAppFeedback.mockClear()
+    listen.mockReset()
+    unlisten.mockClear()
+    listen.mockResolvedValue(unlisten)
     localStorage.clear()
   })
   afterEach(cleanup)
@@ -256,5 +266,59 @@ describe('DesktopToolbar hover 错峰：从上到下逐次显示（CSS 变量，
 
     fireEvent.click(screen.getByRole('button', { name: '鼠标' }))
     expect(new Set(strokes())).toEqual(new Set(['2']))
+  })
+})
+
+/**
+ * 全局工具热键（Ctrl+1/2/3）契约：
+ * 后端把热键解成工具名后派发 `desktop-tool-hotkey`，本组件必须走与点击完全相同的执行链
+ * （`start_overlay_mask` + 轮询），不得另起一套。事件订阅只建一次，卸载时注销。
+ */
+describe('DesktopToolbar 全局工具热键（Ctrl+1/2/3）', () => {
+  beforeEach(() => {
+    invoke.mockReset()
+    listen.mockReset()
+    unlisten.mockClear()
+    listen.mockResolvedValue(unlisten)
+    localStorage.clear()
+  })
+  afterEach(cleanup)
+
+  const hotkeyHandler = () => listen.mock.calls[0]?.[1] as (p: { tool?: string }) => void
+
+  it('订阅 desktop-tool-hotkey，且卸载时注销', async () => {
+    const view = render(<DesktopToolbar />)
+    await waitFor(() => expect(listen).toHaveBeenCalled())
+    expect(listen.mock.calls[0][0]).toBe('desktop-tool-hotkey')
+    view.unmount()
+    await waitFor(() => expect(unlisten).toHaveBeenCalled())
+  })
+
+  it.each([
+    ['screenshot', 'screenshot'],
+    ['picker', 'picker'],
+  ])('热键 tool=%s → 走与点击相同的 start_overlay_mask(mode=%s)', async (tool, mode) => {
+    render(<DesktopToolbar />)
+    await waitFor(() => expect(listen).toHaveBeenCalled())
+    hotkeyHandler()({ tool })
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('start_overlay_mask', { mode }))
+  })
+
+  it('热键 tool=color_picker → 与点击一致：打开取色面板（点色槽才开遮罩）', async () => {
+    render(<DesktopToolbar />)
+    await waitFor(() => expect(listen).toHaveBeenCalled())
+    hotkeyHandler()({ tool: 'color_picker' })
+    // 取色面板打开后才有「取色器」标题与 9 个槽位；此时不得直接抓屏
+    await waitFor(() => expect(screen.getByText('取色器')).toBeInTheDocument())
+    expect(invoke).not.toHaveBeenCalledWith('start_overlay_mask', expect.anything())
+  })
+
+  it('未知工具名不触发任何 overlay 调用（防脏事件）', async () => {
+    render(<DesktopToolbar />)
+    await waitFor(() => expect(listen).toHaveBeenCalled())
+    hotkeyHandler()({ tool: 'not_a_tool' })
+    hotkeyHandler()({})
+    await new Promise(r => setTimeout(r, 0))
+    expect(invoke).not.toHaveBeenCalledWith('start_overlay_mask', expect.anything())
   })
 })

@@ -49,12 +49,22 @@ describe('HelpPage 帮助内容', () => {
     expect(slashSection.textContent).not.toContain('/project')
   })
 
-  it('快捷键覆盖真实绑定（K / L / N / Shift+W / Esc），无 TODO 占位', () => {
+  it('快捷键覆盖真实绑定（K / L / N / Shift+W / Esc / 1-3 工具热键），无 TODO 占位', () => {
     render(<HelpPage />)
     const shortcutSection = screen
       .getByRole('heading', { name: '快捷键' })
       .closest('section') as HTMLElement
-    for (const keys of ['Enter', primary('K'), primary('L'), primary('N'), shiftPrimary, 'Esc']) {
+    for (const keys of [
+      'Enter',
+      primary('K'),
+      primary('L'),
+      primary('N'),
+      shiftPrimary,
+      'Esc',
+      primary('1'),
+      primary('2'),
+      primary('3'),
+    ]) {
       expect(within(shortcutSection).getByText(keys)).toBeInTheDocument()
     }
     // 未实现的 TODO 占位（Ctrl/Cmd+O）不写进帮助

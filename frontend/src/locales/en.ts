@@ -2271,6 +2271,9 @@ const en: Record<string, string> = {
   'help.shortcut.workflowPanel':
     'Workflow steps panel: collapse / expand (available while a run has steps)',
   'help.shortcut.esc': 'Close modal / Cancel',
+  'help.shortcut.toolScreenshot': 'Global screenshot (works while any app is focused)',
+  'help.shortcut.toolPicker': 'Global region picker (works while any app is focused)',
+  'help.shortcut.toolColorPicker': 'Global color picker (works while any app is focused)',
   'help.shortcut.imeHint':
     'While an IME (Chinese, Japanese, etc.) is composing, Enter only confirms the highlighted candidate — it will not send. Press Enter again once the text is committed.',
   'help.entries': 'Where to Find Things',

@@ -66,6 +66,10 @@ export function HelpPage() {
     { keys: formatPrimaryShortcut('N'), key: 'help.shortcut.newChat' },
     { keys: `${isMacPlatform() ? 'Cmd' : 'Ctrl'}+Shift+W`, key: 'help.shortcut.workflowPanel' },
     { keys: 'Esc', key: 'help.shortcut.esc' },
+    // 桌面工具全局热键（在主窗内与其它应用前台时均可用）
+    { keys: `${isMacPlatform() ? 'Cmd' : 'Ctrl'}+1`, key: 'help.shortcut.toolScreenshot' },
+    { keys: `${isMacPlatform() ? 'Cmd' : 'Ctrl'}+2`, key: 'help.shortcut.toolPicker' },
+    { keys: `${isMacPlatform() ? 'Cmd' : 'Ctrl'}+3`, key: 'help.shortcut.toolColorPicker' },
   ] as const
 
   const modes = [

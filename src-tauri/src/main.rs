@@ -29,6 +29,37 @@ mod ui_watchdog;
 mod utils;
 mod video;
 
+/// 桌面工具热键映射：`Ctrl+1/2/3` → 工具模式。
+///
+/// 热键字符串由 `global-hotkey` 归一化输出（形如 `control+Digit1`），
+/// 这里按「含 control、不含 shift/alt/super、末段为数字键」做匹配，
+/// 避免依赖具体大小写或 `Digit` 前缀的写法。
+///
+/// 返回 `Some("screenshot" | "picker" | "color_picker")`，其余情况 `None`
+/// （交回工作流控制热键处理）。
+fn desktop_tool_for_hotkey(key: &str) -> Option<&'static str> {
+    let lower = key.to_ascii_lowercase();
+    // 修饰键写法兼容 `ctrl` 与 `control`（库的归一化输出用 control，用户写法常用 ctrl）
+    let has_ctrl = lower
+        .split('+')
+        .any(|t| matches!(t.trim(), "ctrl" | "control"));
+    if !has_ctrl {
+        return None;
+    }
+    // 带其它修饰键的组合不属于工具热键（例如 Ctrl+Shift+1）
+    if lower.contains("shift") || lower.contains("alt") || lower.contains("super") {
+        return None;
+    }
+    let last = lower.rsplit('+').next()?.trim();
+    let digit = last.strip_prefix("digit").unwrap_or(last);
+    match digit {
+        "1" => Some("screenshot"),
+        "2" => Some("picker"),
+        "3" => Some("color_picker"),
+        _ => None,
+    }
+}
+
 /// Win11 系统圆角：main 窗口是无装饰窗口（tauri.conf.json `decorations: false`），
 /// 四角默认裁成直角。这里向 DWM 声明圆角偏好，由系统按 Win11 规范裁剪四角。
 /// Win10 及更早系统没有该属性，调用失败即保持直角（不视为错误）。
@@ -135,10 +166,29 @@ fn main() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
                     if event.state == ShortcutState::Pressed {
+                        let key = shortcut.to_string();
+                        // ── 桌面工具热键（Ctrl+1/2/3）：唤起主窗并交给前端执行对应工具 ──
+                        // 与工作流控制热键（Ctrl+Q / Ctrl+Shift+Q）分流：工具热键不依赖
+                        // 运行中的工作流，任何时候都该可用。
+                        if let Some(tool) = desktop_tool_for_hotkey(&key) {
+                            tracing::info!("[Hotkey] {} 唤起桌面工具: {}", key, tool);
+                            if let Some(main) = app.get_webview_window("main") {
+                                let _ = main.show();
+                                let _ = main.unminimize();
+                                let _ = main.set_focus();
+                            }
+                            if let Err(e) = app.emit(
+                                "desktop-tool-hotkey",
+                                serde_json::json!({ "tool": tool, "source": "global-shortcut" }),
+                            ) {
+                                tracing::warn!("[Hotkey] 派发工具热键失败: {e}");
+                            }
+                            return;
+                        }
+
                         let state = app.state::<crate::state::AppState>();
                         let engine = state.workflow_engine.clone();
                         let signals = state.signals.clone();
-                        let key = shortcut.to_string();
                         let app = app.clone();
                         tauri::async_runtime::spawn(async move {
                             let active_id = nuphus::workflow::hud_control::active_id(&signals);
@@ -583,7 +633,16 @@ fn main() {
                         tracing::warn!("Failed to register global shortcut {}: {}", key, e);
                     });
                 }
-                tracing::info!("Global shortcuts: Ctrl+Q(pause/resume) Ctrl+Shift+Q(stop)");
+                // 桌面工具热键：Ctrl+1 截图 / Ctrl+2 选区 / Ctrl+3 取色。
+                // 单独注册并逐个告警：某个被系统占用时不影响其余两个。
+                for key in ["Ctrl+1", "Ctrl+2", "Ctrl+3"] {
+                    gs.register(key).unwrap_or_else(|e| {
+                        tracing::warn!("Failed to register desktop tool shortcut {}: {}", key, e);
+                    });
+                }
+                tracing::info!(
+                    "Global shortcuts: Ctrl+Q(pause/resume) Ctrl+Shift+Q(stop) Ctrl+1(截图) Ctrl+2(选区) Ctrl+3(取色)"
+                );
             }
 
             // ── 随包只读资产落盘 ──
@@ -1185,4 +1244,66 @@ nuphus::tools::background_tasks::start_watchdog();
             }
         }
     });
+}
+
+#[cfg(test)]
+mod hotkey_tests {
+    use super::desktop_tool_for_hotkey;
+
+    /// 三个工具热键必须各自命中，且互不串位（顺序即 Ctrl+1/2/3）。
+    #[test]
+    fn maps_digits_to_distinct_tools() {
+        assert_eq!(
+            desktop_tool_for_hotkey("control+Digit1"),
+            Some("screenshot")
+        );
+        assert_eq!(desktop_tool_for_hotkey("control+Digit2"), Some("picker"));
+        assert_eq!(
+            desktop_tool_for_hotkey("control+Digit3"),
+            Some("color_picker")
+        );
+        let all = [
+            desktop_tool_for_hotkey("control+Digit1"),
+            desktop_tool_for_hotkey("control+Digit2"),
+            desktop_tool_for_hotkey("control+Digit3"),
+        ];
+        assert_eq!(all.iter().filter(|v| v.is_some()).count(), 3);
+        assert_eq!(
+            all.iter()
+                .filter_map(|v| *v)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            3,
+            "三个热键必须映射到三个不同工具"
+        );
+    }
+
+    /// 大小写与显示写法都要兼容：库输出的归一化串与用户可见写法语义相同。
+    #[test]
+    fn accepts_case_and_plain_digit_forms() {
+        assert_eq!(desktop_tool_for_hotkey("Control+Digit2"), Some("picker"));
+        assert_eq!(desktop_tool_for_hotkey("control+2"), Some("picker"));
+        assert_eq!(desktop_tool_for_hotkey("CTRL+DIGIT3"), Some("color_picker"));
+    }
+
+    /// 带其它修饰键、缺 Ctrl、非 1-3 数字都不属于工具热键（交回工作流热键处理）。
+    #[test]
+    fn rejects_other_combinations() {
+        assert_eq!(desktop_tool_for_hotkey("control+shift+Digit1"), None);
+        assert_eq!(desktop_tool_for_hotkey("control+alt+Digit1"), None);
+        assert_eq!(desktop_tool_for_hotkey("control+super+Digit1"), None);
+        assert_eq!(desktop_tool_for_hotkey("shift+Digit1"), None);
+        assert_eq!(desktop_tool_for_hotkey("Digit1"), None);
+        assert_eq!(desktop_tool_for_hotkey("control+Digit4"), None);
+        assert_eq!(desktop_tool_for_hotkey("control+Digit0"), None);
+        assert_eq!(desktop_tool_for_hotkey("control+q"), None);
+        assert_eq!(desktop_tool_for_hotkey(""), None);
+    }
+
+    /// 工作流热键不得被误判成工具热键（Ctrl+Q / Ctrl+Shift+Q 仍归工作流控制）。
+    #[test]
+    fn workflow_hotkeys_are_not_tool_hotkeys() {
+        assert_eq!(desktop_tool_for_hotkey("control+q"), None);
+        assert_eq!(desktop_tool_for_hotkey("control+shift+q"), None);
+    }
 }

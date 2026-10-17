@@ -4,7 +4,7 @@
 // Completely solve Tauri event loss / oneshot blocking null issue
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { invoke as bridgeInvoke } from '../../core/bridge'
+import { invoke as bridgeInvoke, listen } from '../../core/bridge'
 import { showAppFeedback } from '../../ui/islandChannel'
 import { useLanguage } from '../../locales'
 
@@ -56,14 +56,6 @@ interface ColorSlot {
   filled: boolean
 }
 
-const TOOLTIP: Record<NonNullable<ToolMode>, string> = {
-  screenshot: '截图 — 框选区域保存为图片（自动隐藏窗口）',
-  picker: '选区 — 返回区域坐标（自动隐藏窗口）',
-  mouse_pos: '鼠标位置 — 实时显示光标坐标',
-  ocr: '字典 — 框选区域提取文字（颜色+字典匹配）',
-  color_picker: '取色 — 选取屏幕某点颜色值',
-}
-
 interface ToolBtn {
   mode: ToolMode
   icon: React.ElementType
@@ -73,10 +65,20 @@ interface ToolBtn {
 }
 
 const TOOLS: { mode: ToolMode; icon: React.ElementType; labelKey: string; desc: string }[] = [
-  { mode: 'screenshot', icon: IconCamera, labelKey: 'toolbar.screenshot', desc: '截图保存' },
-  { mode: 'picker', icon: IconCrop, labelKey: 'toolbar.picker', desc: '获取坐标' },
+  {
+    mode: 'screenshot',
+    icon: IconCamera,
+    labelKey: 'toolbar.screenshot',
+    desc: '截图保存 · Ctrl+1',
+  },
+  { mode: 'picker', icon: IconCrop, labelKey: 'toolbar.picker', desc: '获取坐标 · Ctrl+2' },
   { mode: 'mouse_pos', icon: IconCrosshair, labelKey: 'toolbar.mousePos', desc: '实时坐标' },
-  { mode: 'color_picker', icon: IconDropper, labelKey: 'toolbar.colorPicker', desc: '屏幕取色' },
+  {
+    mode: 'color_picker',
+    icon: IconDropper,
+    labelKey: 'toolbar.colorPicker',
+    desc: '屏幕取色 · Ctrl+3',
+  },
   { mode: 'ocr', icon: IconType, labelKey: 'toolbar.ocr', desc: '文字识别' },
 ]
 
@@ -314,6 +316,38 @@ export function DesktopToolbar() {
       setLoading(false)
     }
   }
+
+  // ── 全局工具热键（Ctrl+1/2/3）：后端解出工具名后派发事件，这里执行 ──
+  // 点击与热键走同一条执行链（handleToolClick），避免两套逻辑漂移。
+  // 用 ref 持有最新 handler：事件订阅只建一次，不因 activeTool 变化反复重订阅。
+  const hotkeyHandlerRef = useRef<(tool: string) => void>(() => {})
+  hotkeyHandlerRef.current = (tool: string) => {
+    if (tool === 'screenshot' || tool === 'picker' || tool === 'color_picker') {
+      void handleToolClick(tool)
+      return
+    }
+    console.warn('[DesktopToolbar] unknown tool hotkey:', tool)
+  }
+  useEffect(() => {
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    listen<{ tool?: string }>('desktop-tool-hotkey', payload => {
+      if (disposed) return
+      const tool = payload?.tool
+      if (typeof tool === 'string') hotkeyHandlerRef.current(tool)
+    })
+      .then(fn => {
+        if (disposed) fn()
+        else unlisten = fn
+      })
+      .catch(e => {
+        console.warn('[DesktopToolbar] hotkey listener failed:', e)
+      })
+    return () => {
+      disposed = true
+      if (unlisten) unlisten()
+    }
+  }, [])
 
   // ── Copy result ──
   const handleCopyResult = async () => {

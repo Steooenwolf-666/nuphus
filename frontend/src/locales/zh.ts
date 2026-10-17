@@ -2162,6 +2162,9 @@ const zh: Record<string, string> = {
   'help.shortcut.newChat': '新建会话（当前对话归档）',
   'help.shortcut.workflowPanel': '工作流步骤面板：收起 / 展开（运行中有步骤时可用）',
   'help.shortcut.esc': '关闭弹窗 / 取消',
+  'help.shortcut.toolScreenshot': '全局截图（任何应用前台时可用）',
+  'help.shortcut.toolPicker': '全局选区取坐标（任何应用前台时可用）',
+  'help.shortcut.toolColorPicker': '全局屏幕取色（任何应用前台时可用）',
   'help.shortcut.imeHint':
     '输入法（中文 / 日文等）组词选字时，Enter 只用于确认候选词上屏，不会发送消息；上屏后再按 Enter 才发送。',
   'help.entries': '界面入口',
