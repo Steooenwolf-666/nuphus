@@ -587,10 +587,6 @@ const zh: Record<string, string> = {
   'cmd.toolsDesc': 'PDF / 图片 / 视频处理工具',
   'cmd.canvas': '画布',
   'cmd.canvasDesc': '工作流、UI 原型设计与转换工具',
-  'workflow.workTypeLabel': '工作类型',
-  'workflow.workType.workflow': '工作流编辑器',
-  'workflow.workType.workflowEditor': '工作流编辑器',
-  'workflow.workType.tools': '工具',
   'cmd.category.canvas': '画布',
 
   'canvas.title': '画布中心',
@@ -1439,6 +1435,19 @@ const zh: Record<string, string> = {
     'AI 调用视频生成工具时使用的模型与凭证：注册表只有一个「图像生成」能力声明字段，视频生成复用同一过滤；未绑定则工具明确报错并列出候选，不会自行挑选服务商。产物保存在 ~/.nuphus/generated/。',
   'models.videoGenNone': '未绑定（未绑定时生成工具会报错）',
   'models.videoGenSaved': '视频生成模型已保存',
+  // 网页搜索源（capabilities.web_search_source）：绑定的不是模型，是 provider 段
+  'models.webSearchSection': '网页搜索源',
+  'models.webSearchSectionDesc':
+    'AI 调用网页搜索与抓取工具时优先使用的服务。关闭时只走内置免费源（GitHub / MDN / 维基 / Bing / DDG）；开启后先调用该服务商的官方 Search / Fetch API，仅在报错、限流或欠费时才降级到免费方案，降级事实会写进结果头部。',
+  'models.webSearchOff': '关闭（仅使用内置免费源）',
+  'models.webSearchEnabled': '已开启：网页搜索将优先使用该服务',
+  'models.webSearchDisabled': '已关闭：网页搜索仅使用内置免费源',
+  'models.webSearchActiveHint':
+    '当前行为：网页搜索与网页抓取都优先调用该服务商的官方 API；只有它报错、限流或余额不足时，才降级到内置免费方案，并在结果开头标明已降级。',
+  'models.webSearchBilling':
+    '官方 Search / Fetch 均按成功请求次数计费（各 1000 次 5 元），无结果与失败的请求不计费。',
+  'models.webSearchNoProvider':
+    '尚未配置 DeepSeek 服务商。请先在左侧添加 DeepSeek 段并填入 API Key，之后即可在此开启。',
   'models.genCapabilityEmpty':
     '暂无声明了「图像生成」能力的模型：在左侧服务商的模型列表里，为该模型打开「图像生成」声明。',
   'models.genBoundMissing':

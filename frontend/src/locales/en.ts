@@ -605,10 +605,6 @@ const en: Record<string, string> = {
   'cmd.toolsDesc': 'PDF / Image / Video processing tools',
   'cmd.canvas': 'Canvas',
   'cmd.canvasDesc': 'Workflow editor, UI prototyping, and conversion tools',
-  'workflow.workTypeLabel': 'Work type',
-  'workflow.workType.workflow': 'Workflow Editor',
-  'workflow.workType.workflowEditor': 'Workflow Editor',
-  'workflow.workType.tools': 'Tools',
   'cmd.category.canvas': 'Canvas',
 
   'canvas.title': 'Canvas Hub',
@@ -1518,6 +1514,20 @@ const en: Record<string, string> = {
     'Model and credentials used when the AI calls the video generation tool: the registry has a single generation declaration field, so video generation reuses the same "Image generation" filter. Unbound fails loudly with a candidate list instead of silently picking a provider. Output is saved to ~/.nuphus/generated/.',
   'models.videoGenNone': 'Unbound (generation tools fail when unbound)',
   'models.videoGenSaved': 'Video generation model saved',
+  // Web search source (capabilities.web_search_source): binds a provider
+  // segment, not a model.
+  'models.webSearchSection': 'Web Search Source',
+  'models.webSearchSectionDesc':
+    "Search and fetch service used first by the web tools. When off, only the built-in free sources run (GitHub / MDN / Wikipedia / Bing / DDG). When on, the provider's official Search / Fetch APIs are called first and free alternatives are used only if they error, are rate-limited, or run out of credit — the fallback is stated in the result header.",
+  'models.webSearchOff': 'Off (built-in free sources only)',
+  'models.webSearchEnabled': 'Enabled: web search will prefer this service',
+  'models.webSearchDisabled': 'Disabled: web search uses built-in free sources only',
+  'models.webSearchActiveHint':
+    "Current behavior: both web search and web fetch call this provider's official APIs first; only when they error, are rate-limited, or run out of credit does the app fall back to the built-in free options — the fallback is stated at the top of the result.",
+  'models.webSearchBilling':
+    'Official Search / Fetch are billed per successful request (5 CNY per 1000 each). Empty results and failed requests are not billed.',
+  'models.webSearchNoProvider':
+    'No DeepSeek provider configured yet. Add a DeepSeek segment with an API key on the left, then enable it here.',
   'models.genCapabilityEmpty':
     'No model declares "Image generation" yet: open the provider model list on the left and enable the "Image generation" declaration for that model.',
   'models.genBoundMissing':

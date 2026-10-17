@@ -1165,6 +1165,8 @@ export interface Capabilities {
   image_generation_provider?: string
   video_generation?: string
   video_generation_provider?: string
+  /** 网页搜索源：值是 provider 段名（不是模型 id）；空 = 未启用 */
+  web_search_source?: string
   chat_agent_max_iterations: number | null
 }
 
@@ -1179,7 +1181,8 @@ export function setCapability(key: string, value: string) {
 /** 原子设置能力模型绑定：model 与 provider 必须在同一次写入内落盘，
  *  否则会留下「新 model + 旧 provider」的半绑定（能力请求按 provider+model
  *  精确解析时找不到该组合，保存看似成功但实际用不了）。
- *  kind ∈ 'vision' | 'stt' | 'tts' | 'voice' | 'image_generation' | 'video_generation'。 */
+ *  kind ∈ 'vision' | 'stt' | 'tts' | 'voice' | 'image_generation' | 'video_generation'
+ *        | 'web_search_source'（后者 model 位填段名、provider 留空）。 */
 export function setCapabilityBinding(kind: string, model: string, provider: string) {
   return invoke<void>('set_capability_binding', { kind, model, provider })
 }

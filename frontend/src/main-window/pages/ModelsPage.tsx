@@ -382,6 +382,7 @@ function makeTXT(t: TFunc) {
     // ── 右上角工具栏 ──
     toolbarCapabilities: tr(t, 'models.toolbarCapabilities', '图像音频模型'),
     toolbarAgents: tr(t, 'models.toolbarAgents', '子智能体模型'),
+    toolbarWebSearch: tr(t, 'models.toolbarWebSearch', '网页搜索源'),
     // ── 图像理解 ──
     visionSection: tr(t, 'models.visionSection', '图像理解'),
     visionSectionDesc: tr(
@@ -1422,7 +1423,7 @@ export function CustomModelForm({
 // ════════════════════════════════════════════════════════════════
 // 页面主体
 // ════════════════════════════════════════════════════════════════
-type ModelsView = 'provider' | 'capabilities' | 'agents' | 'jev'
+type ModelsView = 'provider' | 'capabilities' | 'agents' | 'jev' | 'websearch'
 
 export function ModelsPage({
   onClose,
@@ -1518,6 +1519,13 @@ export function ModelsPage({
   const [videoGenProvider, setVideoGenProvider] = useState('')
   const [videoGenSaving, setVideoGenSaving] = useState(false)
   const [videoGenFeedback, setVideoGenFeedback] = useState<{ ok: boolean; msg: string } | null>(
+    null,
+  )
+  // 网页搜索源：值 = provider 段名（不是模型 id）。空 = 未启用，走内置免费五源聚合。
+  // 启用后 web_search 优先调用该段的官方搜索 API，失败才降级到免费源。
+  const [webSearchSource, setWebSearchSource] = useState('')
+  const [webSearchSaving, setWebSearchSaving] = useState(false)
+  const [webSearchFeedback, setWebSearchFeedback] = useState<{ ok: boolean; msg: string } | null>(
     null,
   )
   const [allModels, setAllModels] = useState<ModelInfo[]>([])
@@ -1683,6 +1691,7 @@ export function ModelsPage({
           setImageGenProvider(m.image_generation_provider || '')
           setVideoGenModel(m.video_generation || '')
           setVideoGenProvider(m.video_generation_provider || '')
+          setWebSearchSource(m.web_search_source || '')
         }
       })
       .catch(() => {})
@@ -2915,6 +2924,15 @@ export function ModelsPage({
           >
             {TXT.toolbarAgents}
           </button>
+          <button
+            type="button"
+            className={['models-toolbar-btn', activeView === 'websearch' ? 'is-active' : '']
+              .filter(Boolean)
+              .join(' ')}
+            onClick={() => setActiveView('websearch')}
+          >
+            {TXT.toolbarWebSearch}
+          </button>
         </div>
         {loadingView}
         {!providersLoading && (
@@ -4067,6 +4085,91 @@ export function ModelsPage({
               )}
 
               {activeView === 'jev' && <JevSettings />}
+
+              {/* ═══════════ 网页搜索源（独立界面） ═══════════
+                  与其它能力区分的两条理由：
+                  ① 这里绑定的**不是模型**，而是 provider 段 —— DeepSeek Search 是
+                     服务商级 HTTP API（POST /v1/tools/search），不经过任何模型；
+                  ② 它决定 web_search 的**全局行为**（优先源 + 降级策略），
+                     不属于「图像音频」这一簇能力，混进去会被当成模型选择。
+                  故单独占一个工具栏入口与页面。*/}
+              {activeView === 'websearch' && (
+                <>
+                  <Section
+                    title={t('models.webSearchSection')}
+                    description={t('models.webSearchSectionDesc')}
+                  >
+                    <div className="web-search-source-row">
+                      <select
+                        className="input"
+                        value={webSearchSource}
+                        disabled={webSearchSaving}
+                        aria-label={t('models.webSearchSection')}
+                        onChange={async e => {
+                          const next = e.target.value
+                          setWebSearchSaving(true)
+                          setWebSearchFeedback(null)
+                          try {
+                            // 置空 = 关闭：model 位与 provider 位一起清空，
+                            // 后端据此判定「未启用」，完全回到只走免费源的旧行为。
+                            await setCapabilityBinding('web_search_source', next, '')
+                            setWebSearchSource(next)
+                            setWebSearchFeedback({
+                              ok: true,
+                              msg: next
+                                ? t('models.webSearchEnabled')
+                                : t('models.webSearchDisabled'),
+                            })
+                            setTimeout(() => setWebSearchFeedback(null), 3000)
+                          } catch (err: any) {
+                            setWebSearchFeedback({
+                              ok: false,
+                              msg: friendlyIpcError(err, t('models.genSaveFailed')),
+                            })
+                          } finally {
+                            setWebSearchSaving(false)
+                          }
+                        }}
+                      >
+                        <option value="">{t('models.webSearchOff')}</option>
+                        {providers
+                          .filter(p => p.provider_type === 'deepseek')
+                          .map(p => (
+                            <option key={p.id} value={p.id}>
+                              {p.name || p.id}
+                            </option>
+                          ))}
+                      </select>
+                      {webSearchSaving && <span className="text-caption hint-text">…</span>}
+                    </div>
+
+                    {/* 无可用服务商时给出可行动的指引，而不是留一个空下拉 */}
+                    {providers.filter(p => p.provider_type === 'deepseek').length === 0 && (
+                      <div className="text-caption hint-text">
+                        {t('models.webSearchNoProvider')}
+                      </div>
+                    )}
+
+                    {/* 已启用：把「当前行为」与「计费口径」一次讲全 */}
+                    {webSearchSource && (
+                      <>
+                        <div className="text-caption hint-text">
+                          {t('models.webSearchActiveHint')}
+                        </div>
+                        <div className="text-caption hint-text">{t('models.webSearchBilling')}</div>
+                      </>
+                    )}
+
+                    {webSearchFeedback && (
+                      <div
+                        className={`text-caption${webSearchFeedback.ok ? ' text-success' : ' text-danger'}`}
+                      >
+                        {webSearchFeedback.msg}
+                      </div>
+                    )}
+                  </Section>
+                </>
+              )}
             </div>
           </>
         )}

@@ -59,6 +59,24 @@
   font-size: var(--fz-md);
 }
 
+/* ── 网页搜索源选择行（capabilities.web_search_source）──
+   与上方「模型选择」区的差别：这里选的是 provider 段而不是模型，
+   故用原生 select 直接呈现段名，不套 VisionModelSelect 的模型菜单。 */
+.web-search-source-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.web-search-source-row .input {
+  min-width: 240px;
+  cursor: pointer;
+}
+.web-search-source-row .input:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* ── 浮动反馈 Toast ── */
 .feedback-toast {
   /* 只负责**定位与层叠**：胶囊形态/语义来自共享层 app-pill.css 的 .app-pill（与 island
