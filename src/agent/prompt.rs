@@ -1177,7 +1177,7 @@ pub fn mcp_tools_section() -> String {
         Nuphus 支持 MCP (Model Context Protocol)。\
         当前无已配置的 server。\
         接到第三方软件任务时，先搜索是否存在该软件的 MCP server，\
-        配置到 `plugin/mcp/servers.yaml`。\
+        配置到 `plugin/mcp/servers.yaml`（通用）或 `<数据目录>/mcp/servers.local.yaml`（本机专用）。\
         使用 `skill_read mcp-tools` 了解接入方式。\n"
             .to_string();
     }

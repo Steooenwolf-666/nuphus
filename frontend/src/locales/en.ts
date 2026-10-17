@@ -807,11 +807,13 @@ const en: Record<string, string> = {
   'app.tools': 'Tools',
 
   'mcp.serversTitle': 'MCP Servers',
-  'mcp.serversDesc': 'Configured MCP servers (read-only; edit plugin/mcp/servers.yaml to change)',
+  'mcp.serversDesc':
+    'Configured MCP servers (read-only; general config in plugin/mcp/servers.yaml, machine-local in <data dir>/mcp/servers.local.yaml)',
   'mcp.loading': 'Loading...',
   'mcp.loadError': 'Failed to load MCP servers',
   'mcp.empty.title': 'No MCP server configured',
-  'mcp.empty.desc': 'Edit plugin/mcp/servers.yaml to add servers, then reopen',
+  'mcp.empty.desc':
+    'Edit plugin/mcp/servers.yaml (general) or <data dir>/mcp/servers.local.yaml (machine-local), then reopen',
   'mcp.autoStart': 'Auto start',
   'mcp.onDemand': 'On demand',
   'mcp.timeout': 'Timeout',

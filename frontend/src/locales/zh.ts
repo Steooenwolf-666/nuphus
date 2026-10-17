@@ -776,11 +776,13 @@ const zh: Record<string, string> = {
   'app.tools': '工具',
 
   'mcp.serversTitle': 'MCP server',
-  'mcp.serversDesc': '已配置的 MCP server（只读查看，编辑请修改 plugin/mcp/servers.yaml）',
+  'mcp.serversDesc':
+    '已配置的 MCP server（只读查看；通用配置改 plugin/mcp/servers.yaml，本机专用配置改 <数据目录>/mcp/servers.local.yaml）',
   'mcp.loading': '加载中…',
   'mcp.loadError': '加载 MCP server 列表失败',
   'mcp.empty.title': '尚未配置 MCP server',
-  'mcp.empty.desc': '请编辑 plugin/mcp/servers.yaml 添加 server 后重新打开',
+  'mcp.empty.desc':
+    '编辑 plugin/mcp/servers.yaml（通用）或 <数据目录>/mcp/servers.local.yaml（本机专用）后重新打开',
   'mcp.autoStart': '自动启动',
   'mcp.onDemand': '按需启动',
   'mcp.timeout': '超时',
