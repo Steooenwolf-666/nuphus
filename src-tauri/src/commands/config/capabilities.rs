@@ -81,13 +81,16 @@ pub fn set_capability_binding(
     provider: String,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    const KINDS: [&str; 6] = [
+    const KINDS: [&str; 7] = [
         "vision",
         "stt",
         "tts",
         "voice",
         "image_generation",
         "video_generation",
+        // 网页搜索源：值为 provider 段名（不是模型 id），见
+        // `nuphus::config::Capabilities::web_search_source`。
+        "web_search_source",
     ];
     if !KINDS.contains(&kind.as_str()) {
         return Err(format!("未知能力类型: {kind}"));

@@ -2526,6 +2526,8 @@ pub fn get_capabilities(state: State<'_, AppState>) -> Result<serde_json::Value,
         "image_generation_provider": caps.image_generation_provider,
         "video_generation": caps.video_generation,
         "video_generation_provider": caps.video_generation_provider,
+        // 网页搜索源：值是 provider 段名（不是模型 id）
+        "web_search_source": caps.web_search_source,
         "chat_agent_max_iterations": caps.chat_agent_max_iterations,
     });
 

@@ -442,6 +442,20 @@ pub struct Capabilities {
     /// 视频生成模型所属服务商（旧配置为空时按模型 ID 兼容解析）
     #[serde(default)]
     pub video_generation_provider: String,
+    /// 网页搜索源（空 = 未启用，走内置免费五源聚合）。
+    ///
+    /// 与其它能力字段的关键差别：这里绑定的**不是模型**，而是服务商段名
+    /// （`provider_type = "deepseek"` 的段）—— DeepSeek Search 是服务商级
+    /// HTTP API（`POST /v1/tools/search`），不经过任何模型。
+    /// 字段取名 `provider` 语义会与 `{kind}_provider` 的「模型归属」混淆，
+    /// 故作 `web_search_source`：值即段名。
+    ///
+    /// 语义（用户勾选后优先使用）：
+    /// - 非空 → `web_search` 首先调用该段对应的官方搜索 API；
+    /// - 仅在该 API 报错（429/402 欠费/401/网络）时才降级到免费五源聚合；
+    /// - 空 → 完全等价于旧行为，schema 里也不出现该选项。
+    #[serde(default)]
+    pub web_search_source: String,
     /// ChatAgent 默认最大推理轮数（不配则 15）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_agent_max_iterations: Option<u32>,
