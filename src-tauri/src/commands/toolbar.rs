@@ -320,11 +320,10 @@ pub async fn overlay_capture_confirm(
         _ => None,
     };
 
-    // 一律从 PRE_SCREENSHOT 冻结帧裁剪 —— 行业标准做法：overlay 显示的就是冻结帧，
+    // 一律从 PRE_SCREENSHOT 冻结帧裁剪 —— 这是本链路的既定准则：overlay 显示的就是冻结帧，
     // 用户照着它选框，产物必须取自同一张图，否则「看到的」与「截到的」不一致。
-    // 参考实现：Flameshot（CaptureWidget 持 m_context.screenshot，选区坐标 x
-    // screenshot.devicePixelRatio() 后从冻结图裁剪）；ShareX（AvaloniaRegionCaptureRequest
-    // 的 Frozen screenshot + Physical-pixel desktop bounds）。
+    // 关键点：选区坐标是屏幕物理像素，冻结帧也是物理像素口径，二者直接对齐、无需按
+    // 缩放比换算；任何 DPI 缩放都必须在这一步之前就已完成。
     // 历史实现在 screenshot 模式下 hide overlay -> sleep(120ms) -> 重新抓屏：那会让正在
     // 移除的 overlay（冻结帧 + 遮罩 + 选区描边）与真实桌面一起入图 —— 糊、重影、框线三症。
     let (pw, ph, pixels) = {

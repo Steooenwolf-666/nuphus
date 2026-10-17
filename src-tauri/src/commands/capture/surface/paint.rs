@@ -401,22 +401,22 @@ fn draw_hud_text(buf: &mut [u32], bw: i32, bh: i32, x0: i32, y0: i32, s: &str, c
     x - x0
 }
 
-/// 取色 HUD：放大镜（冻结帧局部放大 + 中心像素框）+ 鼠标十字 + 色值条。
+/// 放大镜本体：在鼠标附近绘制冻结帧局部放大 + 中心像素高亮框。
 ///
-/// 取色真值 = 鼠标所在像素（屏幕物理像素，与 toolbar 侧 `color_picker` 分支同口径）；
-/// HUD 只是视觉定位，不参与真值计算。
-fn draw_color_picker_hud(app: &App, frozen: &[u32], buf: &mut [u32], bw: i32, bh: i32) {
-    let (mx, my) = (app.last_mouse.x, app.last_mouse.y);
-    if mx < 0 || my < 0 || mx >= bw || my >= bh {
-        return; // 首帧鼠标尚未进屏 → 只显示原画面
-    }
-    if frozen.len() < (bw as usize) * (bh as usize) {
-        return; // 冻结帧不可用（防御：平台层未提供采样源）
-    }
-
-    let pix = frozen[(my as usize) * (bw as usize) + mx as usize];
-    let (rr, gg, bb) = ((pix >> 16) & 0xFF, (pix >> 8) & 0xFF, pix & 0xFF);
-
+/// 供取色 HUD 与框选类模式共用（同一份落点计算 / 采样 / 描边逻辑）。
+/// 返回放大镜左上角 `(lx, ly)`，调用方据此决定附加信息条的位置。
+///
+/// `frozen` 是冻结帧采样源（top-down BGRA，长度 ≥ bw×bh）；
+/// `crosshair` = 是否额外绘制鼠标十字准星（取色需要，框选时只有放大镜更干净）。
+fn draw_magnifier(
+    buf: &mut [u32],
+    bw: i32,
+    bh: i32,
+    mx: i32,
+    my: i32,
+    frozen: &[u32],
+    crosshair: bool,
+) -> (i32, i32) {
     // 放大镜落点：默认鼠标右下；越界翻到左上；最后夹进屏内。
     let mut lx = mx + MAG_OFFSET;
     let mut ly = my + MAG_OFFSET;
@@ -495,14 +495,51 @@ fn draw_color_picker_hud(app: &App, frozen: &[u32], buf: &mut [u32], bw: i32, bh
         0xFF00_0000,
     );
 
-    // 鼠标点十字准星：中间留空 3px，不盖住被取色的那个像素。
-    for i in 2..=8 {
-        for (x, y) in [(mx - i, my), (mx + i, my), (mx, my - i), (mx, my + i)] {
-            if x >= 0 && x < bw && y >= 0 && y < bh {
-                buf[(y as usize) * (bw as usize) + x as usize] = 0xFFFF_FFFF;
+    if crosshair {
+        // 鼠标点十字准星：中间留空 3px，不盖住被取色的那个像素。
+        for i in 2..=8 {
+            for (x, y) in [(mx - i, my), (mx + i, my), (mx, my - i), (mx, my + i)] {
+                if x >= 0 && x < bw && y >= 0 && y < bh {
+                    buf[(y as usize) * (bw as usize) + x as usize] = 0xFFFF_FFFF;
+                }
             }
         }
     }
+
+    (lx, ly)
+}
+
+/// 框选类模式的放大镜：像素级瞄准辅助（无十字、无色值条）。
+///
+/// 框选需要「看清边界落点」而不是「取准某个像素」，故只画放大镜本体。
+fn draw_selection_magnifier(app: &App, frozen: &[u32], buf: &mut [u32], bw: i32, bh: i32) {
+    let (mx, my) = (app.last_mouse.x, app.last_mouse.y);
+    if mx < 0 || my < 0 || mx >= bw || my >= bh {
+        return; // 首帧鼠标尚未进屏 → 只显示原画面
+    }
+    if frozen.len() < (bw as usize) * (bh as usize) {
+        return; // 冻结帧不可用（防御：平台层未提供采样源）
+    }
+    let _ = draw_magnifier(buf, bw, bh, mx, my, frozen, false);
+}
+
+/// 取色 HUD：放大镜（冻结帧局部放大 + 中心像素框）+ 鼠标十字 + 色值条。
+///
+/// 取色真值 = 鼠标所在像素（屏幕物理像素，与 toolbar 侧 `color_picker` 分支同口径）；
+/// HUD 只是视觉定位，不参与真值计算。
+fn draw_color_picker_hud(app: &App, frozen: &[u32], buf: &mut [u32], bw: i32, bh: i32) {
+    let (mx, my) = (app.last_mouse.x, app.last_mouse.y);
+    if mx < 0 || my < 0 || mx >= bw || my >= bh {
+        return; // 首帧鼠标尚未进屏 → 只显示原画面
+    }
+    if frozen.len() < (bw as usize) * (bh as usize) {
+        return; // 冻结帧不可用（防御：平台层未提供采样源）
+    }
+
+    let pix = frozen[(my as usize) * (bw as usize) + mx as usize];
+    let (rr, gg, bb) = ((pix >> 16) & 0xFF, (pix >> 8) & 0xFF, pix & 0xFF);
+
+    let (lx, ly) = draw_magnifier(buf, bw, bh, mx, my, frozen, true);
 
     // 色值条：色块 + `#RRGGBB R59 G130 B246`
     let text = format!("#{rr:02X}{gg:02X}{bb:02X} R{rr} G{gg} B{bb}");
@@ -827,6 +864,13 @@ fn draw_hud(
     //      HUD 像素不参与取色真值（真值由 session/toolbar 侧从冻结帧数据取），只做视觉定位。
     if point_pick && pick_color && app.phase != Phase::Exiting {
         draw_color_picker_hud(app, frozen, buf, bw, bh);
+    }
+
+    // ③.6 框选类模式的放大镜（截图 / 选区 / OCR）：像素级瞄准辅助。
+    //      框选时用户要看清边界落点，故与取色共用同一放大镜本体，但不画十字与色值条；
+    //      确认态（已有选区 + 8 节点/OK-X）不再显示，避免遮挡。
+    if !point_pick && matches!(app.phase, Phase::Hover | Phase::Dragging) {
+        draw_selection_magnifier(app, frozen, buf, bw, bh);
     }
 }
 

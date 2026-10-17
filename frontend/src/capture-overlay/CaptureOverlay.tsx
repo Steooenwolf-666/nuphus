@@ -24,8 +24,7 @@ let _pendingBg: string | null = null
 
 // 坐标换算：Rust 端 PRE_SCREENSHOT 是物理像素，webview 内是 CSS 像素 → 发给 Rust 前 × devicePixelRatio
 // 每次调用时读取而非模块级常量：窗口跨显示器（混合 DPI）后 devicePixelRatio 会变，
-// 常量会静默失真。对齐 ShareX（RegionCaptureWindow 动态读 RenderScaling）与
-// Flameshot（逐处取 screenshot.devicePixelRatio()）的做法。
+// 常量会静默失真。故统一在每处调用点实时读取缩放比，避免缓存旧值。
 const dpr = () => window.devicePixelRatio || 1
 
 export function CaptureOverlay() {
