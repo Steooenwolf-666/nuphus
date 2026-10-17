@@ -7,6 +7,18 @@
 
 ## [Unreleased]
 
+### Fixed
+- **从源码构建在低内存机器上失败**：`cargo build --release` 编译 `nuphus` (lib) 时 rustc 会先以
+  `STATUS_STACK_BUFFER_OVERRUN`（编译器自身栈溢出）崩溃，抬栈后又在 opt-level=3 的 LLVM 优化阶段
+  内存耗尽（`rustc-LLVM ERROR: out of memory`）。`cargo check` 与 dev 构建全程正常，只有 release
+  优化路径触发；0.2.30 的 crate 体积比上一版更大，把这一档机器推过了线。
+  现在仓库自带兜底：`.cargo/config.toml` 统一把编译栈抬到 16 MiB，release 主 crate 取
+  `opt-level = 2` 并提高 `codegen-units` 以压低优化期内存峰值。**构建者不再需要手工设置
+  `RUST_MIN_STACK` 或 `CARGO_PROFILE_RELEASE_OPT_LEVEL`**；若曾在 shell 里设过后者的旧值，
+  请清掉，环境变量优先级高于仓库配置。
+  为不牺牲实际性能，视觉预处理热点所在的 `desktop-api`（源码仅约 200 KB）单独保留
+  `opt-level = 3`——降优化是为了省内存，不是为了省性能。
+
 ## [0.2.30] - 2026-10-17
 
 ### Added
