@@ -124,16 +124,16 @@ describe('③ 渐显渐隐：is-shown 驱动，无逐个错峰，收起无拖尾
   const btn = ruleBody(toolbarCss, '.desktop-toolbar-btn')
   const shown = ruleBody(toolbarCss, '.desktop-toolbar-dock.is-shown .desktop-toolbar-btn')
 
-  it('默认态 opacity:0 + translateY(-4px)，但仍占布局盒（不得 display:none）', () => {
+  it('默认态 opacity:0 + 右移缩小，但仍占布局盒（不得 display:none）', () => {
     expect(btn).toMatch(/opacity:\s*0/)
-    expect(btn).toMatch(/transform:\s*translateY\(-4px\)/)
+    expect(btn).toMatch(/transform:\s*translate3d\(10px, 0, 0\) scale\(0\.96\)/)
     expect(btn).not.toMatch(/display:\s*none/)
     expect(btn).not.toMatch(/pointer-events:\s*none/)
   })
 
-  it('显形态由 .is-shown 驱动（不再是 :hover），翻到 opacity:1 + translateY(0)', () => {
+  it('显形态由 .is-shown 驱动（不再是 :hover），归位到 translate3d(0,0,0) scale(1)', () => {
     expect(shown).toMatch(/opacity:\s*1/)
-    expect(shown).toMatch(/transform:\s*translateY\(0\)/)
+    expect(shown).toMatch(/transform:\s*translate3d\(0, 0, 0\) scale\(1\)/)
     // 显隐阈值必须来自 JS 的防抖+常驻状态，CSS 不得残留 :hover 版显隐规则
     const hoverRule = ruleBody(toolbarCss, '.desktop-toolbar-dock:hover .desktop-toolbar-btn')
     expect(hoverRule).toBe('')
@@ -143,10 +143,13 @@ describe('③ 渐显渐隐：is-shown 驱动，无逐个错峰，收起无拖尾
     expect(toolbarCss).not.toContain('--stagger-delay')
   })
 
-  it('渐显渐隐走 opacity/transform 的中档时长（不再用 120ms 快档）', () => {
-    const transition = btn.match(/transition:\s*([^;]*);/s)?.[1] ?? ''
-    expect(transition).toMatch(/opacity var\(--dur-med\) var\(--ease-out\)/)
-    expect(transition).toMatch(/transform var\(--dur-med\) var\(--ease-out\)/)
+  it('进快出慢：显形 150ms、收起 180ms，且都只作用于 opacity/transform', () => {
+    const enterTransition = shown.match(/transition:\s*([^;]*);/s)?.[1] ?? ''
+    const exitTransition = btn.match(/transition:\s*([^;]*);/s)?.[1] ?? ''
+    expect(enterTransition).toMatch(/opacity 0\.15s var\(--ease-out\)/)
+    expect(enterTransition).toMatch(/transform 0\.15s var\(--ease-out\)/)
+    expect(exitTransition).toMatch(/opacity 0\.18s cubic-bezier\(0\.4, 0, 1, 1\)/)
+    expect(exitTransition).toMatch(/transform 0\.18s cubic-bezier\(0\.4, 0, 1, 1\)/)
   })
 
   it('transition 显式列出属性且**不含 all**（all 会把 delay 套到背景/颜色上）', () => {
@@ -166,7 +169,7 @@ describe('③ 渐显渐隐：is-shown 驱动，无逐个错峰，收起无拖尾
       toolbarCss,
       '.desktop-toolbar-dock.is-shown .desktop-toolbar-btn:active',
     )
-    expect(active).toMatch(/transform:\s*translateY\(0\) scale\(0\.94\)/)
+    expect(active).toMatch(/transform:\s*translate3d\(0, 0, 0\) scale\(0\.94\)/)
     expect(toolbarCss).not.toMatch(/^\.desktop-toolbar-btn:active\s*\{/m)
   })
 

@@ -70,15 +70,19 @@
   border-radius: 8px;
   /* 默认态：保留布局盒 + 正常命中，只做视觉隐藏 */
   opacity: 0;
-  transform: translateY(-4px);
+  /* 从右侧滑入：dock 贴右缘，X 轴位移才符合「从边上抽出来」的物理直觉；
+     旧版 translateY(-4px) 只有 4px 且方向与停靠边无关，观感接近纯淡入。 */
+  transform: translate3d(10px, 0, 0) scale(0.96);
+  /* 收起：180ms + 加速曲线，比显形慢一档，避免边缘扫过时闪烁 */
   transition:
-    opacity var(--dur-med) var(--ease-out),
-    transform var(--dur-med) var(--ease-out),
+    opacity 0.18s cubic-bezier(0.4, 0, 1, 1),
+    transform 0.18s cubic-bezier(0.4, 0, 1, 1),
     background var(--transition-fast),
     color var(--transition-fast),
     border-color var(--transition-fast);
   /* 收起无延迟（反模式：快速划过多米诺式逐个消失）；值序与上面 transition 同序 */
   transition-delay: 0ms;
+  will-change: opacity, transform;
 }
 
 /* 显形：整列同时渐显（渐显渐隐，不做逐个错峰 —— 错峰在防抖+常驻语义下只会
@@ -86,19 +90,31 @@
    只给 opacity / transform 上过渡时长，背景/颜色仍走快档，hover 提亮不拖沓。 */
 .desktop-toolbar-dock.is-shown .desktop-toolbar-btn {
   opacity: 1;
-  transform: translateY(0);
+  transform: translate3d(0, 0, 0) scale(1);
+  /* 显形：150ms easeOutExpo（--ease-out 起手极快），跟手不拖沓。
+     时长写在显形态而非默认态，是为了让「进」比「出」快一档。 */
+  transition:
+    opacity 0.15s var(--ease-out),
+    transform 0.15s var(--ease-out),
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
   transition-delay: 0ms;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .desktop-toolbar-btn {
-    /* 降级：只切 opacity，不位移也不错峰（瞬时出现，避免逐个闪烁） */
+    /* 降级：只切 opacity，不位移（瞬时出现，避免整列闪动） */
     transform: none;
-    transition-delay: 0ms;
     transition: opacity var(--transition-fast);
+    transition-delay: 0ms;
+    will-change: auto;
   }
+  /* 显形态选择器特异性更高（0,3,0 > 0,1,0），必须把 transition 一并覆盖，
+     否则降级只作用于收起、显形仍走 150ms 位移 */
   .desktop-toolbar-dock.is-shown .desktop-toolbar-btn {
     transform: none;
+    transition: opacity var(--transition-fast);
   }
 }
 
@@ -111,7 +127,7 @@
    .desktop-toolbar-dock.is-shown .desktop-toolbar-btn 的 transform（0,3,0 > 0,2,0）。
    未显形时按钮不可见，:active 本就无从触发，故不再单独写低特异性版本。 */
 .desktop-toolbar-dock.is-shown .desktop-toolbar-btn:active {
-  transform: translateY(0) scale(0.94);
+  transform: translate3d(0, 0, 0) scale(0.94);
 }
 .desktop-toolbar-btn.active {
   color: var(--accent);
@@ -130,7 +146,8 @@
   position: absolute;
   top: 50%;
   right: calc(100% + 8px);
-  transform: translateY(-50%);
+  /* 收起时退回到按钮一侧 4px，展开时归位 —— 与整列同为 X 轴方向 */
+  transform: translateY(-50%) translateX(4px);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -149,8 +166,9 @@
   visibility: hidden;
   pointer-events: none;
   transition:
-    opacity var(--transition-fast),
-    visibility var(--transition-fast);
+    opacity 0.12s var(--ease-out),
+    transform 0.12s var(--ease-out),
+    visibility 0.12s;
 }
 /* 副行（快捷键 / 说明）：弱化一档，与主行拉开层次 */
 .desktop-toolbar-label-hint {
@@ -162,10 +180,12 @@
 .desktop-toolbar-btn:hover .desktop-toolbar-label {
   opacity: 1;
   visibility: visible;
+  transform: translateY(-50%) translateX(0);
 }
 .desktop-toolbar-btn:focus-visible .desktop-toolbar-label {
   opacity: 1;
   visibility: visible;
+  transform: translateY(-50%) translateX(0);
 }
 
 /* ── 鼠标坐标：读数 + 关闭（一组，常驻）──

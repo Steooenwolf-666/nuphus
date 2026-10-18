@@ -135,6 +135,12 @@ export function DesktopToolbar({ onOpenTools }: { onOpenTools?: () => void } = {
   // JS 侧必须知道当前是否显形才能正确续期。
   const [dockShown, setDockShown] = useState(false)
   const dockRef = useRef<HTMLDivElement | null>(null)
+  /** 与 dockShown 同步的镜像：pin 解除的 effect 需要读「当前是否显形」，
+   *  写进依赖数组会让每次显隐都重跑该 effect，用 ref 读最新值更稳。 */
+  const dockShownRef = useRef(false)
+  useEffect(() => {
+    dockShownRef.current = dockShown
+  }, [dockShown])
   const enterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** 鼠标当前是否在 dock 上。**不用 `el.matches(':hover')`**：jsdom 不支持该伪类
@@ -201,8 +207,15 @@ export function DesktopToolbar({ onOpenTools }: { onOpenTools?: () => void } = {
   // 「面板/流程进行中」→ 强制常驻。这类状态下列表必须可见（否则用户无法收尾）。
   const dockPinned = activeTool !== null || showOcrDict || loading || pickingSlotIndex !== null
   useEffect(() => {
-    if (dockPinned) pinShown()
-  }, [dockPinned, pinShown])
+    if (dockPinned) {
+      pinShown()
+      return
+    }
+    // 钉住解除（面板关闭 / 工具退出 / 轮询结束）：pinShown 已把常驻计时器清掉，
+    // 若此刻不重新起一次计时，dock 会停在显形态永不收起 —— 这是「显示之后不
+    // 消失」的唯一成因。鼠标仍在 dock 上时，renewHold 到点会自行续期。
+    if (dockShownRef.current) renewHold()
+  }, [dockPinned, pinShown, renewHold])
 
   // ── Mouse position polling ──
   // ⚠️ 失败必须可见：`desktop_mouse_position` 走资源门，Agent 轮次 / 工作流运行

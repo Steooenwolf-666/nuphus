@@ -297,6 +297,23 @@ describe('DesktopToolbar 显隐：边缘 hover 防抖 + 渐显后常驻 3s（无
     expect(shown()).toBe(true)
   })
 
+  it('面板关闭后重新起 3s 收尾，不会永久驻留', () => {
+    render(<DesktopToolbar />)
+    fireEvent.mouseEnter(dock())
+    // 打开取色面板：pinShown 会把常驻计时器清掉
+    fireEvent.click(screen.getByRole('button', { name: '取色' }))
+    fireEvent.mouseLeave(dock())
+    tick(10000)
+    expect(shown()).toBe(true)
+
+    // 再点一次关闭面板 → 钉住解除，必须重新起计时（回归点：旧实现此处无定时器）
+    fireEvent.click(screen.getByRole('button', { name: '取色' }))
+    tick(2900)
+    expect(shown()).toBe(true)
+    tick(100)
+    expect(shown()).toBe(false)
+  })
+
   it('按钮本体不带 transition-delay / opacity —— 显隐全部交给 CSS 类', () => {
     render(<DesktopToolbar />)
     const column = Array.from(dock().children).filter(el =>
