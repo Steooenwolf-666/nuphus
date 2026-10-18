@@ -192,6 +192,19 @@ cargo clean
 
 > 引导完成后可在「设置 → 模型」面板修改配置。API Key 加密存储：Windows 上经系统级 DPAPI 加密后写入本地 config.toml（`enc:v1:` 格式，绑定当前用户）；macOS/Linux 暂以明文保存（依赖系统文件权限，OS 凭据链接入在路线图中）。请勿分享或提交该文件。
 
+### 使用 ChatGPT 套餐（预览）
+
+在「设置 → 模型 → ChatGPT」点击 **Continue with ChatGPT**，在系统浏览器完成账号/工作区选择并授权使用套餐额度，然后选择该账号返回的模型。可添加多个账号/工作区；重新登录复用已登记的 Client ID。
+
+- 此连接使用 ChatGPT 套餐的共享用量；API Key 连接独立计费。模型和额度以账号、工作区及官方接口为准，失败时不会自动切换至 API 计费。
+- 支持 Nuphus 原有 Agent Runtime、客户端函数工具和模型支持的图片输入。不依赖 Codex CLI，也不读取其他应用的登录凭据。音频、图像生成及托管工具仍使用各自的连接。
+- 点击「查看 ChatGPT 用量」进入账号设置。「退出登录」会尝试撤销会话并清除本地令牌；如无法确认远端撤销，界面会提示在 ChatGPT 设置中断开此应用。
+- 授权回调仅监听 `127.0.0.1`，校验 PKCE、state、ID-token 签名/身份/nonce 及套餐授权范围。令牌独立保存在配置目录的 `chatgpt-accounts.json`，不进入前端或普通 provider 配置。Windows 使用 DPAPI；Unix 使用 `0600` 权限与原子写入。**请勿分享、提交或将该凭据文件加入诊断包。**
+- 每次推理前读取并按需刷新令牌，使用文件锁防止并发刷新覆盖。退出登录阻止后续请求；已经发送的请求可能仍会完成。
+- 本接入采用官方预览接口要求：`store:false`、流式 Responses、developer 消息与 namespaced function tools；此连接不发送温度和输出 Token 上限。上下文窗口和模态能力不按模型名称猜测。
+
+自动化测试不能代替真实账号验收。首次使用请确认登录、文本推理、工具调用后的第二轮推理、截图输入、重启、刷新及退出登录。官方资料：[开源应用接入](https://developers.openai.com/siwc/token-sharing-open-source)、[预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
+
 ### 连接手机
 
 1. 在桌面端「手机」设置页开启移动端服务（默认端口 18772）

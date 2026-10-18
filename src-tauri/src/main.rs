@@ -342,6 +342,11 @@ fn main() {
             commands::create_custom_provider,
             commands::update_custom_provider,
             commands::remove_custom_provider,
+            commands::chatgpt_accounts,
+            commands::chatgpt_login,
+            commands::chatgpt_cancel_login,
+            commands::chatgpt_models,
+            commands::chatgpt_logout,
             commands::oauth_begin,
             commands::oauth_status,
             commands::oauth_logout,
@@ -732,7 +737,7 @@ fn main() {
                 let llm_config = state.runtime.lock()
                     .ok()
                     .and_then(|g| g.llm_config.clone())
-                    .filter(|c| !c.model.is_empty() && !c.api_key.is_empty());
+                    .filter(|c| !c.model.is_empty() && (!c.api_key.is_empty() || commands::config::llm::chatgpt_segment(&c.provider)));
 
                 if let Some(cfg) = llm_config {
                     let registry = nuphus::config::ModelRegistry::from_single(
@@ -743,7 +748,12 @@ fn main() {
                         cfg.reasoning_effort.clone(),
                     );
                     let factory = nuphus::llm::ClientFactory::new(registry);
-                    match factory.create_main_client() {
+                    let client = if commands::config::llm::chatgpt_segment(&cfg.provider) {
+                        nuphus::llm::ClientFactory::live().create_client_for(&cfg.provider, &cfg.model)
+                    } else {
+                        factory.create_main_client()
+                    };
+                    match client {
                         Ok(client) => {
                             tauri::async_runtime::block_on(async {
                                 let mut engine = state.workflow_engine.write().await;

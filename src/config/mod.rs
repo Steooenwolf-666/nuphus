@@ -1,5 +1,6 @@
 //! 配置模块 — 模型配置加载与管理
 
+pub mod chatgpt;
 pub mod last_model;
 pub mod model;
 pub mod oauth;

@@ -133,6 +133,9 @@ fn default_timeout() -> u64 {
 /// 无需感知存储形态即可平移。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderOAuth {
+    /// Opaque reference to the separate ChatGPT credential store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chatgpt_account: Option<String>,
     pub authorize_url: String,
     pub token_url: String,
     pub client_id: String,

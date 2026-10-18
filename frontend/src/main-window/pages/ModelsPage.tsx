@@ -82,6 +82,7 @@ import {
 import { friendlyIpcError } from '../lib/ipcError'
 import { selectableModels } from '../lib/modelCapability'
 import { HOT_MODELS } from '../lib/hotModels'
+import { ChatGPTSettings } from './ChatGPTSettings'
 import { JevSettings } from './JevSettings'
 // 页内反馈与 island 共用同一套胶囊视觉（组件自带共享层 app-pill.css）
 import { AppPill } from '../../ui/AppPill'
@@ -1423,7 +1424,7 @@ export function CustomModelForm({
 // ════════════════════════════════════════════════════════════════
 // 页面主体
 // ════════════════════════════════════════════════════════════════
-type ModelsView = 'provider' | 'capabilities' | 'agents' | 'jev' | 'websearch'
+type ModelsView = 'chatgpt' | 'provider' | 'capabilities' | 'agents' | 'jev' | 'websearch'
 
 export function ModelsPage({
   onClose,
@@ -1917,7 +1918,10 @@ export function ModelsPage({
    * 入口的预填数据出现（创建实例时由后端自动接管迁移），不再单独占一个条目。
    */
   const customInstances = providers.filter(
-    p => isCustomProviderId(p.id) && p.id !== LEGACY_CUSTOM_PROVIDER_ID,
+    p =>
+      isCustomProviderId(p.id) &&
+      p.id !== LEGACY_CUSTOM_PROVIDER_ID &&
+      !p.id.startsWith('custom-chatgpt-'),
   )
   /**
    * 旧版 `custom` 段（迁移源）：存在时作为创建态表单的预填数据（base_url /
@@ -1965,6 +1969,10 @@ export function ModelsPage({
 
   /** 左侧导航选择某个服务商 / 实例：切到其配置页并收起「新建」表单 */
   const openProviderView = (id: string, configuredOverride?: string[]) => {
+    if (id.startsWith('custom-chatgpt-')) {
+      setActiveView('chatgpt')
+      return
+    }
     setActiveView('provider')
     setFormOpen(false)
     setFormError('')
@@ -2749,6 +2757,14 @@ export function ModelsPage({
         <div className="models-rail-scroll">
           <div className="models-rail-group">
             <div className="models-rail-group-title">{TXT.railGroupProviders}</div>
+            <button
+              type="button"
+              className={['models-rail-item', activeView === 'chatgpt' ? 'active' : ''].join(' ')}
+              onClick={() => setActiveView('chatgpt')}
+            >
+              <ProviderIcon provider="openai" size={16} />
+              <span className="models-rail-name">ChatGPT</span>
+            </button>
             {providersLoading ? (
               <div className="models-rail-note">{TXT.railLoadingProviders}</div>
             ) : (
@@ -2938,6 +2954,7 @@ export function ModelsPage({
         {!providersLoading && (
           <>
             <div className="models-main-scroll">
+              {activeView === 'chatgpt' && <ChatGPTSettings onModelChanged={onModelChanged} />}
               {/* ═══════════ 自定义模型配置（Custom 入口）：创建态表单，落盘即新实例 ═══════════ */}
               {activeView === 'provider' && formOpen && (
                 <Section title={TXT.customSectionTitle}>

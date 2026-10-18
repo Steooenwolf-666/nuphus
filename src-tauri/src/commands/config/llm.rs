@@ -24,6 +24,27 @@ use nuphus::agent::events::{EventEmitter, NuphusEvent};
 use nuphus::config::registry::ProviderRegistry;
 use tauri::{Manager, State};
 
+pub(crate) fn chatgpt_segment(name: &str) -> bool {
+    get_config_path()
+        .and_then(|p| nuphus::config::ModelRegistry::from_toml(&p.to_string_lossy()).ok())
+        .is_some_and(|r| {
+            r.providers.iter().any(|p| {
+                p.name == name
+                    && p.oauth
+                        .as_ref()
+                        .is_some_and(|o| o.chatgpt_account.is_some())
+            })
+        })
+}
+
+fn chatgpt_entry(entry: &toml::Value) -> bool {
+    entry
+        .get("oauth")
+        .and_then(|o| o.get("chatgpt_account"))
+        .and_then(|v| v.as_str())
+        .is_some()
+}
+
 /// OpenRouter aggregate cache path — next to providers.toml (config dir).
 fn openrouter_cache_path() -> std::path::PathBuf {
     let dir = get_config_path()
@@ -81,7 +102,7 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
                         .any(|m| m.get("id").and_then(|i| i.as_str()) == Some(model))
                 })
                 .unwrap_or(false);
-            if has_model && !k.is_empty() {
+            if has_model && (!k.is_empty() || chatgpt_entry(entry)) {
                 let hit = (
                     name.to_string(),
                     model.to_string(),
@@ -125,7 +146,7 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
                 let k_raw = entry.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
                 let k = nuphus::cookies::decrypt_secret(k_raw).unwrap_or_default();
                 let u = entry.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
-                if !k.is_empty() && !name.is_empty() {
+                if (!k.is_empty() || chatgpt_entry(entry)) && !name.is_empty() {
                     let model = entry
                         .get("models")
                         .and_then(|arr| arr.as_array())
@@ -133,7 +154,12 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
                         .and_then(|m| m.get("id").and_then(|id| id.as_str()))
                         .unwrap_or("");
                     if !model.is_empty() {
-                        p = name.to_string();
+                        p = if chatgpt_entry(entry) {
+                            entry["name"].as_str().unwrap_or(name)
+                        } else {
+                            name
+                        }
+                        .to_string();
                         m = model.to_string();
                         bu = u.to_string();
                         key = k.to_string();
@@ -148,7 +174,7 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
         }
     };
 
-    if api_key.is_empty() || model_id.is_empty() {
+    if (api_key.is_empty() && !chatgpt_segment(&provider_name)) || model_id.is_empty() {
         return;
     }
 
@@ -1302,7 +1328,7 @@ pub fn get_current_config(state: State<'_, AppState>) -> Result<serde_json::Valu
         if let Some(cfg) = guard.llm_config.as_ref() {
             return Ok(serde_json::json!({
                 "api_key": &cfg.api_key,
-                "has_key": !cfg.api_key.is_empty(),
+                "has_key": !cfg.api_key.is_empty() || chatgpt_segment(&cfg.provider),
                 "model": cfg.model,
                 "provider": cfg.provider,
                 "base_url": cfg.base_url,
@@ -1323,7 +1349,7 @@ pub fn get_current_config(state: State<'_, AppState>) -> Result<serde_json::Valu
                     if model.id == current_model {
                         return Ok(serde_json::json!({
                             "api_key": &provider.api_key,
-                            "has_key": !provider.api_key.is_empty(),
+                            "has_key": !provider.api_key.is_empty() || provider.oauth.as_ref().is_some_and(|o| o.chatgpt_account.is_some()),
                             "model": current_model,
                             "provider": provider.name,
                             "base_url": provider.base_url,
@@ -1348,7 +1374,7 @@ pub fn get_current_config(state: State<'_, AppState>) -> Result<serde_json::Valu
     match guard.llm_config.as_ref() {
         Some(cfg) => Ok(serde_json::json!({
             "api_key": &cfg.api_key,
-            "has_key": !cfg.api_key.is_empty(),
+            "has_key": !cfg.api_key.is_empty() || chatgpt_segment(&cfg.provider),
             "model": cfg.model,
             "provider": cfg.provider,
             "base_url": cfg.base_url,
@@ -1382,7 +1408,8 @@ pub fn is_llm_configured(state: State<'_, AppState>) -> Result<bool, String> {
                                     entry.get("api_key").and_then(|k| k.as_str()).unwrap_or("");
                                 let base_url =
                                     entry.get("base_url").and_then(|u| u.as_str()).unwrap_or("");
-                                if !api_key.is_empty() && !name.is_empty() {
+                                if (!api_key.is_empty() || chatgpt_entry(entry)) && !name.is_empty()
+                                {
                                     let model_id = entry
                                         .get("models")
                                         .and_then(|m| m.as_array())
@@ -1396,7 +1423,12 @@ pub fn is_llm_configured(state: State<'_, AppState>) -> Result<bool, String> {
                                         guard.llm_config = Some(LlamaConfig {
                                             api_key: api_key.to_string(),
                                             model: model_id.to_string(),
-                                            provider: provider_type.to_string(),
+                                            provider: if chatgpt_entry(entry) {
+                                                name
+                                            } else {
+                                                provider_type
+                                            }
+                                            .to_string(),
                                             base_url: base_url.to_string(),
                                             parameters: None,
                                             reasoning_effort: None,
@@ -1428,12 +1460,14 @@ pub fn is_llm_configured(state: State<'_, AppState>) -> Result<bool, String> {
         // Re-acquire lock
         let guard = state.runtime.lock().map_err(|e| e.to_string())?;
         match guard.llm_config.as_ref() {
-            Some(cfg) => Ok(!cfg.api_key.is_empty() && cfg.api_key.len() >= 10),
+            Some(cfg) => Ok((!cfg.api_key.is_empty() && cfg.api_key.len() >= 10)
+                || chatgpt_segment(&cfg.provider)),
             None => Ok(false),
         }
     } else {
         match guard.llm_config.as_ref() {
-            Some(cfg) => Ok(!cfg.api_key.is_empty() && cfg.api_key.len() >= 10),
+            Some(cfg) => Ok((!cfg.api_key.is_empty() && cfg.api_key.len() >= 10)
+                || chatgpt_segment(&cfg.provider)),
             None => Ok(false),
         }
     }

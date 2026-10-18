@@ -306,6 +306,7 @@ mod tests {
 
     fn oauth_with(expires_at: Option<i64>, access: &str, refresh: &str) -> ProviderOAuth {
         ProviderOAuth {
+            chatgpt_account: None,
             authorize_url: "https://sso.example.com/authorize".to_string(),
             token_url: "https://sso.example.com/token".to_string(),
             client_id: "nuphus".to_string(),

@@ -180,3 +180,8 @@ rebuild-and-run.bat
 # 官网双版本产物（本地待裁决，不入库）
 /website/
 /website-skill/
+
+# Local ChatGPT account credentials (never commit or share)
+chatgpt-accounts.json
+chatgpt-accounts.lock
+chatgpt-accounts.*.tmp

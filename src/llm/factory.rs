@@ -156,6 +156,32 @@ impl ClientFactory {
         provider: &ProviderConfig,
         model_id: &str,
     ) -> Result<Arc<dyn Transport>> {
+        if let Some(account_id) = provider
+            .oauth
+            .as_ref()
+            .and_then(|o| o.chatgpt_account.as_ref())
+        {
+            let config_path = registry.source_path.clone().ok_or_else(|| {
+                crate::NuphusError::Config(
+                    "ChatGPT requires a persistent account configuration".into(),
+                )
+            })?;
+            return Ok(Arc::new(ResponsesTransport::new(ResponsesConfig {
+                base_url: crate::config::chatgpt::API_BASE.into(),
+                api_key: String::new(),
+                model: model_id.into(),
+                timeout_secs: provider.timeout_secs,
+                auth_header: "authorization".into(),
+                auth_prefix: "Bearer ".into(),
+                provider_kind: Some(provider.provider_type),
+                quirks: Default::default(),
+                reasoning_effort: None,
+                chatgpt_session: Some(crate::config::chatgpt::SessionRef {
+                    config_path,
+                    account_id: account_id.clone(),
+                }),
+            })));
+        }
         // OAuth 段透明化：配置了 oauth 的段以「新鲜 access token」充当 api_key
         // 传入 transport（transport 本身不感知 oauth，继续走既有 Bearer 链）。
         // 未配 oauth / 无文件来源（CLI 内存构造）→ 原样透传，零行为变化。
@@ -223,6 +249,7 @@ impl ClientFactory {
                     provider_kind: Some(provider.provider_type),
                     quirks,
                     reasoning_effort: provider.reasoning_effort.clone(),
+                    chatgpt_session: None,
                 })))
             }
             // ChatCompletions / Anthropic：现网路径逐字节不变（含 anthropic 官方
@@ -433,5 +460,37 @@ mod tests {
             .is_err());
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+    #[tokio::test]
+    async fn chatgpt_uses_responses_and_never_falls_back_to_an_api_key() {
+        let (dir, path, _) = dual_segment_registry();
+        let mut doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        doc["providers"].as_array_mut().unwrap()[1]
+            .as_table_mut()
+            .unwrap()
+            .insert(
+                "oauth".into(),
+                toml::Value::try_from(crate::config::ProviderOAuth {
+                    chatgpt_account: Some("oaiapp_missing".into()),
+                    ..Default::default()
+                })
+                .unwrap(),
+            );
+        std::fs::write(&path, toml::to_string(&doc).unwrap()).unwrap();
+        let factory = ClientFactory::live_at(&path);
+        let registry = factory.registry().unwrap();
+        let provider = &registry.providers[1];
+        // The fixture still has sk-b and a custom endpoint. Neither may be
+        // used as a fallback when its ChatGPT account has no credentials.
+        let transport = factory
+            .build_transport(&registry, provider, "probe-model")
+            .unwrap();
+        assert_eq!(transport.provider_name(), "responses");
+        let error = transport
+            .stream(crate::api::MessageRequest::new("probe-model", vec![]))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("ChatGPT account not found"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -597,6 +597,7 @@ mod tests {
 
     fn oauth_fixture() -> ProviderOAuth {
         ProviderOAuth {
+            chatgpt_account: None,
             authorize_url: "https://sso.example.com/authorize".to_string(),
             token_url: "https://sso.example.com/token".to_string(),
             client_id: "nuphus-cli".to_string(),

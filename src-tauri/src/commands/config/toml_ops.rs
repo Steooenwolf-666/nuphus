@@ -1998,7 +1998,12 @@ pub fn list_configured_providers() -> Vec<String> {
         Ok(registry) => registry
             .providers
             .iter()
-            .filter(|p| !p.api_key.is_empty())
+            .filter(|p| {
+                !p.api_key.is_empty()
+                    || p.oauth
+                        .as_ref()
+                        .is_some_and(|o| o.chatgpt_account.is_some())
+            })
             .map(|p| p.name.clone())
             .collect(),
         Err(_) => Vec::new(),

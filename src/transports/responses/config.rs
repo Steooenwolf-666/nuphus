@@ -12,6 +12,8 @@ use crate::config::provider::ProviderQuirks;
 /// （设计 §4.4 Codex 注记）。
 #[derive(Debug, Clone)]
 pub struct ResponsesConfig {
+    /// Resolve/refresh credentials per request; never snapshot subscription tokens.
+    pub chatgpt_session: Option<crate::config::chatgpt::SessionRef>,
     /// API endpoint base（不含 `/responses` 后缀；末尾斜杠会被剥离）
     pub base_url: String,
     /// API key。P3 将扩展 AuthMaterial（OAuth 令牌走 credentials 服务，
@@ -56,6 +58,7 @@ mod tests {
             provider_kind: None,
             quirks: ProviderQuirks::default(),
             reasoning_effort: None,
+            chatgpt_session: None,
         };
         assert_eq!(cfg.endpoint(), "https://api.openai.com/v1/responses");
     }
@@ -72,6 +75,7 @@ mod tests {
             provider_kind: None,
             quirks: ProviderQuirks::default(),
             reasoning_effort: None,
+            chatgpt_session: None,
         };
         assert_eq!(cfg.endpoint(), "https://example.com/responses");
     }
