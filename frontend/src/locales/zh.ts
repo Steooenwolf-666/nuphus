@@ -2374,6 +2374,8 @@ const zh: Record<string, string> = {
   'mobile.msgNotDelivered': '有消息未送达（网络中断），请重发',
   'mobile.switchModelFailed': '切换模型失败',
   'mobile.switchModeFailed': '切换模式失败',
+  'chatAgent.inlineLoadFailed': '工作流步骤配置加载失败：{0}',
+  'chatAgent.inlineSaveFailed': '步骤配置保存失败：{0}',
   'workflow.presets.label': '参数方案',
   'workflow.presets.choose': '选择已保存的方案',
   'workflow.presets.name': '方案名称',

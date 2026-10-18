@@ -312,7 +312,7 @@ export async function processInput(
     mode,
     images,
     references,
-    new_session: newSession ?? false,
+    newSession: newSession ?? false,
   })
 
   // invoke 返回 null 说明 IPC 调用失败（ERR_CONNECTION_REFUSED 等）
@@ -1410,9 +1410,9 @@ export function submitExecutionRating(
     goal,
     rating,
     comment,
-    tools_summary: steps.map(s => s.tool).join(', '),
-    steps_json: JSON.stringify(steps),
-    session_id: sessionId,
+    toolsSummary: steps.map(s => s.tool).join(', '),
+    stepsJson: JSON.stringify(steps),
+    sessionId,
   })
 }
 
@@ -1731,7 +1731,7 @@ export function deleteChatAgent(name: string) {
 
 /** 查询某 workflow 中内联 ChatAgent 步骤配置 */
 export function listChatAgentsInline(workflowId: string) {
-  return invoke<InlineChatAgentEntry[]>('chat_agent_list_inline', { workflow_id: workflowId })
+  return invoke<InlineChatAgentEntry[]>('chat_agent_list_inline', { workflowId })
 }
 
 /** 更新工作流中内联 ChatAgent 配置 */
@@ -1741,8 +1741,8 @@ export function updateChatAgentInline(
   config: Record<string, unknown>,
 ) {
   return invoke<void>('chat_agent_update_inline', {
-    workflow_id: workflowId,
-    step_id: stepId,
+    workflowId,
+    stepId,
     config,
   })
 }

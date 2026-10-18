@@ -2495,6 +2495,8 @@ const en: Record<string, string> = {
   'mobile.msgNotDelivered': 'Message not delivered (network interruption), please resend',
   'mobile.switchModelFailed': 'Switch model failed',
   'mobile.switchModeFailed': 'Switch mode failed',
+  'chatAgent.inlineLoadFailed': 'Failed to load workflow step configurations: {0}',
+  'chatAgent.inlineSaveFailed': 'Failed to save step configuration: {0}',
   'workflow.presets.label': 'Input presets',
   'workflow.presets.choose': 'Choose a saved preset',
   'workflow.presets.name': 'Preset name',
