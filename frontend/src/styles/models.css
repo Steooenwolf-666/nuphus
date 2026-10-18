@@ -1462,10 +1462,13 @@ button.cap-chip:disabled {
   opacity: 0.55;
 }
 
+/* 模型协议下拉：默认值=服务商默认协议，显式值按模型覆盖。
+   颜色必须用 tokens.css 里已定义的 --text-secondary；
+   --text-2 在本项目从未定义，写了会静默回落到继承色。 */
 .model-protocol-select {
   width: 100%;
   min-width: 0;
-  color: var(--text-2);
+  color: var(--text-secondary);
   background: var(--glass-0);
   border: 1px solid var(--line-2);
   border-radius: 6px;

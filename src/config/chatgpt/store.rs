@@ -304,25 +304,30 @@ fn write_provider_with_saved(
             models
                 .iter()
                 .map(|m| {
-                    old_models
+                    // 复用旧条目以保留用户的能力设置，但协议路由与订阅约束必须
+                    // 每次都补齐：旧版本写入的条目没有 transport / responses，
+                    // 缺失会让 ResponseOptions 落到全零默认值，temperature /
+                    // max_output_tokens 照发，SIWC 预览直接 400。
+                    let mut value = old_models
                         .iter()
                         .find(|old| old.get("id").and_then(|v| v.as_str()) == Some(&m.slug))
                         .cloned()
                         .unwrap_or_else(|| {
                             let mut value = toml::value::Table::new();
                             value.insert("id".into(), toml::Value::String(m.slug.clone()));
-                            value.insert(
-                                "transport".into(),
-                                toml::Value::String("responses".into()),
-                            );
-                            value.insert(
-                                "responses".into(),
-                                toml::Value::try_from(super::response_options())
-                                    .expect("response options"),
-                            );
                             // No guessed context window or modality capabilities.
                             toml::Value::Table(value)
-                        })
+                        });
+                    if let Some(table) = value.as_table_mut() {
+                        table
+                            .entry("transport")
+                            .or_insert_with(|| toml::Value::String("responses".into()));
+                        table.entry("responses").or_insert_with(|| {
+                            toml::Value::try_from(super::response_options())
+                                .expect("response options")
+                        });
+                    }
+                    value
                 })
                 .collect(),
         ),
@@ -398,6 +403,77 @@ mod tests {
             .is_some());
         std::fs::remove_dir_all(dir).unwrap();
     }
+    /// 已存在的模型条目必须在同步时补齐 Responses 约束。
+    ///
+    /// 回归场景：用户先用旧版接过 ChatGPT（models 里只有 id + 能力字段），
+    /// 升级后 sync_models 命中 `.cloned()` 复用分支。若不复用分支补写
+    /// `transport` / `responses`，ResponseOptions 会落到全零默认值，
+    /// 导致 temperature / max_output_tokens 照发，SIWC 预览直接 400。
+    #[test]
+    fn syncing_an_existing_model_still_gets_response_constraints() {
+        let dir = std::env::temp_dir().join(format!("nuphus-chatgpt-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = dir.join("providers.toml");
+        let info = AccountInfo {
+            account_id: "oaiapp_test".into(),
+            provider: provider_name("oaiapp_test"),
+            label: "Account".into(),
+            logged_in: true,
+        };
+        // 预先写入一个「旧式」模型条目：只带 id 与用户能力设置，没有 transport / responses。
+        let legacy = format!(
+            "[[providers]]\nname = \"{}\"\nprovider_type = \"custom\"\napi_key = \"\"\nbase_url = \"https://api.openai.com/v1\"\n[[providers.models]]\nid = \"gpt-6-luna\"\nsupports_vision = true\ncontext_window = 200000\n",
+            info.provider
+        );
+        std::fs::write(&config, legacy).unwrap();
+
+        write_provider(
+            &config,
+            &info,
+            &[Model {
+                slug: "gpt-6-luna".into(),
+                display_name: "GPT-6 Luna".into(),
+            }],
+        )
+        .unwrap();
+
+        let doc: toml::Value = std::fs::read_to_string(&config).unwrap().parse().unwrap();
+        // 先确认结构，避免 index not found 掩盖真实断言
+        let models = doc["providers"][0]["models"]
+            .as_array()
+            .expect("providers[0].models must be an array");
+        assert_eq!(
+            models.len(),
+            1,
+            "exactly one model expected, got {models:#?}"
+        );
+        let model = &models[0];
+        assert!(
+            model.get("transport").is_some(),
+            "existing model must gain per-model transport routing, got {model:#?}"
+        );
+        assert_eq!(model["transport"].as_str(), Some("responses"));
+        let responses = model
+            .get("responses")
+            .expect("existing model must gain Responses constraints");
+        assert_eq!(responses["store"].as_bool(), Some(false));
+        assert_eq!(responses["developer_role"].as_bool(), Some(true));
+        assert_eq!(responses["tool_namespace"].as_str(), Some("nuphus"));
+        assert_eq!(responses["require_completed"].as_bool(), Some(true));
+        let forbidden: Vec<&str> = responses["forbidden_fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(forbidden.contains(&"temperature"));
+        assert!(forbidden.contains(&"max_output_tokens"));
+        // 用户原有的能力设置必须保留。
+        assert_eq!(model["supports_vision"].as_bool(), Some(true));
+        assert_eq!(model["context_window"].as_integer(), Some(200000));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn host_is_stable_and_credentials_do_not_enter_provider_settings() {
         let dir = std::env::temp_dir().join(format!("nuphus-chatgpt-{}", uuid::Uuid::new_v4()));
