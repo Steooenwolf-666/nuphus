@@ -2,11 +2,19 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatGPTSettings } from './ChatGPTSettings'
 
-const mocks = vi.hoisted(() => ({ invoke: vi.fn(), switchModel: vi.fn(), openExternal: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  switchModel: vi.fn(),
+  openExternal: vi.fn(),
+  listModels: vi.fn(),
+  setModelSupportsVision: vi.fn(),
+}))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('../lib/api', () => ({
   switchModel: mocks.switchModel,
   openExternal: mocks.openExternal,
+  listModels: mocks.listModels,
+  setModelSupportsVision: mocks.setModelSupportsVision,
   getCurrentConfig: vi.fn(async () => null),
 }))
 vi.mock('../../locales', () => ({ useLanguage: () => ({ lang: 'en' }) }))
@@ -28,9 +36,59 @@ beforeEach(() => {
     return undefined
   })
   mocks.switchModel.mockResolvedValue('ok')
+  mocks.listModels.mockResolvedValue([
+    { id: 'account-model', provider: account.provider, supports_vision: false },
+    { id: 'account-model', provider: 'custom-chatgpt-other', supports_vision: true },
+  ])
+  mocks.setModelSupportsVision.mockResolvedValue('ok')
 })
 
 describe('ChatGPT settings', () => {
+  it('allows vision input to be enabled for the exact account and model', async () => {
+    const modelsChanged = vi.fn()
+    render(<ChatGPTSettings onModelsChanged={modelsChanged} />)
+    const toggle = await screen.findByRole('checkbox', { name: 'Account model vision input' })
+    expect(toggle).not.toBeChecked()
+    fireEvent.click(toggle)
+    await waitFor(() => expect(toggle).toBeChecked())
+    expect(mocks.setModelSupportsVision).toHaveBeenCalledWith(
+      'custom-chatgpt-one',
+      'account-model',
+      true,
+    )
+    expect(modelsChanged).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ provider: account.provider, supports_vision: true }),
+        expect.objectContaining({ provider: 'custom-chatgpt-other', supports_vision: true }),
+      ]),
+    )
+  })
+
+  it('loads saved vision settings again after refreshing the account catalog', async () => {
+    mocks.listModels.mockResolvedValue([
+      { id: 'account-model', provider: account.provider, supports_vision: true },
+    ])
+    render(<ChatGPTSettings />)
+    expect(
+      await screen.findByRole('checkbox', { name: 'Account model vision input' }),
+    ).toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh models' }))
+    await waitFor(() => expect(mocks.listModels).toHaveBeenCalledTimes(2))
+    expect(
+      await screen.findByRole('checkbox', { name: 'Account model vision input' }),
+    ).toBeChecked()
+  })
+
+  it('preserves the saved vision setting when persistence fails', async () => {
+    mocks.setModelSupportsVision.mockRejectedValueOnce(new Error('Could not save model settings'))
+    render(<ChatGPTSettings />)
+    const toggle = await screen.findByRole('checkbox', { name: 'Account model vision input' })
+    fireEvent.click(toggle)
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not save model settings')
+    expect(toggle).not.toBeChecked()
+    expect(toggle).toBeEnabled()
+  })
+
   it('uses the account catalog and switches the exact provider/model pair', async () => {
     const changed = vi.fn()
     render(<ChatGPTSettings onModelChanged={changed} />)

@@ -25,7 +25,7 @@ pub fn chatgpt_accounts() -> Result<Vec<AccountInfo>, String> {
     chatgpt::accounts(&path()?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn chatgpt_cancel_login() {
     LOGIN_CANCELLED.store(true, Ordering::Release);
     cancel_signal().notify_waiters();
@@ -126,9 +126,13 @@ pub async fn chatgpt_login(account_id: Option<String>) -> Result<AccountInfo, St
     .map_err(|_| "ChatGPT sign-in task failed")?
 }
 
-#[tauri::command(async)]
-pub fn chatgpt_models(account_id: String) -> Result<Vec<Model>, String> {
-    chatgpt::sync_models(&path()?, &account_id)
+/** Blocking HTTP and token refresh must run outside Tauri's async runtime workers. */
+#[tauri::command]
+pub async fn chatgpt_models(account_id: String) -> Result<Vec<Model>, String> {
+    let config = path()?;
+    tokio::task::spawn_blocking(move || chatgpt::sync_models(&config, &account_id))
+        .await
+        .map_err(|_| "ChatGPT model synchronization task failed")?
 }
 
 #[tauri::command]

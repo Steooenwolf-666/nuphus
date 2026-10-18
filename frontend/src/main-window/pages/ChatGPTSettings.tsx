@@ -3,7 +3,14 @@ import { invoke } from '@tauri-apps/api/core'
 import { useLanguage } from '../../locales'
 import { Section } from '../../ui/PageLayout'
 import { Button } from '../../ui/Button'
-import { getCurrentConfig, openExternal, switchModel } from '../lib/api'
+import {
+  getCurrentConfig,
+  listModels,
+  openExternal,
+  setModelSupportsVision,
+  switchModel,
+  type ModelInfo,
+} from '../lib/api'
 
 interface Account {
   account_id: string
@@ -16,12 +23,19 @@ interface Model {
   display_name: string
 }
 
-export function ChatGPTSettings({ onModelChanged }: { onModelChanged?: () => void }) {
+export function ChatGPTSettings({
+  onModelChanged,
+  onModelsChanged,
+}: {
+  onModelChanged?: () => void
+  onModelsChanged?: (models: ModelInfo[]) => void
+}) {
   const { lang } = useLanguage()
   const zh = lang.startsWith('zh')
   const [accounts, setAccounts] = useState<Account[]>([])
   const [selected, setSelected] = useState('')
   const [models, setModels] = useState<Model[]>([])
+  const [registeredModels, setRegisteredModels] = useState<ModelInfo[]>([])
   const [busy, setBusy] = useState('accounts')
   const [catalogRevision, setCatalogRevision] = useState(0)
   const [error, setError] = useState('')
@@ -63,7 +77,12 @@ export function ChatGPTSettings({ onModelChanged }: { onModelChanged?: () => voi
     setError('')
     try {
       const list = await invoke<Model[]>('chatgpt_models', { accountId: id })
-      if (generation.current === current) setModels(list)
+      const registered = await listModels()
+      if (generation.current === current) {
+        setModels(list)
+        setRegisteredModels(registered ?? [])
+        onModelsChanged?.(registered ?? [])
+      }
     } catch (e) {
       if (generation.current === current) setError(String(e))
     } finally {
@@ -136,6 +155,29 @@ export function ChatGPTSettings({ onModelChanged }: { onModelChanged?: () => voi
       setError(String(e))
     } finally {
       setBusy('')
+    }
+  }
+
+  /** 模型目录不声明视觉能力时，复用用户显式设置，按账号和模型共同定位。 */
+  async function toggleVision(model: Model, enabled: boolean) {
+    if (!account) return
+    const current = ++generation.current
+    setBusy('vision')
+    setError('')
+    try {
+      await setModelSupportsVision(account.provider, model.slug, enabled)
+      if (generation.current !== current) return
+      const updated = registeredModels.map(item =>
+        item.provider === account.provider && item.id === model.slug
+          ? { ...item, supports_vision: enabled }
+          : item,
+      )
+      setRegisteredModels(updated)
+      onModelsChanged?.(updated)
+    } catch (e) {
+      if (generation.current === current) setError(String(e))
+    } finally {
+      if (generation.current === current) setBusy('')
     }
   }
 
@@ -225,14 +267,38 @@ export function ChatGPTSettings({ onModelChanged }: { onModelChanged?: () => voi
       {notice && <p role="status">{notice}</p>}
       <div className="custom-oauth-body">
         {models.map(model => (
-          <Button key={model.slug} disabled={!!busy} onClick={() => void selectModel(model)}>
-            {model.display_name}
-            {active === `${account?.provider}:${model.slug}`
-              ? zh
-                ? ' · 使用中'
-                : ' · Active'
-              : ''}
-          </Button>
+          <div key={model.slug} className="custom-oauth-actions">
+            <Button disabled={!!busy} onClick={() => void selectModel(model)}>
+              {model.display_name}
+              {active === `${account?.provider}:${model.slug}`
+                ? zh
+                  ? ' · 使用中'
+                  : ' · Active'
+                : ''}
+            </Button>
+            <label
+              className="custom-oauth-check"
+              title={
+                zh
+                  ? '仅为确认支持图片输入的模型开启，截图和图片才会发送给该模型。'
+                  : 'Enable only for models that accept images, so screenshots and images reach this model.'
+              }
+            >
+              <input
+                type="checkbox"
+                aria-label={`${model.display_name} ${zh ? '视觉输入' : 'vision input'}`}
+                checked={registeredModels.some(
+                  item =>
+                    item.provider === account?.provider &&
+                    item.id === model.slug &&
+                    item.supports_vision,
+                )}
+                disabled={!!busy}
+                onChange={e => void toggleVision(model, e.target.checked)}
+              />
+              {zh ? '视觉输入' : 'Vision input'}
+            </label>
+          </div>
         ))}
         {account?.logged_in && !busy && !error && models.length === 0 && (
           <p>

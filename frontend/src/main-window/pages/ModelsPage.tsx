@@ -2954,7 +2954,9 @@ export function ModelsPage({
         {!providersLoading && (
           <>
             <div className="models-main-scroll">
-              {activeView === 'chatgpt' && <ChatGPTSettings onModelChanged={onModelChanged} />}
+              {activeView === 'chatgpt' && (
+                <ChatGPTSettings onModelChanged={onModelChanged} onModelsChanged={setAllModels} />
+              )}
               {/* ═══════════ 自定义模型配置（Custom 入口）：创建态表单，落盘即新实例 ═══════════ */}
               {activeView === 'provider' && formOpen && (
                 <Section title={TXT.customSectionTitle}>
