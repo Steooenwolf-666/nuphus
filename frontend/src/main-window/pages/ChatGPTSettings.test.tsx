@@ -47,7 +47,7 @@ describe('ChatGPT settings', () => {
   it('allows vision input to be enabled for the exact account and model', async () => {
     const modelsChanged = vi.fn()
     render(<ChatGPTSettings onModelsChanged={modelsChanged} />)
-    const toggle = await screen.findByRole('checkbox', { name: 'Account model vision input' })
+    const toggle = await screen.findByRole('switch', { name: 'Account model vision input' })
     expect(toggle).not.toBeChecked()
     fireEvent.click(toggle)
     await waitFor(() => expect(toggle).toBeChecked())
@@ -69,20 +69,16 @@ describe('ChatGPT settings', () => {
       { id: 'account-model', provider: account.provider, supports_vision: true },
     ])
     render(<ChatGPTSettings />)
-    expect(
-      await screen.findByRole('checkbox', { name: 'Account model vision input' }),
-    ).toBeChecked()
+    expect(await screen.findByRole('switch', { name: 'Account model vision input' })).toBeChecked()
     fireEvent.click(screen.getByRole('button', { name: 'Refresh models' }))
     await waitFor(() => expect(mocks.listModels).toHaveBeenCalledTimes(2))
-    expect(
-      await screen.findByRole('checkbox', { name: 'Account model vision input' }),
-    ).toBeChecked()
+    expect(await screen.findByRole('switch', { name: 'Account model vision input' })).toBeChecked()
   })
 
   it('preserves the saved vision setting when persistence fails', async () => {
     mocks.setModelSupportsVision.mockRejectedValueOnce(new Error('Could not save model settings'))
     render(<ChatGPTSettings />)
-    const toggle = await screen.findByRole('checkbox', { name: 'Account model vision input' })
+    const toggle = await screen.findByRole('switch', { name: 'Account model vision input' })
     fireEvent.click(toggle)
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not save model settings')
     expect(toggle).not.toBeChecked()
