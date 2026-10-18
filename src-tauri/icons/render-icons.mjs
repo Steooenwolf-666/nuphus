@@ -63,7 +63,8 @@ const PNG_TARGETS = [
   ['128x128.png', 128],
   ['128x128@2x.png', 256],
   ['64x64.png', 64],
-  ['icon.png', 512],
+  // 1024：macOS 生成 icns 时 512@2x 需要这一档；官方建议 icon.png 至少 1024
+  ['icon.png', 1024],
   ['Square30x30Logo.png', 30],
   ['Square44x44Logo.png', 44],
   ['Square71x71Logo.png', 71],
@@ -85,7 +86,8 @@ for (const [name, size] of PNG_TARGETS) {
 
 // ICO：PIL 侧合成（多帧容器），复用已渲染的最大尺寸 PNG
 console.log('合成 ICO…')
-const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
+// 首层 32：Tauri 官方文档要求「开发模式下 32px 层应为第一层」
+const ICO_SIZES = [32, 16, 24, 48, 64, 128, 256]
 const tmpDir = join(here, '.ico-src')
 mkdirSync(tmpDir, { recursive: true })
 for (const s of ICO_SIZES) renderPng(s, join(tmpDir, `${s}.png`))
@@ -99,7 +101,7 @@ from PIL import Image
 
 d = r"${tmpDir.replace(/\\/g, '\\\\')}"
 out = r"${join(here, 'icon.ico').replace(/\\/g, '\\\\')}"
-sizes = [16, 24, 32, 48, 64, 128, 256]
+sizes = [32, 16, 24, 48, 64, 128, 256]
 
 def dib(size):
     im = Image.open(os.path.join(d, f"{size}.png")).convert("RGBA")
@@ -141,5 +143,44 @@ print("ICO frames written:", struct.unpack("<H", b[4:6])[0], "bytes:", len(b))
 writeFileSync(join(tmpDir, 'mk.py'), py, 'utf8')
 execFileSync('python', [join(tmpDir, 'mk.py')], { stdio: 'inherit' })
 rmSync(tmpDir, { recursive: true, force: true })
-console.log('  icon.ico                ICO [16,24,32,48,64,128,256]')
+console.log(`  icon.ico                ICO [${ICO_SIZES.join(',')}] 首层 ${ICO_SIZES[0]}px`)
+
+// ── ICNS（macOS）：PNG-in-ICNS 容器，覆盖 16→1024 全档 ─────────────
+// 为什么必须自带 icns：Tauri 的 macOS bundler 若在 bundle.icon 里找不到 .icns，
+// 会拿列表里的 png 现场合成。按现有列表只会产出 {16(ico 首层), 512(icon.png)}
+// 两档，Dock/访达缺档后靠缩放拼图。这里把完整档位直接写死。
+console.log('合成 ICNS…')
+const ICNS_DIR = join(here, '.icns-src')
+mkdirSync(ICNS_DIR, { recursive: true })
+const ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024]
+for (const s of ICNS_SIZES) renderPng(s, join(ICNS_DIR, `${s}.png`))
+
+// ICNS 类型与像素对应（macOS 10.7+ 支持 PNG 负载；@2x 档供 Retina 精确命中）
+const ICNS_ENTRIES = [
+  ['icp4', 16], // 16x16
+  ['icp5', 32], // 32x32
+  ['icp6', 64], // 64x64
+  ['ic07', 128], // 128x128
+  ['ic08', 256], // 256x256
+  ['ic09', 512], // 512x512
+  ['ic10', 1024], // 1024x1024
+  ['ic11', 64], // 32x32@2x
+  ['ic12', 128], // 64x64@2x
+  ['ic13', 256], // 128x128@2x
+  ['ic14', 512], // 256x256@2x
+]
+const icnsBlocks = ICNS_ENTRIES.map(([type, size]) => {
+  const payload = readFileSync(join(ICNS_DIR, `${size}.png`))
+  const head = Buffer.alloc(8)
+  head.write(type, 0, 4, 'ascii')
+  head.writeUInt32BE(8 + payload.length, 4)
+  return Buffer.concat([head, payload])
+})
+const icnsBody = Buffer.concat(icnsBlocks)
+const icnsHeader = Buffer.alloc(8)
+icnsHeader.write('icns', 0, 4, 'ascii')
+icnsHeader.writeUInt32BE(8 + icnsBody.length, 4)
+writeFileSync(join(here, 'icon.icns'), Buffer.concat([icnsHeader, icnsBody]))
+rmSync(ICNS_DIR, { recursive: true, force: true })
+console.log(`  icon.icns               ICNS [${ICNS_SIZES.join(',')}] × ${ICNS_ENTRIES.length} 块`)
 console.log('完成')

@@ -8,6 +8,15 @@
 ## [Unreleased]
 
 ### Fixed
+- **发布包图标链补全，安装/升级后主动刷新图标缓存**：此前 `bundle.icon` 只列 `icon.ico` 与
+  `icon.png`，macOS 打包时 Tauri 会拿这两项现场合成 icns，实测只产出 16 / 512 两档，Dock 与
+  访达缺档后靠缩放拼图；仓库里的 `icon.icns` 仍是 2026-07-20 的旧深色标且未被任何配置引用。
+  Windows 侧 NSIS 模板创建快捷方式后不做刷新，安装包替换 exe 的瞬间若 Explorer 读图标失败，
+  会缓存成通用白纸图标并一直沿用。本次从 `icon-source.svg` 重新生成全部图标：`icon.png` 升到
+  1024、`icon.ico` 首层改为官方要求的 32px、新增 16→1024 含 @2x 共 11 块的完整 `icon.icns`；
+  `bundle.icon` 补入 icns 与各尺寸 png。新增 `installer-hooks.nsh`，在 `NSIS_HOOK_POSTINSTALL`
+  广播 `SHCNE_ASSOCCHANGED` 强制重建图标缓存，覆盖首次安装、手动升级与自动更新。同时补上此前
+  为空的 `installerIcon` / `uninstallerIcon`（setup.exe 原本显示 NSIS 默认图标）。
 - **从源码构建在低内存机器上失败**：`cargo build --release` 编译 `nuphus` (lib) 时 rustc 会先以
   `STATUS_STACK_BUFFER_OVERRUN`（编译器自身栈溢出）崩溃，抬栈后又在 opt-level=3 的 LLVM 优化阶段
   内存耗尽（`rustc-LLVM ERROR: out of memory`）。`cargo check` 与 dev 构建全程正常，只有 release
