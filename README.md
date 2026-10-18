@@ -204,6 +204,9 @@ cargo clean
 - 授权回调仅监听 `127.0.0.1`，校验 PKCE、state、ID-token 签名/身份/nonce 及套餐授权范围。令牌独立保存在配置目录的 `chatgpt-accounts.json`，不进入前端或普通 provider 配置。Windows 使用 DPAPI；Unix 使用 `0600` 权限与原子写入。**请勿分享、提交或将该凭据文件加入诊断包。**
 - 每次推理前读取并按需刷新令牌，使用文件锁防止并发刷新覆盖。退出登录阻止后续请求；已经发送的请求可能仍会完成。
 - 本接入采用官方预览接口要求：`store:false`、流式 Responses、developer 消息与 namespaced function tools；此连接不发送温度和输出 Token 上限。上下文窗口和模态能力不按模型名称猜测。
+- 官方预览的可用范围、接口、模型和配额可能调整或暂时不可用，当前不作为稳定服务承诺。用户需自行确认网络可达性，并自行管理账号订阅和支付。退出登录会移除该账号的可用模型与绑定，保留注册信息和模型偏好供重新登录使用。
+
+模型卡片可按模型选择 Chat Completions、Responses 或 Anthropic Messages；未指定时沿用服务商默认协议。OAuth 配置支持 `extra_authorize_params`（含 `{{nonce}}`）、`extra_token_params`、`verify_id_token`、`issuer`、`jwks_url` 和 `dynamic_client_registration`。ChatGPT 的预览约束由接入配置声明，认证来源与协议选择独立；旧版账号引用会自动迁移，已有视觉设置保留。
 
 自动化测试不能代替真实账号验收。首次使用请确认登录、文本推理、工具调用后的第二轮推理、截图输入、重启、刷新及退出登录。官方资料：[开源应用接入](https://developers.openai.com/siwc/token-sharing-open-source)、[预览限制](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)。
 

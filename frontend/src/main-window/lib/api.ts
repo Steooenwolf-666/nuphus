@@ -826,6 +826,7 @@ export function detectCdpBrowsers() {
 
 export interface ModelInfo {
   id: string
+  transport?: TransportKind | null
   provider: string
   alias: string[]
   supports_streaming: boolean
@@ -848,6 +849,17 @@ export interface ModelInfo {
 
 export function listModels() {
   return invoke<ModelInfo[]>('list_models')
+}
+
+export type TransportKind = 'chat-completions' | 'anthropic' | 'responses'
+
+/** 保存模型级协议覆盖；null 恢复服务商默认路由。 */
+export function setModelTransport(
+  provider: string,
+  model: string,
+  transport: TransportKind | null,
+) {
+  return invoke<void>('set_model_transport', { provider, model, transport })
 }
 
 // ── Model Switch (provider-driven: reads key from config.toml, no key param) ──

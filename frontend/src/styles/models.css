@@ -1461,3 +1461,15 @@ button.cap-chip:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
+
+.model-protocol-select {
+  width: 100%;
+  min-width: 0;
+  color: var(--text-2);
+  background: var(--glass-0);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 11px;
+}

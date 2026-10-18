@@ -18,6 +18,8 @@ import {
   getProviderContext,
   setAgentModel,
   setModelContextWindow,
+  setModelTransport,
+  type TransportKind,
   setModelSupportsVision,
   setModelSupportsImageGeneration,
   setCapabilityBinding,
@@ -71,6 +73,7 @@ import { Button } from '../../ui/Button'
 import { useLanguage } from '../../locales'
 import { ProviderIcon, hasProviderIcon } from '../components/ProviderIcon'
 import { ModelCard, type ModelCardCap } from './ModelCard'
+import { ModelProtocolSelect } from './ModelProtocolSelect'
 import { RowCtxEditor, formatContextWindow } from './RowCtxEditor'
 import { getProviderFavorites, setFavorite } from '../lib/favorites'
 import { orderProviderModels, readRecentModels, rememberRecentModel } from '../chat/modelPopupOrder'
@@ -2660,6 +2663,17 @@ export function ModelsPage({
     }
   }
 
+  const changeModelTransport = async (name: string, next: TransportKind | null) => {
+    try {
+      await setModelTransport(provider, name, next)
+      setAllModels((await listModels()) ?? [])
+      setFeedback({ ok: true, msg: '模型协议已保存' })
+      if (currentModel === name && currentProvider === provider) await switchModel(name)
+    } catch (error) {
+      setFeedback({ ok: false, msg: friendlyIpcError(error, '保存失败') })
+    }
+  }
+
   /**
    * 行内切换模型的图像生成能力 —— 与视觉开关同构的第二类模型元数据编辑。
    *
@@ -3387,7 +3401,9 @@ export function ModelsPage({
                       const briefById = new Map<string, ProviderModelBrief>(
                         detectedModels.map(d => [d.id, d]),
                       )
-                      const infoById = new Map<string, ModelInfo>(allModels.map(m => [m.id, m]))
+                      const infoById = new Map<string, ModelInfo>(
+                        allModels.filter(m => m.provider === provider).map(m => [m.id, m]),
+                      )
                       const capsOf = (name: string): ModelCardCap[] => {
                         const brief = briefById.get(name)
                         const info = infoById.get(name)
@@ -3456,6 +3472,15 @@ export function ModelsPage({
                                 <ModelCard
                                   key={name}
                                   name={name}
+                                  protocol={
+                                    <ModelProtocolSelect
+                                      value={info?.transport}
+                                      disabled={switchingModel === name}
+                                      label={`${name} 协议`}
+                                      defaultLabel="服务商默认协议"
+                                      onChange={next => void changeModelTransport(name, next)}
+                                    />
+                                  }
                                   active={isActive}
                                   switching={switchingModel === name}
                                   favorite={favoriteIds.has(name)}
@@ -3555,6 +3580,15 @@ export function ModelsPage({
                             <ModelCard
                               key={m}
                               name={m}
+                              protocol={
+                                <ModelProtocolSelect
+                                  value={localInfo?.transport}
+                                  disabled={switchingModel === m}
+                                  label={`${m} 协议`}
+                                  defaultLabel="服务商默认协议"
+                                  onChange={next => void changeModelTransport(m, next)}
+                                />
+                              }
                               active={isActive}
                               switching={switchingModel === m}
                               favorite={favoriteIds.has(m)}

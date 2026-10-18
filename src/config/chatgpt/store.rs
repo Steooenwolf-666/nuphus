@@ -1,30 +1,9 @@
-use super::protocol::{self, LoginAttempt, Model, Tokens, API_BASE};
-use fs2::FileExt;
-use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashMap,
-    fs::File,
-    path::{Path, PathBuf},
-};
-
-#[derive(Default, Serialize, Deserialize)]
-struct Store {
-    host_id: String,
-    accounts: Vec<Account>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Account {
-    client_id: String,
-    subject: String,
-    email: String,
-    access_token: String,
-    refresh_token: String,
-    id_token: String,
-    scope: String,
-    expires_at: i64,
-}
-
+use super::protocol::{self, LoginAttempt, Model, Tokens, API_BASE, CREDENTIAL_FILE};
+#[cfg(test)]
+use crate::config::oauth_accounts::protect;
+use crate::config::oauth_accounts::{reveal, Account, LockedStore};
+use serde::Serialize;
+use std::{collections::HashMap, path::Path};
 #[derive(Serialize)]
 pub struct AccountInfo {
     pub account_id: String,
@@ -51,96 +30,10 @@ impl Account {
             logged_in: !self.access_token.is_empty(),
         }
     }
-    fn update(&mut self, tokens: Tokens) -> Result<(), String> {
-        let scope = tokens.scope.unwrap_or_else(|| self.scope.clone());
-        // Save rotated credentials even when permission was removed; subsequent
-        // requests fail closed at require_scope rather than reuse stale tokens.
-        self.scope = scope;
-        self.access_token = protect(&tokens.access_token)?;
-        if let Some(refresh) = tokens.refresh_token {
-            self.refresh_token = protect(&refresh)?;
-        }
-        if let Some(id) = tokens.id_token {
-            self.id_token = protect(&id)?;
-        }
-        self.expires_at = super::super::oauth::now_unix().saturating_add(tokens.expires_in);
-        Ok(())
-    }
-}
-
-fn protect(token: &str) -> Result<String, String> {
-    let encrypted = crate::cookies::encrypt_secret(token);
-    #[cfg(windows)]
-    if !token.is_empty() && !encrypted.starts_with("enc:") {
-        return Err("Could not protect ChatGPT credentials with Windows DPAPI".into());
-    }
-    // Unix credential files are owner-only, including on replacement.
-    Ok(encrypted)
-}
-fn reveal(token: &str) -> Result<String, String> {
-    crate::cookies::decrypt_secret(token)
-        .ok_or_else(|| "Cannot decrypt ChatGPT credentials; sign in again".into())
-}
-
-struct LockedStore {
-    _lock: File,
-    path: PathBuf,
-    data: Store,
-}
-impl LockedStore {
-    fn open(config: &Path) -> Result<Self, String> {
-        let dir = config
-            .parent()
-            .ok_or("Missing ChatGPT configuration directory")?;
-        let path = dir.join("chatgpt-accounts.json");
-        let mut options = std::fs::OpenOptions::new();
-        options.create(true).read(true).write(true).truncate(false);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let lock = options
-            .open(dir.join("chatgpt-accounts.lock"))
-            .map_err(|_| "Could not open ChatGPT credential lock")?;
-        lock.lock_exclusive()
-            .map_err(|_| "Could not lock ChatGPT credentials")?;
-        let data = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map_err(|_| "Invalid ChatGPT credential file; existing file was preserved")?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Store::default(),
-            Err(_) => return Err("Could not read ChatGPT credentials".into()),
-        };
-        Ok(Self {
-            _lock: lock,
-            path,
-            data,
-        })
-    }
-    fn save(&self) -> Result<(), String> {
-        // Enforce permissions before the shared atomic writer copies them.
-        #[cfg(unix)]
-        if self.path.exists() {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&self.path, std::fs::Permissions::from_mode(0o600))
-                .map_err(|_| "Could not protect ChatGPT credential file")?;
-        }
-        let json = serde_json::to_string_pretty(&self.data)
-            .map_err(|_| "Could not encode ChatGPT credentials")?;
-        crate::config::write_provider_config(&self.path, &json)
-            .map_err(|_| "Could not save ChatGPT credentials".into())
-    }
-    fn account_mut(&mut self, id: &str) -> Result<&mut Account, String> {
-        self.data
-            .accounts
-            .iter_mut()
-            .find(|a| a.client_id == id)
-            .ok_or_else(|| "ChatGPT account not found".into())
-    }
 }
 
 pub fn accounts(config: &Path) -> Result<Vec<AccountInfo>, String> {
-    Ok(LockedStore::open(config)?
+    Ok(LockedStore::open(config, CREDENTIAL_FILE)?
         .data
         .accounts
         .iter()
@@ -153,7 +46,7 @@ pub fn prepare_login(
     port: u16,
     account: Option<&str>,
 ) -> Result<LoginAttempt, String> {
-    let mut store = LockedStore::open(config)?;
+    let mut store = LockedStore::open(config, CREDENTIAL_FILE)?;
     if store.data.host_id.is_empty() {
         store.data.host_id = format!("urn:uuid:{}", uuid::Uuid::new_v4());
         store.save()?;
@@ -163,7 +56,7 @@ pub fn prepare_login(
     } else {
         None
     };
-    Ok(LoginAttempt::new(
+    Ok(protocol::login_attempt(
         &store.data.host_id,
         port,
         account,
@@ -178,8 +71,15 @@ pub fn finish_login(
     cancelled: &std::sync::atomic::AtomicBool,
 ) -> Result<AccountInfo, String> {
     let (client_id, code) = attempt.callback(&params)?;
+    if !client_id.starts_with("oaiapp_") {
+        return Err("Invalid ChatGPT registration ID".into());
+    }
     let (tokens, identity) = attempt.exchange(&client_id, &code)?;
-    let mut store = LockedStore::open(config)?;
+    let identity = identity.ok_or("ChatGPT requires a verified identity")?;
+    if tokens.expires_in <= 0 {
+        return Err("ChatGPT did not return a token expiry".into());
+    }
+    let mut store = LockedStore::open(config, CREDENTIAL_FILE)?;
     if cancelled.load(std::sync::atomic::Ordering::Acquire) {
         return Err("ChatGPT sign-in cancelled".into());
     }
@@ -194,7 +94,7 @@ pub fn finish_login(
         }
     }
     let mut account = Account {
-        client_id,
+        client_id: client_id.clone(),
         subject: identity.sub,
         email: identity.email.unwrap_or_default(),
         access_token: String::new(),
@@ -202,6 +102,12 @@ pub fn finish_login(
         id_token: String::new(),
         scope: String::new(),
         expires_at: 0,
+        saved_provider: store
+            .data
+            .accounts
+            .iter()
+            .find(|a| a.client_id == client_id)
+            .and_then(|a| a.saved_provider.clone()),
     };
     account.update(tokens)?;
     let info = account.info();
@@ -221,35 +127,19 @@ pub fn fresh_token(config: &Path, id: &str) -> Result<String, String> {
 fn fresh_token_with(
     config: &Path,
     id: &str,
-    refresh_tokens: impl FnOnce(&str, &str) -> Result<Tokens, String>,
+    refresh: impl FnOnce(&str, &str) -> Result<Tokens, String>,
 ) -> Result<String, String> {
-    let mut store = LockedStore::open(config)?;
-    let account = store.account_mut(id)?;
-    protocol::require_scope(&account.scope)?;
-    let access = reveal(&account.access_token)?;
-    if super::super::oauth::token_is_fresh(
-        Some(account.expires_at),
-        &access,
-        super::super::oauth::now_unix(),
-    ) {
-        return Ok(access);
-    }
-    let refresh = reveal(&account.refresh_token)?;
-    if refresh.is_empty() {
-        return Err("Sign in with ChatGPT to continue".into());
-    }
-    let tokens = refresh_tokens(&account.client_id, &refresh)?;
-    account.update(tokens)?;
-    let access = reveal(&account.access_token)?;
-    let scope = account.scope.clone();
-    store.save()?;
-    protocol::require_scope(&scope)?;
-    Ok(access)
+    crate::config::oauth_accounts::fresh_token_with(
+        config,
+        id,
+        &protocol::oauth_config("", Some(id)),
+        refresh,
+    )
 }
 
 /// Returns false when local sign-out succeeded but remote revocation was not confirmed.
 pub fn logout(config: &Path, id: &str) -> Result<bool, String> {
-    let mut store = LockedStore::open(config)?;
+    let mut store = LockedStore::open(config, CREDENTIAL_FILE)?;
     let account = store.account_mut(id)?;
     let refresh = reveal(&account.refresh_token).unwrap_or_default();
     let revoked = refresh.is_empty() || protocol::revoke(&account.client_id, &refresh);
@@ -257,8 +147,74 @@ pub fn logout(config: &Path, id: &str) -> Result<bool, String> {
     account.refresh_token.clear();
     account.id_token.clear();
     account.expires_at = 0;
+    let provider = provider_name(id);
+    store.save()?;
+    let saved = detach_provider(config, &provider)?;
+    let account = store.account_mut(id)?;
+    account.saved_provider = saved.or(account.saved_provider.take());
     store.save()?;
     Ok(revoked)
+}
+
+/** 移除已退出账号的模型及精确绑定，保留其他服务商的同名模型绑定。 */
+fn detach_provider(config: &Path, provider: &str) -> Result<Option<toml::Value>, String> {
+    let _guard = crate::config::lock_provider_config();
+    if !config.exists() {
+        return Ok(None);
+    }
+    let mut doc: toml::Value = std::fs::read_to_string(config)
+        .map_err(|_| "Could not read provider configuration")?
+        .parse()
+        .map_err(|_| "Invalid provider configuration")?;
+    let mut saved = None;
+    crate::config::normalize_provider_document(&mut doc);
+    if let Some(entries) = doc.get_mut("providers").and_then(toml::Value::as_array_mut) {
+        saved = entries
+            .iter()
+            .find(|p| p.get("name").and_then(toml::Value::as_str) == Some(provider))
+            .cloned();
+        entries.retain(|p| p.get("name").and_then(toml::Value::as_str) != Some(provider));
+    }
+    if let Some(bindings) = doc
+        .get_mut("agent_models")
+        .and_then(toml::Value::as_table_mut)
+    {
+        let keys: Vec<String> = bindings
+            .iter()
+            .filter(|(key, value)| key.ends_with("_provider") && value.as_str() == Some(provider))
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in keys {
+            bindings.remove(key.trim_end_matches("_provider"));
+            bindings.remove(&key);
+        }
+    }
+    if let Some(bindings) = doc
+        .get_mut("last_model")
+        .and_then(toml::Value::as_table_mut)
+    {
+        bindings.retain(|_, value| value.as_str() != Some(provider));
+    }
+    if let Some(caps) = doc
+        .get_mut("capabilities")
+        .and_then(toml::Value::as_table_mut)
+    {
+        let keys: Vec<String> = caps
+            .iter()
+            .filter(|(k, v)| k.ends_with("_provider") && v.as_str() == Some(provider))
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in keys {
+            caps.remove(key.trim_end_matches("_provider"));
+            caps.remove(&key);
+        }
+    }
+    crate::config::write_provider_config(
+        config,
+        &toml::to_string_pretty(&doc).map_err(|_| "Could not encode providers")?,
+    )
+    .map_err(|_| "Could not remove signed-out models")?;
+    Ok(saved)
 }
 
 pub fn provider_name(id: &str) -> String {
@@ -277,22 +233,38 @@ pub fn sync_models(config: &Path, id: &str) -> Result<Vec<Model>, String> {
     let token = fresh_token(config, id)?;
     let models = protocol::models(&token)?;
     // Recheck session after I/O so logout cannot silently reconnect a provider.
-    let store = LockedStore::open(config)?;
+    let store = LockedStore::open(config, CREDENTIAL_FILE)?;
     let account = store
         .data
         .accounts
         .iter()
         .find(|a| a.client_id == id && !a.access_token.is_empty())
         .ok_or("Sign in with ChatGPT to continue")?;
-    write_provider(config, &account.info(), &models)?;
+    write_provider_with_saved(
+        config,
+        &account.info(),
+        &models,
+        account.saved_provider.as_ref(),
+    )?;
     Ok(models)
 }
 
+#[cfg(test)]
 fn write_provider(config: &Path, account: &AccountInfo, models: &[Model]) -> Result<(), String> {
+    write_provider_with_saved(config, account, models, None)
+}
+
+fn write_provider_with_saved(
+    config: &Path,
+    account: &AccountInfo,
+    models: &[Model],
+    saved: Option<&toml::Value>,
+) -> Result<(), String> {
     let _guard = crate::config::lock_provider_config();
     let text =
         std::fs::read_to_string(config).map_err(|_| "Could not read provider configuration")?;
     let mut doc: toml::Value = text.parse().map_err(|_| "Invalid provider configuration")?;
+    crate::config::normalize_provider_document(&mut doc);
     let root = doc.as_table_mut().ok_or("Invalid provider configuration")?;
     let entries = root
         .entry("providers")
@@ -302,7 +274,8 @@ fn write_provider(config: &Path, account: &AccountInfo, models: &[Model]) -> Res
     let previous = entries
         .iter()
         .find(|p| p.get("name").and_then(|v| v.as_str()) == Some(&account.provider))
-        .cloned();
+        .cloned()
+        .or_else(|| saved.cloned());
     let mut provider = previous.unwrap_or_else(|| toml::Value::Table(Default::default()));
     let map = provider.as_table_mut().ok_or("Invalid ChatGPT provider")?;
     for (key, value) in [
@@ -317,11 +290,8 @@ fn write_provider(config: &Path, account: &AccountInfo, models: &[Model]) -> Res
     // No authorization URL or token is stored in exportable configuration.
     map.insert(
         "oauth".into(),
-        toml::Value::try_from(super::super::ProviderOAuth {
-            chatgpt_account: Some(account.account_id.clone()),
-            ..Default::default()
-        })
-        .map_err(|_| "Could not encode ChatGPT provider")?,
+        toml::Value::try_from(protocol::oauth_config("", Some(&account.account_id)))
+            .map_err(|_| "Could not encode ChatGPT provider")?,
     );
     let old_models = map
         .get("models")
@@ -341,6 +311,15 @@ fn write_provider(config: &Path, account: &AccountInfo, models: &[Model]) -> Res
                         .unwrap_or_else(|| {
                             let mut value = toml::value::Table::new();
                             value.insert("id".into(), toml::Value::String(m.slug.clone()));
+                            value.insert(
+                                "transport".into(),
+                                toml::Value::String("responses".into()),
+                            );
+                            value.insert(
+                                "responses".into(),
+                                toml::Value::try_from(super::response_options())
+                                    .expect("response options"),
+                            );
                             // No guessed context window or modality capabilities.
                             toml::Value::Table(value)
                         })
@@ -360,6 +339,65 @@ fn write_provider(config: &Path, account: &AccountInfo, models: &[Model]) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn logout_removes_provider_and_bindings_but_keeps_registration() {
+        let dir = std::env::temp_dir().join(format!("nuphus-logout-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = dir.join("中文配置.toml");
+        std::fs::write(&config, format!("model = ''\n[agent_models]\nleader='model'\nleader_provider='{}'\nworkflow='other'\nworkflow_provider='other-provider'\n", provider_name("oaiapp_logout"))).unwrap();
+        let info = AccountInfo {
+            account_id: "oaiapp_logout".into(),
+            provider: provider_name("oaiapp_logout"),
+            label: "Account".into(),
+            logged_in: true,
+        };
+        write_provider(
+            &config,
+            &info,
+            &[Model {
+                slug: "model".into(),
+                display_name: "Model".into(),
+            }],
+        )
+        .unwrap();
+        {
+            let mut store = LockedStore::open(&config, CREDENTIAL_FILE).unwrap();
+            store.data.accounts.push(Account {
+                client_id: info.account_id.clone(),
+                subject: "sub".into(),
+                email: String::new(),
+                access_token: protect("access").unwrap(),
+                refresh_token: String::new(),
+                id_token: String::new(),
+                scope: "chatgpt.tokens.use.direct".into(),
+                expires_at: i64::MAX,
+                saved_provider: None,
+            });
+            store.save().unwrap();
+        }
+        assert!(logout(&config, &info.account_id).unwrap());
+        let registry = crate::config::ModelRegistry::from_toml(config.to_str().unwrap()).unwrap();
+        assert!(
+            registry.providers.is_empty(),
+            "signed-out models must leave the provider picker"
+        );
+        let saved = accounts(&config).unwrap();
+        assert_eq!(saved.len(), 1);
+        assert!(!saved[0].logged_in);
+        let doc: toml::Value = std::fs::read_to_string(&config).unwrap().parse().unwrap();
+        assert!(doc["agent_models"].get("leader").is_none());
+        assert_eq!(
+            doc["agent_models"]["workflow_provider"].as_str(),
+            Some("other-provider")
+        );
+        assert!(LockedStore::open(&config, CREDENTIAL_FILE)
+            .unwrap()
+            .account_mut(&info.account_id)
+            .unwrap()
+            .saved_provider
+            .is_some());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
     #[test]
     fn host_is_stable_and_credentials_do_not_enter_provider_settings() {
         let dir = std::env::temp_dir().join(format!("nuphus-chatgpt-{}", uuid::Uuid::new_v4()));
@@ -398,7 +436,7 @@ mod tests {
         let p = &registry.providers[0];
         assert!(p.api_key.is_empty());
         assert_eq!(
-            p.oauth.as_ref().unwrap().chatgpt_account.as_deref(),
+            p.oauth.as_ref().unwrap().account_ref.as_deref(),
             Some("oaiapp_test")
         );
         assert!(fresh_token(&config, "oaiapp_missing").is_err());
@@ -427,7 +465,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let config = dir.join("providers.toml");
         {
-            let mut store = LockedStore::open(&config).unwrap();
+            let mut store = LockedStore::open(&config, CREDENTIAL_FILE).unwrap();
             store.data.accounts.push(Account {
                 client_id: "oaiapp_test".into(),
                 subject: "sub".into(),
@@ -437,6 +475,7 @@ mod tests {
                 id_token: String::new(),
                 scope: "chatgpt.tokens.use.direct".into(),
                 expires_at: 1,
+                saved_provider: None,
             });
             store.save().unwrap();
         }
@@ -468,7 +507,7 @@ mod tests {
         }
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         {
-            let mut store = LockedStore::open(&config).unwrap();
+            let mut store = LockedStore::open(&config, CREDENTIAL_FILE).unwrap();
             let account = store.account_mut("oaiapp_test").unwrap();
             assert_eq!(reveal(&account.refresh_token).unwrap(), "refresh-2");
             account.access_token.clear();

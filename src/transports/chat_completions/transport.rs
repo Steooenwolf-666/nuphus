@@ -1372,6 +1372,21 @@ impl ChatCompletionsTransport {
             }
         }
 
+        if matches!(
+            self.config.quirks.max_tokens_field,
+            crate::config::provider::MaxTokensField::MaxCompletionTokens
+        ) {
+            if let Some(value) = body
+                .as_object_mut()
+                .expect("request object")
+                .remove("max_tokens")
+            {
+                body["max_completion_tokens"] = value;
+            }
+        }
+        for field in self.config.quirks.forbidden_request_fields {
+            body.as_object_mut().expect("request object").remove(*field);
+        }
         body
     }
 }
@@ -2781,6 +2796,21 @@ mod salvage_tests {
 #[cfg(test)]
 mod wire_shape_tests {
     use super::*;
+
+    #[test]
+    fn declared_budget_field_and_forbidden_fields_are_applied() {
+        let mut cfg = config();
+        cfg.quirks.max_tokens_field = crate::config::provider::MaxTokensField::MaxCompletionTokens;
+        cfg.quirks.forbidden_request_fields = &["temperature"];
+        let transport = ChatCompletionsTransport::new(cfg);
+        let mut request = crate::api::MessageRequest::new("model", vec![]);
+        request.max_tokens = Some(123);
+        request.temperature = Some(0.3);
+        let body = transport.build_request_body(&request);
+        assert_eq!(body["max_completion_tokens"], 123);
+        assert!(body.get("max_tokens").is_none());
+        assert!(body.get("temperature").is_none());
+    }
 
     fn config() -> ChatCompletionsConfig {
         ChatCompletionsConfig {

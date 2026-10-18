@@ -1,36 +1,15 @@
-use base64::Engine;
-use jsonwebtoken::{decode, decode_header, jwk::JwkSet, Algorithm, DecodingKey, Validation};
+pub use crate::config::oauth_flow::{LoginAttempt, Tokens};
+use crate::config::{
+    oauth_flow::{self, get_json, http},
+    ProviderOAuth,
+};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+#[cfg(test)]
 use std::collections::HashMap;
-
 pub const API_BASE: &str = "https://api.openai.com/v1";
 const ISSUER: &str = "https://auth.openai.com";
-const AUTHORIZE: &str = "https://auth.openai.com/api/accounts/authorize";
-const TOKEN: &str = "https://auth.openai.com/api/accounts/oauth/token";
-const SCOPE: &str = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct";
 const DYNAMIC_CLIENT: &str = "dynamic_agent_client";
-
-// Do not derive Debug: these structures hold credentials or a PKCE verifier.
-pub struct LoginAttempt {
-    pub state: String,
-    nonce: String,
-    verifier: String,
-    redirect_uri: String,
-    pub client_id: String,
-    pub expected_subject: Option<String>,
-    pub authorize_url: String,
-}
-
-#[derive(Deserialize)]
-pub(super) struct Tokens {
-    pub access_token: String,
-    pub refresh_token: Option<String>,
-    pub id_token: Option<String>,
-    pub expires_in: i64,
-    pub scope: Option<String>,
-    pub token_type: String,
-}
+pub(super) const CREDENTIAL_FILE: &str = "chatgpt-accounts.json";
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Model {
@@ -38,243 +17,76 @@ pub struct Model {
     pub display_name: String,
 }
 
-#[derive(Clone, Deserialize)]
-pub(super) struct Identity {
-    pub sub: String,
-    pub email: Option<String>,
-    nonce: String,
-    iat: u64,
+/** SIWC 的服务商约束集中在此；通用 OAuth 和 transport 只读取声明。 */
+pub(super) fn oauth_config(host: &str, client: Option<&str>) -> ProviderOAuth {
+    let mut extra = std::collections::BTreeMap::from([
+        ("resource".into(), API_BASE.into()),
+        ("nonce".into(), "{{nonce}}".into()),
+        (
+            "ext_agent_host_id".into(),
+            if host.is_empty() {
+                "{{host_id}}".into()
+            } else {
+                host.into()
+            },
+        ),
+    ]);
+    if client.is_none() {
+        extra.insert("agent_name_hint".into(), "Nuphus".into());
+    }
+    ProviderOAuth {
+        account_ref: client.map(str::to_owned),
+        credential_file: CREDENTIAL_FILE.into(),
+        authorize_url: format!("{ISSUER}/api/accounts/authorize"),
+        token_url: format!("{ISSUER}/api/accounts/oauth/token"),
+        client_id: client.unwrap_or(DYNAMIC_CLIENT).into(),
+        scopes: "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct"
+            .into(),
+        use_pkce: true,
+        extra_authorize_params: extra,
+        extra_token_params: std::collections::BTreeMap::from([(
+            "resource".into(),
+            API_BASE.into(),
+        )]),
+        verify_id_token: true,
+        issuer: ISSUER.into(),
+        jwks_url: format!("{ISSUER}/.well-known/jwks.json"),
+        dynamic_client_registration: client.is_none(),
+        required_scopes: vec!["chatgpt.tokens.use.direct".into()],
+        ..Default::default()
+    }
 }
 
-fn random() -> String {
-    format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
+pub(super) fn login_attempt(
+    host: &str,
+    port: u16,
+    client: Option<&str>,
+    subject: Option<String>,
+) -> LoginAttempt {
+    LoginAttempt::new(
+        &oauth_config(host, client),
+        format!("http://127.0.0.1:{port}/auth/callback"),
+        subject,
     )
+    .expect("valid SIWC configuration")
+}
+#[cfg(test)]
+pub(super) fn require_scope(scope: &str) -> Result<(), String> {
+    oauth_flow::require_scopes(&oauth_config("", None), scope)
+}
+pub(super) fn refresh(client: &str, token: &str) -> Result<Tokens, String> {
+    oauth_flow::refresh(&oauth_config("", Some(client)), client, token)
 }
 
-impl LoginAttempt {
-    pub(super) fn new(
-        host: &str,
-        port: u16,
-        client: Option<&str>,
-        subject: Option<String>,
-    ) -> Self {
-        let state = random();
-        let nonce = random();
-        let verifier = random();
-        let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(Sha256::digest(verifier.as_bytes()));
-        let redirect_uri = format!("http://127.0.0.1:{port}/auth/callback");
-        let client_id = client.unwrap_or(DYNAMIC_CLIENT).to_string();
-        let mut url = reqwest::Url::parse(AUTHORIZE).expect("constant URL");
-        url.query_pairs_mut().extend_pairs([
-            ("response_type", "code"),
-            ("client_id", &client_id),
-            ("redirect_uri", &redirect_uri),
-            ("scope", SCOPE),
-            ("resource", API_BASE),
-            ("state", &state),
-            ("nonce", &nonce),
-            ("code_challenge", &challenge),
-            ("code_challenge_method", "S256"),
-            ("ext_agent_host_id", host),
-        ]);
-        if client.is_none() {
-            url.query_pairs_mut()
-                .append_pair("agent_name_hint", "Nuphus");
-        }
-        // No ID-token hint in browser-facing URLs. Returning users select their
-        // account and we still verify that sub matches the saved registration.
-        Self {
-            state,
-            nonce,
-            verifier,
-            redirect_uri,
-            client_id,
-            expected_subject: subject,
-            authorize_url: url.to_string(),
-        }
-    }
-
-    pub(super) fn callback(
-        &self,
-        params: &HashMap<String, String>,
-    ) -> Result<(String, String), String> {
-        if params.get("state") != Some(&self.state) {
-            return Err("ChatGPT callback state mismatch".into());
-        }
-        if params.contains_key("error") {
-            return Err("ChatGPT authorization was declined; please try signing in again".into());
-        }
-        let client = params
-            .get("client_id")
-            .map(String::as_str)
-            .unwrap_or(&self.client_id);
-        if client == DYNAMIC_CLIENT || !client.starts_with("oaiapp_") {
-            return Err("ChatGPT registration did not return an issued client ID".into());
-        }
-        if self.client_id != DYNAMIC_CLIENT && client != self.client_id {
-            return Err("ChatGPT callback changed the selected registration".into());
-        }
-        let code = params
-            .get("code")
-            .filter(|v| !v.is_empty())
-            .ok_or("ChatGPT callback is missing an authorization code")?;
-        Ok((client.to_string(), code.clone()))
-    }
-
-    pub(super) fn exchange(
-        &self,
-        client_id: &str,
-        code: &str,
-    ) -> Result<(Tokens, Identity), String> {
-        let http = http()?;
-        let tokens = token_request(
-            &http,
-            &[
-                ("grant_type", "authorization_code"),
-                ("client_id", client_id),
-                ("code", code),
-                ("code_verifier", &self.verifier),
-                ("redirect_uri", &self.redirect_uri),
-                ("resource", API_BASE),
-            ],
-        )?;
-        require_scope(tokens.scope.as_deref().unwrap_or(""))?;
-        let id_token = tokens
-            .id_token
-            .as_deref()
-            .ok_or("ChatGPT did not return an ID token")?;
-        let jwks: JwkSet = get_json(&http, &format!("{ISSUER}/.well-known/jwks.json"), None)?;
-        let identity = verify_identity(id_token, &jwks, client_id, &self.nonce)?;
-        if self
-            .expected_subject
-            .as_ref()
-            .is_some_and(|sub| *sub != identity.sub)
-        {
-            return Err("ChatGPT identity does not match the selected account".into());
-        }
-        Ok((tokens, identity))
-    }
-}
-
-pub(super) fn verify_identity(
+#[cfg(test)]
+fn verify_identity(
     token: &str,
-    jwks: &JwkSet,
+    jwks: &jsonwebtoken::jwk::JwkSet,
     client: &str,
     nonce: &str,
-) -> Result<Identity, String> {
-    let header = decode_header(token).map_err(|_| "Invalid ChatGPT ID token")?;
-    if header.alg != Algorithm::RS256 {
-        return Err("Unsupported ChatGPT ID-token signing algorithm".into());
-    }
-    let key = header
-        .kid
-        .as_deref()
-        .and_then(|kid| jwks.find(kid))
-        .ok_or("Unknown ChatGPT signing key")?;
-    let key = DecodingKey::from_jwk(key).map_err(|_| "Invalid ChatGPT signing key")?;
-    let mut validation = Validation::new(Algorithm::RS256);
-    validation.set_issuer(&[ISSUER]);
-    validation.set_audience(&[client]);
-    validation.set_required_spec_claims(&["sub", "exp", "iat", "iss", "aud"]);
-    validation.leeway = 5;
-    let identity = decode::<Identity>(token, &key, &validation)
-        .map_err(|_| "ChatGPT ID-token signature or claims validation failed")?
-        .claims;
-    if identity.sub.is_empty()
-        || identity.nonce != nonce
-        || identity.iat > super::super::oauth::now_unix() as u64 + 5
-    {
-        return Err("ChatGPT ID-token subject or nonce mismatch".into());
-    }
-    Ok(identity)
+) -> Result<oauth_flow::Identity, String> {
+    oauth_flow::verify_identity(token, jwks, ISSUER, client, nonce)
 }
-
-pub(super) fn require_scope(scope: &str) -> Result<(), String> {
-    if scope
-        .split_whitespace()
-        .any(|s| s == "chatgpt.tokens.use.direct")
-    {
-        Ok(())
-    } else {
-        Err("ChatGPT plan usage was not granted. Sign in again and enable plan usage.".into())
-    }
-}
-
-pub(super) fn http() -> Result<reqwest::blocking::Client, String> {
-    reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|_| "Could not create ChatGPT HTTP client".into())
-}
-
-fn token_request(
-    http: &reqwest::blocking::Client,
-    form: &[(&str, &str)],
-) -> Result<Tokens, String> {
-    let response = http
-        .post(TOKEN)
-        .form(form)
-        .send()
-        .map_err(|_| "ChatGPT token request failed; check your connection")?;
-    if !response.status().is_success() {
-        // Never echo arbitrary error bodies (which may contain credentials).
-        return Err(format!(
-            "ChatGPT token request failed (HTTP {}). Sign in again if authorization expired.",
-            response.status().as_u16()
-        ));
-    }
-    let tokens: Tokens = response
-        .json()
-        .map_err(|_| "Invalid ChatGPT token response")?;
-    if tokens.access_token.is_empty()
-        || tokens.expires_in <= 0
-        || !tokens.token_type.eq_ignore_ascii_case("bearer")
-    {
-        return Err("Invalid ChatGPT token credentials or expiry".into());
-    }
-    Ok(tokens)
-}
-
-pub(super) fn refresh(client: &str, token: &str) -> Result<Tokens, String> {
-    token_request(
-        &http()?,
-        &[
-            ("grant_type", "refresh_token"),
-            ("client_id", client),
-            ("refresh_token", token),
-            ("resource", API_BASE),
-        ],
-    )
-}
-
-fn get_json<T: serde::de::DeserializeOwned>(
-    http: &reqwest::blocking::Client,
-    url: &str,
-    token: Option<&str>,
-) -> Result<T, String> {
-    let mut req = http.get(url);
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
-    let response = req
-        .send()
-        .map_err(|_| "ChatGPT request failed; check your connection")?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "ChatGPT request failed (HTTP {})",
-            response.status().as_u16()
-        ));
-    }
-    response
-        .json()
-        .map_err(|_| "Invalid ChatGPT response".into())
-}
-
 pub(super) fn models(token: &str) -> Result<Vec<Model>, String> {
     let value: serde_json::Value = get_json(&http()?, &format!("{API_BASE}/models"), Some(token))?;
     parse_models(&value)
@@ -335,9 +147,11 @@ pub(super) fn revoke(client: &str, refresh: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+    use jsonwebtoken::{jwk::JwkSet, Algorithm};
     #[test]
     fn authorization_and_callback_bind_registration() {
-        let attempt = LoginAttempt::new("urn:uuid:host", 54321, None, None);
+        let attempt = login_attempt("urn:uuid:host", 54321, None, None);
         let url = reqwest::Url::parse(&attempt.authorize_url).unwrap();
         let query: HashMap<_, _> = url.query_pairs().into_owned().collect();
         assert_eq!(query["client_id"], DYNAMIC_CLIENT);
@@ -355,8 +169,7 @@ mod tests {
         assert_eq!(attempt.callback(&callback).unwrap().0, "oaiapp_a");
         callback.insert("state".into(), "forged".into());
         assert!(attempt.callback(&callback).is_err());
-        let returning =
-            LoginAttempt::new("urn:uuid:host", 54322, Some("oaiapp_b"), Some("sub".into()));
+        let returning = login_attempt("urn:uuid:host", 54322, Some("oaiapp_b"), Some("sub".into()));
         assert!(!returning.authorize_url.contains("agent_name_hint"));
         callback.insert("state".into(), returning.state.clone());
         assert!(returning.callback(&callback).is_err());

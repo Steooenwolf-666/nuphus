@@ -24,25 +24,23 @@ use nuphus::agent::events::{EventEmitter, NuphusEvent};
 use nuphus::config::registry::ProviderRegistry;
 use tauri::{Manager, State};
 
-pub(crate) fn chatgpt_segment(name: &str) -> bool {
-    get_config_path()
-        .and_then(|p| nuphus::config::ModelRegistry::from_toml(&p.to_string_lossy()).ok())
-        .is_some_and(|r| {
-            r.providers.iter().any(|p| {
-                p.name == name
-                    && p.oauth
-                        .as_ref()
-                        .is_some_and(|o| o.chatgpt_account.is_some())
-            })
-        })
+pub(crate) fn oauth_segment(name: &str) -> bool {
+    get_config_path().is_some_and(|p| nuphus::config::auth_state::provider_auth(&p, name).has_oauth)
 }
 
-fn chatgpt_entry(entry: &toml::Value) -> bool {
-    entry
-        .get("oauth")
-        .and_then(|o| o.get("chatgpt_account"))
-        .and_then(|v| v.as_str())
-        .is_some()
+fn authentication_ready(provider: &str, has_key: bool) -> bool {
+    let auth = get_config_path()
+        .map(|path| nuphus::config::auth_state::provider_auth(&path, provider))
+        .unwrap_or_default();
+    if auth.oauth_configured {
+        auth.has_oauth
+    } else {
+        has_key
+    }
+}
+
+fn oauth_entry(entry: &toml::Value) -> bool {
+    nuphus::config::auth_state::oauth_entry(entry)
 }
 
 /// OpenRouter aggregate cache path — next to providers.toml (config dir).
@@ -102,7 +100,7 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
                         .any(|m| m.get("id").and_then(|i| i.as_str()) == Some(model))
                 })
                 .unwrap_or(false);
-            if has_model && (!k.is_empty() || chatgpt_entry(entry)) {
+            if has_model && (!k.is_empty() || oauth_entry(entry)) {
                 let hit = (
                     name.to_string(),
                     model.to_string(),
@@ -146,7 +144,7 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
                 let k_raw = entry.get("api_key").and_then(|v| v.as_str()).unwrap_or("");
                 let k = nuphus::cookies::decrypt_secret(k_raw).unwrap_or_default();
                 let u = entry.get("base_url").and_then(|v| v.as_str()).unwrap_or("");
-                if (!k.is_empty() || chatgpt_entry(entry)) && !name.is_empty() {
+                if (!k.is_empty() || oauth_entry(entry)) && !name.is_empty() {
                     let model = entry
                         .get("models")
                         .and_then(|arr| arr.as_array())
@@ -154,7 +152,7 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
                         .and_then(|m| m.get("id").and_then(|id| id.as_str()))
                         .unwrap_or("");
                     if !model.is_empty() {
-                        p = if chatgpt_entry(entry) {
+                        p = if oauth_entry(entry) {
                             entry["name"].as_str().unwrap_or(name)
                         } else {
                             name
@@ -174,7 +172,7 @@ pub fn load_llm_config_from_disk(state: &crate::state::AppState) {
         }
     };
 
-    if (api_key.is_empty() && !chatgpt_segment(&provider_name)) || model_id.is_empty() {
+    if (api_key.is_empty() && !oauth_segment(&provider_name)) || model_id.is_empty() {
         return;
     }
 
@@ -664,13 +662,21 @@ pub async fn switch_model_impl<R: tauri::Runtime>(
     mode: Option<String>,
 ) -> Result<String, String> {
     // Read the target provider's stored API key from config.toml.
+    if get_config_path().is_some_and(|path| {
+        let auth = nuphus::config::auth_state::provider_auth(&path, &provider);
+        auth.oauth_configured && !auth.has_oauth
+    }) {
+        return Err("请先完成该账号的 OAuth 授权登录".into());
+    }
     //
     // 自定义中转站允许无 key 切换（Ollama / llama-swap / 无鉴权网关：地址自己填，
     // 本就不需要鉴权）—— 空串表示「不携带鉴权头」。前提是配置段已存在，否则切换会
     // 「成功」但请求无处可发；官方远程服务商保持原强制校验，避免空鉴权头串台。
     let api_key = match read_provider_api_key_from_config_toml(&provider) {
         Some(k) => k,
-        None if is_custom_segment_name(&provider) && provider_segment_exists(&provider) => {
+        None if oauth_segment(&provider)
+            || (is_custom_segment_name(&provider) && provider_segment_exists(&provider)) =>
+        {
             String::new()
         }
         None => {
@@ -1328,7 +1334,7 @@ pub fn get_current_config(state: State<'_, AppState>) -> Result<serde_json::Valu
         if let Some(cfg) = guard.llm_config.as_ref() {
             return Ok(serde_json::json!({
                 "api_key": &cfg.api_key,
-                "has_key": !cfg.api_key.is_empty() || chatgpt_segment(&cfg.provider),
+                "has_key": !cfg.api_key.is_empty() || oauth_segment(&cfg.provider),
                 "model": cfg.model,
                 "provider": cfg.provider,
                 "base_url": cfg.base_url,
@@ -1349,7 +1355,7 @@ pub fn get_current_config(state: State<'_, AppState>) -> Result<serde_json::Valu
                     if model.id == current_model {
                         return Ok(serde_json::json!({
                             "api_key": &provider.api_key,
-                            "has_key": !provider.api_key.is_empty() || provider.oauth.as_ref().is_some_and(|o| o.chatgpt_account.is_some()),
+                            "has_key": !provider.api_key.is_empty() || provider.oauth.as_ref().is_some_and(|o| o.has_credentials()),
                             "model": current_model,
                             "provider": provider.name,
                             "base_url": provider.base_url,
@@ -1374,7 +1380,7 @@ pub fn get_current_config(state: State<'_, AppState>) -> Result<serde_json::Valu
     match guard.llm_config.as_ref() {
         Some(cfg) => Ok(serde_json::json!({
             "api_key": &cfg.api_key,
-            "has_key": !cfg.api_key.is_empty() || chatgpt_segment(&cfg.provider),
+            "has_key": !cfg.api_key.is_empty() || oauth_segment(&cfg.provider),
             "model": cfg.model,
             "provider": cfg.provider,
             "base_url": cfg.base_url,
@@ -1408,8 +1414,7 @@ pub fn is_llm_configured(state: State<'_, AppState>) -> Result<bool, String> {
                                     entry.get("api_key").and_then(|k| k.as_str()).unwrap_or("");
                                 let base_url =
                                     entry.get("base_url").and_then(|u| u.as_str()).unwrap_or("");
-                                if (!api_key.is_empty() || chatgpt_entry(entry)) && !name.is_empty()
-                                {
+                                if (!api_key.is_empty() || oauth_entry(entry)) && !name.is_empty() {
                                     let model_id = entry
                                         .get("models")
                                         .and_then(|m| m.as_array())
@@ -1423,7 +1428,7 @@ pub fn is_llm_configured(state: State<'_, AppState>) -> Result<bool, String> {
                                         guard.llm_config = Some(LlamaConfig {
                                             api_key: api_key.to_string(),
                                             model: model_id.to_string(),
-                                            provider: if chatgpt_entry(entry) {
+                                            provider: if oauth_entry(entry) {
                                                 name
                                             } else {
                                                 provider_type
@@ -1460,14 +1465,18 @@ pub fn is_llm_configured(state: State<'_, AppState>) -> Result<bool, String> {
         // Re-acquire lock
         let guard = state.runtime.lock().map_err(|e| e.to_string())?;
         match guard.llm_config.as_ref() {
-            Some(cfg) => Ok((!cfg.api_key.is_empty() && cfg.api_key.len() >= 10)
-                || chatgpt_segment(&cfg.provider)),
+            Some(cfg) => Ok(authentication_ready(
+                &cfg.provider,
+                !cfg.api_key.is_empty() && cfg.api_key.len() >= 10,
+            )),
             None => Ok(false),
         }
     } else {
         match guard.llm_config.as_ref() {
-            Some(cfg) => Ok((!cfg.api_key.is_empty() && cfg.api_key.len() >= 10)
-                || chatgpt_segment(&cfg.provider)),
+            Some(cfg) => Ok(authentication_ready(
+                &cfg.provider,
+                !cfg.api_key.is_empty() && cfg.api_key.len() >= 10,
+            )),
             None => Ok(false),
         }
     }
@@ -1569,6 +1578,7 @@ pub fn list_models(_state: State<'_, AppState>) -> Result<Vec<nuphus::api::Model
             };
             models.push(nuphus::api::ModelInfo {
                 id: model.id.clone(),
+                transport: model.transport,
                 provider: provider.name.clone(),
                 alias: model.alias.clone(),
                 supports_streaming: model.supports_streaming,
@@ -1626,6 +1636,17 @@ pub fn add_provider_model(provider: String, model_id: String) -> Result<(), Stri
         get_config_path().ok_or_else(|| "无法定位 config.toml 配置路径".to_string())?;
     let provider_type = provider_kind_for_segment(&provider);
     add_provider_model_entry(&config_path, &provider, provider_type.as_str(), &model_id).map(|_| ())
+}
+
+/** 协议覆盖写入精确的 provider/model 条目，None 恢复服务商默认值。 */
+#[tauri::command(async)]
+pub fn set_model_transport(
+    provider: String,
+    model: String,
+    transport: Option<nuphus::config::provider::TransportKind>,
+) -> Result<(), String> {
+    let path = get_config_path().ok_or("Provider configuration not found")?;
+    nuphus::config::model::set_model_transport(&path, &provider, &model, transport)
 }
 
 /// 清空某服务商的模型列表（config.toml `[[providers]].models` → []）。

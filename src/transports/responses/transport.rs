@@ -61,7 +61,13 @@ impl ResponsesTransport {
         // Responses API 输出 token 预算参数（官方名 max_output_tokens；若接线
         // 真机校验与官方 spec 有出入，以 API 实测为准——见交付差异报告）。
         if let Some(max_tokens) = request.max_tokens {
-            body["max_output_tokens"] = serde_json::json!(max_tokens);
+            let field = match self.config.quirks.max_tokens_field {
+                crate::config::provider::MaxTokensField::MaxTokens => "max_output_tokens",
+                crate::config::provider::MaxTokensField::MaxCompletionTokens => {
+                    "max_completion_tokens"
+                }
+            };
+            body[field] = serde_json::json!(max_tokens);
         }
         if let Some(tools) = &request.tools {
             body["tools"] =
@@ -74,50 +80,24 @@ impl ResponsesTransport {
                 body["reasoning"] = serde_json::json!({ "effort": effort });
             }
         }
-        if self.config.chatgpt_session.is_some() {
-            body["store"] = Value::Bool(false);
-            body.as_object_mut().expect("object").remove("temperature");
-            body.as_object_mut()
-                .expect("object")
-                .remove("max_output_tokens");
-            // Preserve screenshots in the subscription route.
-            let mut input = Vec::new();
-            let mut system_only = request.clone();
-            system_only.messages.clear();
-            for mut item in Self::build_input(&system_only) {
+        if let Some(store) = self.config.options.store {
+            body["store"] = Value::Bool(store);
+        }
+        for item in body["input"].as_array_mut().expect("input array") {
+            if self.config.options.developer_role && item["role"] == "system" {
                 item["role"] = Value::String("developer".into());
-                input.push(item);
             }
-            for message in &request.messages {
-                if message["role"] == "user" {
-                    if let Some(parts) = message["content"].as_array() {
-                        let content: Vec<Value> = parts.iter().filter_map(|p| match p["type"].as_str() {
-                            Some("text") => Some(serde_json::json!({"type":"input_text", "text":p["text"]})),
-                            Some("image_url") => {
-                                let mut image = serde_json::json!({"type":"input_image", "image_url":p["image_url"]["url"]});
-                                if let Some(detail) = p["image_url"].get("detail") { image["detail"] = detail.clone(); }
-                                Some(image)
-                            }
-                            _ => None,
-                        }).collect();
-                        input.push(serde_json::json!({"role":"user", "content":content}));
-                        continue;
-                    }
-                }
-                for mut item in Self::convert_message(message) {
-                    if item["role"] == "system" {
-                        item["role"] = Value::String("developer".into());
-                    }
-                    if item["type"] == "function_call" {
-                        item["namespace"] = Value::String("nuphus".into());
-                    }
-                    input.push(item);
+            if item["type"] == "function_call" {
+                if let Some(namespace) = &self.config.options.tool_namespace {
+                    item["namespace"] = Value::String(namespace.clone());
                 }
             }
-            body["input"] = Value::Array(input);
+        }
+        if let Some(namespace) = &self.config.options.tool_namespace {
             if let Some(tools) = request.tools.as_ref().filter(|t| !t.is_empty()) {
                 body["tools"] = serde_json::json!([{
-                    "type":"namespace", "name":"nuphus", "description":"Nuphus local tools",
+                    "type":"namespace", "name":namespace,
+                    "description": format!("Tools provided by {namespace}"),
                     "tools": tools.iter().map(|t| {
                         let mut value = Self::convert_tool_def(t);
                         value["strict"] = Value::Bool(false);
@@ -128,6 +108,22 @@ impl ResponsesTransport {
                 body.as_object_mut().expect("object").remove("tools");
             }
         }
+        for field in self
+            .config
+            .quirks
+            .forbidden_request_fields
+            .iter()
+            .copied()
+            .chain(
+                self.config
+                    .options
+                    .forbidden_fields
+                    .iter()
+                    .map(String::as_str),
+            )
+        {
+            body.as_object_mut().expect("object").remove(field);
+        }
         body
     }
 
@@ -135,11 +131,11 @@ impl ResponsesTransport {
         let events =
             ResponsesStreamParser::with_cache_hit_field(self.config.quirks.cache_hit_field)
                 .push_sse_text(sse)?;
-        if self.config.chatgpt_session.is_some()
+        if self.config.options.require_completed
             && !events.iter().any(|e| matches!(e, StreamEvent::Done))
         {
             return Err(NuphusError::llm(
-                "ChatGPT stream ended without response.completed",
+                "Responses stream ended without response.completed",
             ));
         }
         Ok(events)
@@ -197,6 +193,20 @@ impl ResponsesTransport {
     fn convert_message(msg: &Value) -> Vec<Value> {
         let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
         let content = msg.get("content").unwrap_or(&Value::Null);
+        if role == "user" {
+            if let Some(parts) = content.as_array() {
+                let content: Vec<Value> = parts.iter().filter_map(|p| match p["type"].as_str() {
+                    Some("text") => Some(serde_json::json!({"type":"input_text", "text":p["text"]})),
+                    Some("image_url") => {
+                        let mut image = serde_json::json!({"type":"input_image", "image_url":p["image_url"]["url"]});
+                        if let Some(detail) = p["image_url"].get("detail") { image["detail"] = detail.clone(); }
+                        Some(image)
+                    }
+                    _ => None,
+                }).collect();
+                return vec![serde_json::json!({"role":"user", "content":content})];
+            }
+        }
         match role {
             // 工具结果 → function_call_output（官方 call_id 关联）。
             "tool" => {
@@ -291,14 +301,12 @@ impl ResponsesTransport {
     /// - HTTP 4xx/5xx → LLMError::ApiError{status, body}（5xx/429 也重试一次）；
     /// - 取消标志在读取前/读取间隙检查 → LLMError::Cancelled。
     async fn send_sse(&self, body: &Value, cancel_flag: Option<&AtomicBool>) -> Result<String> {
-        let token = if let Some(session) = &self.config.chatgpt_session {
-            let session = session.clone();
-            tokio::task::spawn_blocking(move || {
-                crate::config::chatgpt::fresh_token(&session.config_path, &session.account_id)
-            })
-            .await
-            .map_err(|_| NuphusError::llm("ChatGPT credential task failed"))?
-            .map_err(NuphusError::llm)?
+        let token = if let Some(source) = &self.config.credentials {
+            let source = source.clone();
+            tokio::task::spawn_blocking(move || source.resolve())
+                .await
+                .map_err(|_| NuphusError::llm("OAuth credential task failed"))?
+                .map_err(NuphusError::llm)?
         } else {
             self.config.api_key.clone()
         };
@@ -490,7 +498,8 @@ mod tests {
             provider_kind: Some(crate::api::ProviderKind::OpenAI),
             quirks: ProviderQuirks::default(),
             reasoning_effort: None,
-            chatgpt_session: None,
+            credentials: None,
+            options: Default::default(),
         }
     }
 
@@ -606,12 +615,15 @@ mod tests {
         );
     }
     #[test]
-    fn chatgpt_request_preserves_screenshots_and_tools_without_unsupported_fields() {
+    fn request_options_preserve_screenshots_and_namespace_tools_independently_of_auth() {
         let mut cfg = config();
-        cfg.chatgpt_session = Some(crate::config::chatgpt::SessionRef {
-            config_path: "unused".into(),
-            account_id: "oaiapp_test".into(),
-        });
+        cfg.options = super::super::ResponseOptions {
+            store: Some(false),
+            developer_role: true,
+            tool_namespace: Some("nuphus".into()),
+            require_completed: true,
+            forbidden_fields: vec!["temperature".into(), "max_output_tokens".into()],
+        };
         let transport = ResponsesTransport::new(cfg);
         let mut request = MessageRequest::new("model", vec![
             serde_json::json!({"role":"user", "content":[
@@ -641,6 +653,9 @@ mod tests {
         assert_eq!(body["input"][2]["namespace"], "nuphus");
         assert_eq!(body["input"][3]["call_id"], "call_1");
         assert_eq!(body["tools"][0]["type"], "namespace");
+        assert!(body["tools"][0]["description"]
+            .as_str()
+            .is_some_and(|description| !description.is_empty()));
         assert_eq!(body["tools"][0]["tools"][0]["name"], "inspect");
         assert_eq!(body["tools"][0]["tools"][0]["strict"], false);
         assert!(transport
@@ -653,5 +668,18 @@ mod tests {
             .parse_response("event: response.completed\ndata: {\"response\":{}}\n\n")
             .is_ok());
         assert!(transport.parse_response("event: response.failed\ndata: {\"response\":{\"error\":{\"code\":\"subscription_sharing_usage_limit_exceeded\",\"message\":\"Limit reached\"}}}\n\n").is_err());
+    }
+
+    #[test]
+    fn generic_quirks_apply_without_an_oauth_source() {
+        let mut cfg = config();
+        cfg.quirks.forbidden_request_fields = &["temperature"];
+        let mut request = MessageRequest::new("model", vec![]);
+        request.max_tokens = Some(321);
+        request.temperature = Some(0.2);
+        let body = ResponsesTransport::new(cfg).build_request_body(&request);
+        assert_eq!(body["max_output_tokens"], 321);
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("store").is_none());
     }
 }

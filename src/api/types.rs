@@ -105,6 +105,7 @@ impl MessageRequest {
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ModelInfo {
     pub id: String,
+    pub transport: Option<crate::config::provider::TransportKind>,
     pub provider: String,
     pub alias: Vec<String>,
     pub supports_streaming: bool,

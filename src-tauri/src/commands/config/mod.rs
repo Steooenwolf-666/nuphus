@@ -18,6 +18,7 @@ pub mod laya;
 pub mod llm;
 pub(crate) mod model_metadata;
 pub mod oauth;
+mod oauth_callback;
 pub mod preferences;
 pub mod relation;
 pub mod team;

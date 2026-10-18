@@ -247,6 +247,7 @@ fn main() {
             commands::set_workflow_enhanced_mode,
             commands::switch_model,
             commands::set_model_context_window,
+            commands::set_model_transport,
             commands::set_relation,
             commands::get_agent_models,
             commands::get_effective_model,
@@ -737,7 +738,7 @@ fn main() {
                 let llm_config = state.runtime.lock()
                     .ok()
                     .and_then(|g| g.llm_config.clone())
-                    .filter(|c| !c.model.is_empty() && (!c.api_key.is_empty() || commands::config::llm::chatgpt_segment(&c.provider)));
+                    .filter(|c| !c.model.is_empty() && (!c.api_key.is_empty() || commands::config::llm::oauth_segment(&c.provider)));
 
                 if let Some(cfg) = llm_config {
                     let registry = nuphus::config::ModelRegistry::from_single(
@@ -748,7 +749,7 @@ fn main() {
                         cfg.reasoning_effort.clone(),
                     );
                     let factory = nuphus::llm::ClientFactory::new(registry);
-                    let client = if commands::config::llm::chatgpt_segment(&cfg.provider) {
+                    let client = if commands::config::llm::oauth_segment(&cfg.provider) {
                         nuphus::llm::ClientFactory::live().create_client_for(&cfg.provider, &cfg.model)
                     } else {
                         factory.create_main_client()

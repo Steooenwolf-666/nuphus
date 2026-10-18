@@ -100,6 +100,21 @@ pub enum MaxTokensField {
     MaxCompletionTokens,
 }
 
+/** Responses 请求约束独立于认证来源，API Key 和 OAuth 使用同一个编码器。 */
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ResponseOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    #[serde(default)]
+    pub developer_role: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_namespace: Option<String>,
+    #[serde(default)]
+    pub require_completed: bool,
+    #[serde(default)]
+    pub forbidden_fields: Vec<String>,
+}
+
 /// Per-Provider protocol quirks (sanitizers, headers, forbidden fields).
 ///
 /// Replaces the string branches currently living in

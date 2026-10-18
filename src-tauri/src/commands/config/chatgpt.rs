@@ -1,10 +1,7 @@
 //! Desktop-only SIWC commands. Tokens, PKCE and nonce never cross IPC.
 use nuphus::config::chatgpt::{self, AccountInfo, Model};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{
-    collections::HashMap,
-    sync::{Arc, OnceLock},
-};
+use std::sync::OnceLock;
 use tokio::sync::{Mutex, Notify};
 static LOGIN_CANCELLED: AtomicBool = AtomicBool::new(false);
 
@@ -55,70 +52,18 @@ pub async fn chatgpt_login(account_id: Option<String>) -> Result<AccountInfo, St
     })
     .await
     .map_err(|_| "Could not prepare ChatGPT sign-in")??;
-    let state = attempt.state.clone();
-    let (tx, rx) = tokio::sync::oneshot::channel::<HashMap<String, String>>();
-    let sender = Arc::new(std::sync::Mutex::new(Some(tx)));
-    let router = axum::Router::new().route(
-        "/auth/callback",
-        axum::routing::get(
-            move |axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>| {
-                let sender = sender.clone();
-                let state = state.clone();
-                async move {
-                    if params.get("state") != Some(&state) {
-                        return (
-                            axum::http::StatusCode::BAD_REQUEST,
-                            "Invalid authorization callback",
-                        );
-                    }
-                    if let Some(tx) = sender.lock().ok().and_then(|mut s| s.take()) {
-                        let _ = tx.send(params);
-                        (
-                            axum::http::StatusCode::OK,
-                            "Return to Nuphus to complete sign-in.",
-                        )
-                    } else {
-                        (
-                            axum::http::StatusCode::CONFLICT,
-                            "This callback has already been used.",
-                        )
-                    }
-                }
+    let callback =
+        super::oauth_callback::Callback::start(listener, "/auth/callback", attempt.state.clone());
+    crate::commands::external::open_external(attempt.authorize_url.clone())
+        .map_err(|_| "Could not open your browser for ChatGPT sign-in")?;
+    let params = callback
+        .wait(
+            async {
+                cancelled.await;
             },
-        ),
-    );
-    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let mut server = tokio::spawn(async move {
-        axum::serve(listener, router)
-            .with_graceful_shutdown(async {
-                let _ = shutdown_rx.await;
-            })
-            .await
-    });
-    let opened = crate::commands::external::open_external(attempt.authorize_url.clone());
-    let callback = if opened.is_err() {
-        Err("Could not open your browser for ChatGPT sign-in".to_string())
-    } else {
-        tokio::select! {
-            result = tokio::time::timeout(std::time::Duration::from_secs(300), rx) => {
-                match result {
-                    Ok(Ok(params)) => Ok(params),
-                    Ok(Err(_)) => Err("ChatGPT callback was interrupted".to_string()),
-                    Err(_) => Err("ChatGPT sign-in timed out".to_string()),
-                }
-            }
-            _ = &mut cancelled => Err("ChatGPT sign-in cancelled".to_string()),
-        }
-    };
-    let _ = shutdown_tx.send(());
-    // Do not let an idle loopback connection hold sign-in open indefinitely.
-    if tokio::time::timeout(std::time::Duration::from_secs(1), &mut server)
-        .await
-        .is_err()
-    {
-        server.abort();
-    }
-    let params = callback?;
+            std::time::Duration::from_secs(300),
+        )
+        .await?;
     tokio::task::spawn_blocking(move || {
         chatgpt::finish_login(&config, attempt, params, &LOGIN_CANCELLED)
     })
@@ -135,13 +80,30 @@ pub async fn chatgpt_models(account_id: String) -> Result<Vec<Model>, String> {
         .map_err(|_| "ChatGPT model synchronization task failed")?
 }
 
+/** 退出后保留未配置的当前连接，避免下一次发送自动选择另一个计费连接。 */
 #[tauri::command]
-pub async fn chatgpt_logout(account_id: String) -> Result<bool, String> {
+pub async fn chatgpt_logout(
+    state: tauri::State<'_, crate::state::AppState>,
+    account_id: String,
+) -> Result<bool, String> {
     let _guard = login_guard()
         .try_lock()
         .map_err(|_| "Cancel the active ChatGPT sign-in before signing out")?;
     let config = path()?;
-    tokio::task::spawn_blocking(move || chatgpt::logout(&config, &account_id))
+    let provider = chatgpt::accounts(&config)?
+        .into_iter()
+        .find(|a| a.account_id == account_id)
+        .map(|a| a.provider);
+    let revoked = tokio::task::spawn_blocking(move || chatgpt::logout(&config, &account_id))
         .await
-        .map_err(|_| "ChatGPT sign-out task failed")?
+        .map_err(|_| "ChatGPT sign-out task failed")??;
+    if let Ok(mut runtime) = state.runtime.lock() {
+        if let Some(current) = runtime.llm_config.as_mut() {
+            if Some(&current.provider) == provider.as_ref() {
+                current.api_key.clear();
+                current.model.clear();
+            }
+        }
+    }
+    Ok(revoked)
 }

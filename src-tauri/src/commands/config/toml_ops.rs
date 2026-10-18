@@ -1348,7 +1348,20 @@ fn write_oauth_config(
         );
     }
     if let Some(tokens) = existing_tokens {
-        for key in ["access_token", "refresh_token", "expires_at"] {
+        for key in [
+            "access_token",
+            "refresh_token",
+            "expires_at",
+            "extra_authorize_params",
+            "extra_token_params",
+            "verify_id_token",
+            "jwks_url",
+            "issuer",
+            "dynamic_client_registration",
+            "required_scopes",
+            "account_ref",
+            "credential_file",
+        ] {
             if let Some(v) = tokens.get(key) {
                 table.insert(key.to_string(), v.clone());
             }
@@ -1999,10 +2012,7 @@ pub fn list_configured_providers() -> Vec<String> {
             .providers
             .iter()
             .filter(|p| {
-                !p.api_key.is_empty()
-                    || p.oauth
-                        .as_ref()
-                        .is_some_and(|o| o.chatgpt_account.is_some())
+                !p.api_key.is_empty() || p.oauth.as_ref().is_some_and(|o| o.has_credentials())
             })
             .map(|p| p.name.clone())
             .collect(),

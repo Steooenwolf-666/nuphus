@@ -138,6 +138,9 @@ export function ChatGPTSettings({
       const revoked = await invoke<boolean>('chatgpt_logout', { accountId: account.account_id })
       setAccounts(await invoke<Account[]>('chatgpt_accounts'))
       setModels([])
+      setActive('')
+      onModelsChanged?.((await invoke<ModelInfo[]>('list_models')) ?? [])
+      onModelChanged?.()
       setNotice(
         revoked
           ? zh
