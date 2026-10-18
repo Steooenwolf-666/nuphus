@@ -2040,6 +2040,7 @@ async fn get_model_config<R: tauri::Runtime>(
                         })
                     };
                     models.push(nuphus::api::ModelInfo {
+                        transport: model.transport,
                         id: model.id.clone(),
                         provider: provider.name.clone(),
                         alias: model.alias.clone(),

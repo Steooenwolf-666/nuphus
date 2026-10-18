@@ -118,6 +118,7 @@ tauri-plugin-process = "2.3.1"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
     # 无边框窗口的 Win11 系统圆角（DwmSetWindowAttribute + CORNER_PREFERENCE）
     "Win32_Graphics_Dwm",
     # ── 以下为截图新链路（commands/capture/）所需，见 docs/capture-refactor-plan.md ──

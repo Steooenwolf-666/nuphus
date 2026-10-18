@@ -18,6 +18,8 @@ import {
   getProviderContext,
   setAgentModel,
   setModelContextWindow,
+  setModelTransport,
+  type TransportKind,
   setModelSupportsVision,
   setModelSupportsImageGeneration,
   setCapabilityBinding,
@@ -71,6 +73,7 @@ import { Button } from '../../ui/Button'
 import { useLanguage } from '../../locales'
 import { ProviderIcon, hasProviderIcon } from '../components/ProviderIcon'
 import { ModelCard, type ModelCardCap } from './ModelCard'
+import { ModelProtocolSelect } from './ModelProtocolSelect'
 import { RowCtxEditor, formatContextWindow } from './RowCtxEditor'
 import { getProviderFavorites, setFavorite } from '../lib/favorites'
 import { orderProviderModels, readRecentModels, rememberRecentModel } from '../chat/modelPopupOrder'
@@ -82,6 +85,7 @@ import {
 import { friendlyIpcError } from '../lib/ipcError'
 import { selectableModels } from '../lib/modelCapability'
 import { HOT_MODELS } from '../lib/hotModels'
+import { ChatGPTSettings } from './ChatGPTSettings'
 import { JevSettings } from './JevSettings'
 // 页内反馈与 island 共用同一套胶囊视觉（组件自带共享层 app-pill.css）
 import { AppPill } from '../../ui/AppPill'
@@ -1423,7 +1427,7 @@ export function CustomModelForm({
 // ════════════════════════════════════════════════════════════════
 // 页面主体
 // ════════════════════════════════════════════════════════════════
-type ModelsView = 'provider' | 'capabilities' | 'agents' | 'jev' | 'websearch'
+type ModelsView = 'chatgpt' | 'provider' | 'capabilities' | 'agents' | 'jev' | 'websearch'
 
 export function ModelsPage({
   onClose,
@@ -1917,7 +1921,10 @@ export function ModelsPage({
    * 入口的预填数据出现（创建实例时由后端自动接管迁移），不再单独占一个条目。
    */
   const customInstances = providers.filter(
-    p => isCustomProviderId(p.id) && p.id !== LEGACY_CUSTOM_PROVIDER_ID,
+    p =>
+      isCustomProviderId(p.id) &&
+      p.id !== LEGACY_CUSTOM_PROVIDER_ID &&
+      !p.id.startsWith('custom-chatgpt-'),
   )
   /**
    * 旧版 `custom` 段（迁移源）：存在时作为创建态表单的预填数据（base_url /
@@ -1965,6 +1972,10 @@ export function ModelsPage({
 
   /** 左侧导航选择某个服务商 / 实例：切到其配置页并收起「新建」表单 */
   const openProviderView = (id: string, configuredOverride?: string[]) => {
+    if (id.startsWith('custom-chatgpt-')) {
+      setActiveView('chatgpt')
+      return
+    }
     setActiveView('provider')
     setFormOpen(false)
     setFormError('')
@@ -2652,6 +2663,17 @@ export function ModelsPage({
     }
   }
 
+  const changeModelTransport = async (name: string, next: TransportKind | null) => {
+    try {
+      await setModelTransport(provider, name, next)
+      setAllModels((await listModels()) ?? [])
+      setFeedback({ ok: true, msg: '模型协议已保存' })
+      if (currentModel === name && currentProvider === provider) await switchModel(name)
+    } catch (error) {
+      setFeedback({ ok: false, msg: friendlyIpcError(error, '保存失败') })
+    }
+  }
+
   /**
    * 行内切换模型的图像生成能力 —— 与视觉开关同构的第二类模型元数据编辑。
    *
@@ -2749,6 +2771,14 @@ export function ModelsPage({
         <div className="models-rail-scroll">
           <div className="models-rail-group">
             <div className="models-rail-group-title">{TXT.railGroupProviders}</div>
+            <button
+              type="button"
+              className={['models-rail-item', activeView === 'chatgpt' ? 'active' : ''].join(' ')}
+              onClick={() => setActiveView('chatgpt')}
+            >
+              <ProviderIcon provider="openai" size={16} />
+              <span className="models-rail-name">ChatGPT</span>
+            </button>
             {providersLoading ? (
               <div className="models-rail-note">{TXT.railLoadingProviders}</div>
             ) : (
@@ -2938,6 +2968,9 @@ export function ModelsPage({
         {!providersLoading && (
           <>
             <div className="models-main-scroll">
+              {activeView === 'chatgpt' && (
+                <ChatGPTSettings onModelChanged={onModelChanged} onModelsChanged={setAllModels} />
+              )}
               {/* ═══════════ 自定义模型配置（Custom 入口）：创建态表单，落盘即新实例 ═══════════ */}
               {activeView === 'provider' && formOpen && (
                 <Section title={TXT.customSectionTitle}>
@@ -3368,7 +3401,9 @@ export function ModelsPage({
                       const briefById = new Map<string, ProviderModelBrief>(
                         detectedModels.map(d => [d.id, d]),
                       )
-                      const infoById = new Map<string, ModelInfo>(allModels.map(m => [m.id, m]))
+                      const infoById = new Map<string, ModelInfo>(
+                        allModels.filter(m => m.provider === provider).map(m => [m.id, m]),
+                      )
                       const capsOf = (name: string): ModelCardCap[] => {
                         const brief = briefById.get(name)
                         const info = infoById.get(name)
@@ -3437,6 +3472,15 @@ export function ModelsPage({
                                 <ModelCard
                                   key={name}
                                   name={name}
+                                  protocol={
+                                    <ModelProtocolSelect
+                                      value={info?.transport}
+                                      disabled={switchingModel === name}
+                                      label={`${name} 协议`}
+                                      defaultLabel="服务商默认协议"
+                                      onChange={next => void changeModelTransport(name, next)}
+                                    />
+                                  }
                                   active={isActive}
                                   switching={switchingModel === name}
                                   favorite={favoriteIds.has(name)}
@@ -3536,6 +3580,15 @@ export function ModelsPage({
                             <ModelCard
                               key={m}
                               name={m}
+                              protocol={
+                                <ModelProtocolSelect
+                                  value={localInfo?.transport}
+                                  disabled={switchingModel === m}
+                                  label={`${m} 协议`}
+                                  defaultLabel="服务商默认协议"
+                                  onChange={next => void changeModelTransport(m, next)}
+                                />
+                              }
                               active={isActive}
                               switching={switchingModel === m}
                               favorite={favoriteIds.has(m)}

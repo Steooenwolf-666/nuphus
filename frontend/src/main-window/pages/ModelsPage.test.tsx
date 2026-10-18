@@ -42,6 +42,7 @@ vi.mock('../lib/api', () => ({
   getProviderContext: vi.fn(),
   setAgentModel: vi.fn(),
   setModelContextWindow: vi.fn(),
+  setModelTransport: vi.fn(),
   setModelSupportsVision: vi.fn(),
   setModelSupportsImageGeneration: vi.fn(),
   setCapabilityBinding: vi.fn(),
@@ -93,6 +94,7 @@ import {
   listModels,
   refreshProviderModels,
   setModelSupportsVision,
+  setModelTransport,
   sttStatus,
 } from '../lib/api'
 
@@ -1253,4 +1255,28 @@ describe('ModelsPage 热门模型快捷 chip', () => {
     // 空态文案把原始输入原样回显（.models-empty 是页内共用类，按文字定位避免误命中）
     await waitFor(() => expect(screen.getByText(/zzz/)).toBeInTheDocument())
   })
+})
+
+it('模型协议写入精确服务商并可恢复默认', async () => {
+  vi.mocked(listModels).mockResolvedValue([
+    {
+      id: 'test-model',
+      provider: 'deepseek',
+      transport: 'responses',
+      alias: [],
+      reasoning_efforts: [],
+    },
+  ] as never)
+  vi.mocked(listProviderModels).mockResolvedValue(['test-model'] as never)
+  render(<ModelsPage onClose={() => {}} />)
+  const select = await screen.findByRole('combobox', { name: 'test-model 协议' })
+  expect(select).toHaveValue('responses')
+  fireEvent.change(select, { target: { value: 'anthropic' } })
+  await waitFor(() =>
+    expect(setModelTransport).toHaveBeenCalledWith('deepseek', 'test-model', 'anthropic'),
+  )
+  fireEvent.change(select, { target: { value: '' } })
+  await waitFor(() =>
+    expect(setModelTransport).toHaveBeenCalledWith('deepseek', 'test-model', null),
+  )
 })

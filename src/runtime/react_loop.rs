@@ -23,6 +23,32 @@ impl super::Runtime {
     ) -> crate::Result<crate::AgentOutput> {
         tracing::info!("Agent starting task: {} (resume={})", input, resume);
 
+        if let Some(factory) = &self.agent.client_factory {
+            let registry = factory.registry()?;
+            let supports_vision = crate::config::resolve_capability(
+                &registry,
+                Some(&self.agent.config.provider),
+                &self.agent.config.model,
+                |model| model.supports_vision,
+                false,
+            );
+            let vision_model = if !registry.capabilities.vision.is_empty() {
+                Some(registry.capabilities.vision.clone())
+            } else if supports_vision {
+                Some(self.agent.config.model.clone())
+            } else {
+                None
+            };
+            if self.agent.config.supports_vision != supports_vision
+                || self.agent.config.vision_model != vision_model
+            {
+                self.agent.config.supports_vision = supports_vision;
+                self.agent.config.vision_model = vision_model;
+                self.agent.cached_l1_prompt = None;
+                self.agent.cached_merged_system_prompt = None;
+            }
+        }
+
         let loop_start = std::time::Instant::now();
 
         // ── 执行态：进入主循环 → Running（追加指令可被本轮迭代边界 drain）──

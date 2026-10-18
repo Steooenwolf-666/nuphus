@@ -1,8 +1,13 @@
 //! 配置模块 — 模型配置加载与管理
 
+pub mod auth_state;
+pub mod chatgpt;
+pub mod credentials;
 pub mod last_model;
 pub mod model;
 pub mod oauth;
+pub(crate) mod oauth_accounts;
+pub mod oauth_flow;
 pub mod preferences;
 pub mod provider;
 pub mod providers;
@@ -15,6 +20,11 @@ pub use preferences::{
 };
 
 use std::path::PathBuf;
+
+/** 旧配置格式只在适配器边界迁移，通用路由无需认识私有字段。 */
+pub fn normalize_provider_document(doc: &mut toml::Value) {
+    chatgpt::migrate_legacy(doc);
+}
 
 /// Serializes in-process providers.toml read/modify/write transactions across
 /// desktop commands, OAuth refresh and background capability discovery.

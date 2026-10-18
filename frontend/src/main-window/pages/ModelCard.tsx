@@ -16,6 +16,7 @@
  */
 import { IconStar, IconEye, IconImage, IconMic, IconTrash2 } from '../../ui/Icons'
 import { RowCtxEditor } from './RowCtxEditor'
+import type { ReactNode } from 'react'
 
 /** 能力 chip 的呈现数据（label / hint 由调用方按当前语言备好）。 */
 export type ModelCardCap = {
@@ -72,6 +73,7 @@ export function ModelCard({
   onUse,
   onRemove,
   ctxEdit,
+  protocol,
 }: {
   name: string
   active: boolean
@@ -81,6 +83,7 @@ export function ModelCard({
   go?: boolean
   caps: ModelCardCap[]
   ctx?: number
+  protocol?: ReactNode
   showRemove?: boolean
   txt: ModelCardTxt
   onToggleFavorite: () => void
@@ -146,6 +149,7 @@ export function ModelCard({
         </span>
       </div>
 
+      {protocol}
       <div className="model-card-caps">
         {caps.map(cap => {
           const Icon = CAP_ICON[cap.key] ?? IconEye
