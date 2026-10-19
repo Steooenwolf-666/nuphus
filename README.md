@@ -8,6 +8,8 @@
 
 **中文** | [English](README.en.md)
 
+> **官方网站**: [www.nuphus.com](https://www.nuphus.com) — 产品介绍、下载安装包、更新日志与使用文档
+
 > **版本**: 0.2.30 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
@@ -141,7 +143,7 @@ npx @nuphus/nuphus-desktop
 
 面向不熟悉命令行的用户，**无需命令行、无需 Node.js / Rust 环境**：
 
-1. 从 [GitHub Releases](https://github.com/mrpulor-gh/nuphus/releases) 下载对应平台的安装包：
+1. 从 [官方网站](https://www.nuphus.com/download.html)（国内访问快）或 [GitHub Releases](https://github.com/mrpulor-gh/nuphus/releases) 下载对应平台的安装包：
    - **Windows**：`.exe`（NSIS 安装包，用户级安装，**无需管理员权限**）
    - **macOS**：`.dmg`
    - **Linux**：`.deb` / `.AppImage`

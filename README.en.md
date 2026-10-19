@@ -8,6 +8,8 @@
 
 **English** | [中文](README.md)
 
+> **Official website**: [www.nuphus.com](https://www.nuphus.com) — product overview, installers, changelog and documentation
+
 > **Version**: 0.2.30 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
@@ -135,7 +137,7 @@ Then type `nuphus` in your terminal to launch.
 
 For users unfamiliar with the command line — **no CLI, no Node.js / Rust required**:
 
-1. Download the installer for your platform from [GitHub Releases](https://github.com/mrpulor-gh/nuphus/releases):
+1. Download the installer for your platform from the [official website](https://www.nuphus.com/download.html) (fast in China) or [GitHub Releases](https://github.com/mrpulor-gh/nuphus/releases):
    - **Windows**: `.exe` (NSIS installer, per-user, **no admin rights needed**)
    - **macOS**: `.dmg`
    - **Linux**: `.deb` / `.AppImage`
