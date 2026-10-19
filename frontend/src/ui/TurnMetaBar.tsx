@@ -30,6 +30,7 @@
  * 消息底部给全三 slot；紧凑场景（如移动端）可只给 `['duration']`。
  */
 
+import { useEffect, useState } from 'react'
 import { useLanguage } from '../locales'
 import type { TurnMeta } from '../core/types'
 import { isTurnMetaEmpty, resolveTurnCalls, resolveTurnDuration } from '../core/types'
@@ -43,7 +44,11 @@ export interface TurnMetaBarProps {
    *   · 有 `durationMs`（turn 已结束）→ 直接显示
    *   · 否则有 `startedAtMs`（进行中）→ `Date.now() - startedAtMs` 实时推算
    * 故本组件**不接受**调用方传入的实时值——那会让同一指标出现第二个来源。
-   * 走秒由调用方的 tick 触发重渲染。
+   *
+   * 走秒（2026-10-19 局部化改造，节奏按大王定调 200ms）：进行中的轮次**由本组件
+   * 内部自tick**——只重渲染这一条元数据条，不再由调用方在顶层 forceTick 整树。
+   * 历史原因：顶层 tick 曾在巨大会话（1056 消息）执行期把主线程压到心跳饿死。
+   * 已结束的轮次（有 durationMs）不 tick，历史消息零定时器成本。
    */
   meta: TurnMeta | null | undefined
   /** 展示哪些槽位（默认全三 slot：耗时 / 令牌 / 步数） */
@@ -75,6 +80,16 @@ export function TurnMetaBar({
   className,
 }: TurnMetaBarProps) {
   const { t } = useLanguage()
+
+  // 进行中走秒：仅当「有起点、无终值」（轮次进行中）时本组件内部 200ms 自tick。
+  // 只重渲染这一条 bar（useState 在本组件），历史轮次（有 durationMs）不挂定时器。
+  const isLive = meta?.durationMs == null && (meta?.startedAtMs ?? 0) > 0
+  const [, forceTick] = useState(0)
+  useEffect(() => {
+    if (!isLive) return
+    const timer = window.setInterval(() => forceTick(n => n + 1), 200)
+    return () => window.clearInterval(timer)
+  }, [isLive])
 
   // 判空：duration / token / steps 全空**且无起点**才不渲染（无起点连耗时都推不出）。
   // startedAtMs 必须单独计入判据——「仅带起点」的轮次有耗时可展示，不能当空壳条。

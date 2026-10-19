@@ -249,11 +249,13 @@ export function ChatInputBar({
   // 唯一来源 resolveTurnDuration：有 durationMs = 已结束（后端权威）；
   // 否则有 startedAtMs = 进行中（Date.now() - startedAtMs）。
   // 刷新后起点由 useSession 的轮询通道从 get_execution_state 补回，**无需任何兜底**。
-  // 执行中每 100ms 重渲染一次让数字走秒——tick 只触发渲染、不持有时间值。
+  // 节奏（2026-10-19 大王定调）：1000ms 顶层 tick（原 100ms 太密；1s 是走秒的
+  // 可见下限，与 ChatPanel 同拍）。耗时数字自身的细粒度更新由 TurnMetaBar
+  // 组件内 200ms 自tick 承担。
   const [, forceTick] = useState(0)
   useEffect(() => {
     if (!isProcessing) return
-    const timer = window.setInterval(() => forceTick(n => n + 1), 100)
+    const timer = window.setInterval(() => forceTick(n => n + 1), 1000)
     return () => window.clearInterval(timer)
   }, [isProcessing])
   const ctxDurationMs = resolveTurnDuration(turnMeta)

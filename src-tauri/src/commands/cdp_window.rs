@@ -51,8 +51,19 @@ fn diag(line: &str) {
 /// 做法：spawn_blocking 把整段工作挪到阻塞线程，在那里 block_on 是合法的
 /// （没有外层 async 在等它），主流程只 await 这个 JoinHandle。
 #[tauri::command]
-pub async fn browser_show_window() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(|| {
+pub async fn browser_show_window(
+    // 空闲且当前页是空白页时导航到的默认页（Agent 执行中一律忽略，绝不打扰工作页）。
+    // 由前端传执行态：running 时传 None，命令层再做一次服务端裁决。
+    default_url: Option<String>,
+) -> Result<String, String> {
+    // 服务端二次校验：默认页必须是合法 http(s)（复用外链白名单，拒控制字符/伪协议）
+    let default_url = default_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter(|s| crate::commands::external::is_allowed_external_url(s))
+        .map(str::to_owned);
+    tauri::async_runtime::spawn_blocking(move || {
         // 每行都带累计毫秒：入口慢在哪一段（预检 / 冷启 / 建页 / 置前）应当一眼可读，
         // 不必再靠外部探针复现（此前定位「每次等几秒」就是这么绕出来的）。
         let t0 = std::time::Instant::now();
@@ -78,6 +89,23 @@ pub async fn browser_show_window() -> Result<String, String> {
                     return Err(e);
                 }
                 let url = client.current_url().await?;
+                // 空白页 → 顺势导航到默认页（就地导航，不新开标签）。
+                // 窗口已有真实页面（用户上次的浏览现场）时绝不打扰：按钮语义是
+                // 「唤出/置前」，日常点击只置前不改动现场，避免标签堆积与页面顶掉。
+                if let Some(target) = default_url {
+                    if url == "about:blank" {
+                        diag(&format!("step3: navigating blank page to default ({})", ms()));
+                        match client.navigate(&target).await {
+                            Ok(_) => {
+                                diag(&format!("default page loaded after {}ms", ms()));
+                                return Ok(target);
+                            }
+                            // 导航失败不阻断置前成功的主流程：窗口已在前台，
+                            // 用户看得见空白页本身，报错反而噪音。
+                            Err(e) => diag(&format!("default page navigate FAILED: {e}")),
+                        }
+                    }
+                }
                 diag(&format!("window front after {}ms, url = {url}", ms()));
                 Ok(url)
             })

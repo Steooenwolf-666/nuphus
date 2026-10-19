@@ -1818,17 +1818,47 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 
-/* ── Lightbox 放大预览 ── */
+/* ── Lightbox 放大预览 ──
+   2026-10-19 修复：portal 到 body（根层）。此前渲染在 .chat-panel 内，
+   被 .chat-area（z-index:1 层叠上下文）整体压在 TitleBar 之下——窗口控制按钮
+   浮在遮罩上被误当预览关闭钮（会真关掉应用）。根层后 z-index 由本层真实生效。
+   层级语义：10001 = 高于一切（error.css 顶层 10000 也让位于本预览；
+   ref-lightbox 3100 同理，本层是图片放大最深态）。 */
 .msg-lightbox-overlay {
   position: fixed;
   inset: 0;
-  z-index: 9999;
+  z-index: 10001;
   background: rgba(0, 0, 0, 0.85);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   animation: msgLightboxFadeIn 0.2s ease;
+}
+
+/* 显式关闭钮：右上角固定，不随图片居中布局滚动 */
+.msg-lightbox-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.45);
+  color: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.msg-lightbox-close:hover {
+  background: rgba(0, 0, 0, 0.7);
+}
+.msg-lightbox-close svg {
+  width: 18px;
+  height: 18px;
 }
 
 .msg-lightbox-image {

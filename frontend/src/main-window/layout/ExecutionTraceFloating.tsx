@@ -920,7 +920,9 @@ export function ExecutionTraceFloating({
   // 数值唯一来源 resolveTurnDuration：
   //   执行中 → Date.now() - turnMeta.startedAtMs（后端绝对起点，刷新后经轮询通道补回）
   //   已结束 → turnMeta.durationMs（后端权威总耗时）
-  // 这里只做 100ms 重渲染让数字走秒，**不持有任何时间值、不起跑、不兜底**。
+  // 节奏（2026-10-19 大王定调）：**执行追踪必须极高及时性**——100ms 保持原速，
+  // 不随 ChatPanel/ChatInputBar 的 1000ms 降档（面板是执行过程的实时仪表，
+  // 工具调用进出/状态翻转全靠这里的高频重渲染呈现）。不持有时间值、不起跑、不兜底。
   const [, forceTick] = useState(0)
   useEffect(() => {
     if (!isProcessing) return

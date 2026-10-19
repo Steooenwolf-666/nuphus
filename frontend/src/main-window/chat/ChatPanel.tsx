@@ -381,7 +381,11 @@ export function ChatPanel({
     browserOpeningRef.current = true
     setBrowserOpening(true)
     hudUpdate(t('browser.starting'), 'info')
-    browserShowWindow()
+    // 默认页 = Nuphus 官网：只在冷启动/空白页时被后端采纳（就地导航，不新开标签）；
+    // Agent 执行中不传——执行里浏览器页就是工作页，唤出绝不导航，防止顶掉正在
+    // 自动化的页面。窗口已有真实页面时后端同样忽略此参数。
+    const show = isProcessing ? browserShowWindow() : browserShowWindow('https://www.nuphus.com/')
+    show
       .catch(e => {
         hudUpdate(friendlyIpcError(e, '打开浏览器失败'), 'warning')
       })
@@ -389,15 +393,15 @@ export function ChatPanel({
         browserOpeningRef.current = false
         setBrowserOpening(false)
       })
-  }, [t])
+  }, [t, isProcessing])
 
-  // 执行中每 500ms 重渲染一次，让消息气泡的 TurnMetaBar 走秒。
-  // **不持有任何时间值**——耗时一律由 TurnMetaBar → resolveTurnDuration 从
-  // turnMeta/msg.meta 求出（执行中按 startedAtMs 推算、完成后取 durationMs）。
+  // 执行中重渲染节奏（2026-10-19 大王定调）：1000ms 顶层 tick——消息流里的动态
+  // 内容（执行步骤计数等）保持可见的连续感。此前为查卡死曾整树删除，实测「半天
+  // 才动一次」体验不可接受；卡死根因经审计另有其因（渲染饱和误判），节奏不是病根。
   const [, forceTick] = useState(0)
   useEffect(() => {
     if (!isProcessing) return
-    const timer = window.setInterval(() => forceTick(n => n + 1), 500)
+    const timer = window.setInterval(() => forceTick(n => n + 1), 1000)
     return () => window.clearInterval(timer)
   }, [isProcessing])
   /**
@@ -2809,17 +2813,49 @@ export function ChatPanel({
           }}
         />
       )}
-      {/* Lightbox overlay for image click-to-zoom */}
-      {lightboxUrl && (
-        <div className="msg-lightbox-overlay" onClick={() => setLightboxUrl(null)}>
-          <img
-            src={lightboxUrl}
-            alt="放大预览"
-            className="msg-lightbox-image"
-            onClick={e => e.stopPropagation()}
-          />
-        </div>
-      )}
+      {/* Lightbox overlay for image click-to-zoom
+          ⚠️ 必须 portal 到 body：留在 .chat-panel 内会被 .chat-area（z-index:1 的
+          层叠上下文）整体压在 TitleBar（.app-shell 直接子级、DOM 靠后）之下——
+          用户会看到「最小化/还原/关闭」浮在预览遮罩上，把应用关闭钮当成预览
+          关闭钮点（真实事故）。portal 到根层后 z-index 才由本层真实生效。
+          Esc 关闭：预览打开时唯一的活动覆盖层，键盘用户的退出路径。 */}
+      {lightboxUrl &&
+        createPortal(
+          <div
+            className="msg-lightbox-overlay"
+            onClick={() => setLightboxUrl(null)}
+            onKeyDown={e => {
+              if (e.key === 'Escape') setLightboxUrl(null)
+            }}
+          >
+            <button
+              type="button"
+              className="msg-lightbox-close"
+              aria-label="关闭预览"
+              title="关闭 (Esc)"
+              autoFocus
+              onClick={() => setLightboxUrl(null)}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                aria-hidden="true"
+              >
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+            <img
+              src={lightboxUrl}
+              alt="放大预览"
+              className="msg-lightbox-image"
+              onClick={e => e.stopPropagation()}
+            />
+          </div>,
+          document.body,
+        )}
 
       {/* ── 文件预览覆盖层（AI 回复路径点击，全屏对齐画布范式） ── */}
       {previewPath && (
