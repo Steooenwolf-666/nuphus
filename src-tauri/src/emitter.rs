@@ -117,6 +117,14 @@ impl UiLiveness {
             .is_ok()
     }
 
+    /// 撤销一次判死：心跳迟到但渲染进程被探针证实存活（渲染饱和，非死亡）。
+    /// 把 dead 位翻回 false 并把心跳基线推到当前——下一轮从零计时，
+    /// 避免每个巡检周期（15s）重复触发 declare→revoke 抖动。
+    pub fn revoke_dead(&self, now_ms: u64) {
+        self.dead.store(false, Ordering::SeqCst);
+        self.last_ping_ms.store(now_ms, Ordering::SeqCst);
+    }
+
     pub fn is_dead(&self) -> bool {
         self.dead.load(Ordering::SeqCst)
     }

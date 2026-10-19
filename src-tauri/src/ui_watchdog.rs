@@ -8,11 +8,22 @@
 //! 本仓此前对界面失联只做「日志 + 窗口标题 + HUD 提示」（`emitter::perform_ui_dead_actions`），
 //! **没有任何恢复动作**——用户只能重启应用。
 //!
+//! ## 判死前置证据（2026-10-19 误判修正）
+//!
+//! 心跳停摆 ≠ 界面死亡：巨大会话（实测 1056 消息 / 328k 上下文）执行中，主线程
+//! 被渲染任务持续占满，3s 间隔的 `setInterval` 心跳被饿死——界面明明在干活，
+//! watchdog 却判死 → 自动重载 → 弹「界面连接中断」（2026-10-19 下午两次实锤，
+//! 用户截图为证；HUD 照常显示工具调用即为「后端活着」的铁证）。
+//!
+//! 修正：`declare_dead_if_due` 达到阈值后**不立即判死**，先向 webview 投
+//! `WebviewWindow::eval()` 探针（底层 WebView2 `ExecuteScript`，不经 JS 主线程的
+//! IPC 通道）。eval Ok = 渲染进程与页面还活着（只是 JS 忙）→ 不判死；eval Err =
+//! 渲染进程/页面真没了 → 走恢复阶梯。曾有过的 Web Worker 心跳方案不可行：
+//! `invoke` 硬依赖 `window.__TAURI_INTERNALS__` 而 Worker 无 window。
+//!
 //! ## 两级判死 + 三级阶梯
 //!
-//! - 判死信号一（既有）：前端心跳停摆 > `UI_DEAD_AFTER_MS`（90s）。此判定原先只在
-//!   事件发送路径上顺手做，**事件静默期（窗口闲置）不巡检** → 闲置场景永远不判死。
-//!   本看门狗补上定时巡检。
+//! - 判死信号一（既有）：前端心跳停摆 > `UI_DEAD_AFTER_MS`（90s）**且 eval 探针失败**。
 //! - 判死信号二（本模块）：墙钟与单调钟的增速差——系统挂起（合盖/睡眠/待机）期间
 //!   单调钟不走、墙钟照走，用两者的差值把「刚被唤醒」和「界面真的死了」分开：
 //!   唤醒后的心跳空档是预期行为，**重置基线而不是弹恢复对话框**（否则每次合盖都误报）。
@@ -113,8 +124,19 @@ fn run(app: AppHandle) {
         }
 
         // ② 判死（事件静默期也要判——这是闲置场景唯一能触达的巡检）。
+        //    判死前置证据：心跳停摆只说明「JS 主线程 3s 心跳没跑」，可能是渲染饱和
+        //    而非死亡。eval 探针走 WebView2 ExecuteScript（不经 JS 事件循环的 IPC），
+        //    投递 Ok = 渲染进程与页面结构健在 → 跳过本轮判死（给饱和态一个不会
+        //    被重载打断的执行环境）；投递 Err = 页面/进程真没了 → 照常判死走阶梯。
         let liveness = crate::emitter::ui_liveness();
-        if liveness.declare_dead_if_due(wall) {
+        if liveness.declare_dead_if_due(wall) && webview_alive(&app) {
+            // 心跳迟到但渲染进程健在：撤销这次判死（把 dead 位翻回去），
+            // 记日志观察饱和频率——如果频繁出现，说明该上虚拟化了。
+            liveness.revoke_dead(wall);
+            tracing::warn!(
+                "[UI-WATCHDOG] 心跳停摆但 eval 探针存活（渲染饱和，非界面死亡）——跳过判死"
+            );
+        } else if liveness.is_dead() {
             crate::emitter::perform_ui_dead_actions(&app);
         }
 
@@ -137,6 +159,19 @@ fn run(app: AppHandle) {
             stage = HealStage::Watching;
             dead_since = None;
         }
+    }
+}
+
+/// 渲染进程存活探针：向主 webview 投一段无害 JS。
+///
+/// `WebviewWindow::eval` 底层是 WebView2 的 `ExecuteScript`——脚本投递由浏览器
+/// 进程接住，**不经过 JS 主线程的 IPC invoke 通道**（那是被饱和饿死的路径）。
+/// 投递 Ok = 浏览器进程 + 页面 target 都在（JS 是否立即执行不重要，饱和态脚本
+/// 会在事件循环追上时执行）；投递 Err = target/进程已销毁 = 界面真死。
+fn webview_alive(app: &AppHandle) -> bool {
+    match app.get_webview_window("main") {
+        Some(w) => w.eval("void 0;").is_ok(),
+        None => false,
     }
 }
 

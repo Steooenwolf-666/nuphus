@@ -4,6 +4,7 @@
 
 // Shelf 退出持久化经 commands::process::shelf::persist_and_mirror（元数据行+镜像一并落盘）
 use nuphus::agent::events::EventEmitter;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -28,6 +29,58 @@ mod state;
 mod ui_watchdog;
 mod utils;
 mod video;
+
+/// 退出持久化只允许启动一次：窗口关闭与托盘退出可能并发触发。
+static EXIT_FLUSH_STARTED: AtomicBool = AtomicBool::new(false);
+
+/// 退出前保存当前 session（元数据行 + Shelf 磁盘镜像），再退出应用。
+///
+/// 序列化大快照（可达数 MB）、等待数据库连接、执行快照裁剪都可能耗时数秒；
+/// 原实现直接跑在主线程上，窗口关闭/托盘退出会表现为「点了没反应」。
+/// 这里放到后台线程，主线程立即返回事件循环；另起看门狗兜底，避免持久化
+/// 自身卡住（DB 等待上限 30s）时应用永远退不掉。
+///
+/// 时序约定（2026-10-19 大王定调）：**持久化完成即退**，不等待、不延时；
+/// 看门狗 8s 只是「持久化卡死」的兜底上限——正常路径 1~2s 内完成，8s
+/// 已远超合理耗时，缩小残留窗口（关窗后 1~2s 内重开不撞旧进程）。
+fn spawn_exit_flush_and_exit(app: tauri::AppHandle) {
+    if EXIT_FLUSH_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let persist_app = app.clone();
+    std::thread::spawn(move || {
+        let persist = || {
+            if let Some(state) = persist_app.try_state::<crate::state::AppState>() {
+                // 快照保护名单先于 runtime 锁收集，避免嵌套加锁
+                let protected =
+                    crate::commands::process::shelf::protected_snapshot_ids(state.inner());
+                if let Ok(guard) = state.runtime.lock() {
+                    if let Some(rt) = guard.leader_agent.as_ref() {
+                        crate::commands::process::shelf::persist_and_mirror(
+                            "leader",
+                            rt.session(),
+                            &protected,
+                        );
+                    }
+                    if let Some(wa) = guard.workflow_agent.as_ref() {
+                        crate::commands::process::shelf::persist_and_mirror(
+                            "workflow",
+                            wa.session(),
+                            &protected,
+                        );
+                    }
+                }
+            }
+        };
+        // 持久化是 best-effort：panic 也不能阻止退出
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(persist));
+        persist_app.exit(0);
+    });
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(8));
+        app.exit(0);
+    });
+}
 
 /// 桌面工具热键映射：`Ctrl+1/2/3` → 工具模式。
 ///
@@ -1122,27 +1175,12 @@ fn main() {
                             }
                         }
                         "quit" => {
-                            // 退出前保存当前 session（元数据行 + Shelf 磁盘镜像）
-                            if let Some(state) = app.try_state::<crate::state::AppState>() {
-                                // 快照保护名单先于 runtime 锁收集，避免嵌套加锁
-                                let protected =
-                                    crate::commands::process::shelf::protected_snapshot_ids(
-                                        state.inner(),
-                                    );
-                                if let Ok(guard) = state.runtime.lock() {
-                                    if let Some(rt) = guard.leader_agent.as_ref() {
-                                        crate::commands::process::shelf::persist_and_mirror("leader", rt.session(), &protected);
-                                    }
-                                    if let Some(wa) = guard.workflow_agent.as_ref() {
-                                        crate::commands::process::shelf::persist_and_mirror("workflow", wa.session(), &protected);
-                                    }
-                                }
-                            }
-                            // 销毁窗口并退出
+                            // 退出前保存当前 session（元数据行 + Shelf 磁盘镜像）。
+                            // 持久化在后台线程执行，窗口先隐藏给用户即时反馈。
                             if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.destroy();
+                                let _ = window.hide();
                             }
-                            app.exit(0);
+                            spawn_exit_flush_and_exit(app.clone());
                         }
                         _ => {}
                     }
@@ -1227,30 +1265,15 @@ nuphus::tools::background_tasks::start_watchdog();
         } = event
         {
             if label == "main" {
-                if let tauri::WindowEvent::CloseRequested { .. } = win_event {
-                    // 关闭前保存当前 session（元数据行 + Shelf 磁盘镜像）
-                    if let Some(state) = app_handle.try_state::<crate::state::AppState>() {
-                        let protected =
-                            crate::commands::process::shelf::protected_snapshot_ids(state.inner());
-                        if let Ok(guard) = state.runtime.lock() {
-                            if let Some(rt) = guard.leader_agent.as_ref() {
-                                crate::commands::process::shelf::persist_and_mirror(
-                                    "leader",
-                                    rt.session(),
-                                    &protected,
-                                );
-                            }
-                            if let Some(wa) = guard.workflow_agent.as_ref() {
-                                crate::commands::process::shelf::persist_and_mirror(
-                                    "workflow",
-                                    wa.session(),
-                                    &protected,
-                                );
-                            }
-                        }
+                if let tauri::WindowEvent::CloseRequested { api, .. } = win_event {
+                    // 关闭前保存当前 session（元数据行 + Shelf 磁盘镜像）。
+                    // 拦截默认关闭，先隐藏窗口，持久化完成后由后台线程退出；
+                    // 主线程不被大快照序列化/DB 等待阻塞。
+                    api.prevent_close();
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.hide();
                     }
-                    // 直接退出应用
-                    app_handle.exit(0);
+                    spawn_exit_flush_and_exit(app_handle.clone());
                 }
             }
         }
