@@ -1938,6 +1938,24 @@ export function ModelsPage({
   const railProviders = providers.filter(
     p => !isCustomProviderId(p.id) && p.id !== LOCAL_PROVIDER_ID,
   )
+  /**
+   * 左栏「模型提供商」的合并渲染序列：ChatGPT（OAuth 登录入口）与云端服务商
+   * 一起按展示名 A-Z 排序（与 sortProvidersStable 同一规则），不再硬编码置顶。
+   */
+  const railEntries: {
+    key: string
+    name: string
+    chatgpt: boolean
+    provider: ProviderInfo | null
+  }[] = [
+    ...railProviders.map(p => ({
+      key: p.id,
+      name: p.name,
+      chatgpt: false,
+      provider: p as ProviderInfo | null,
+    })),
+    { key: 'chatgpt-entry', name: 'ChatGPT', chatgpt: true, provider: null },
+  ].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   /** 左栏「本地模型」= 本机运行的服务（Ollama / llama.cpp / vLLM 等） */
   const localProviders = providers.filter(p => p.id === LOCAL_PROVIDER_ID)
 
@@ -2771,19 +2789,28 @@ export function ModelsPage({
         <div className="models-rail-scroll">
           <div className="models-rail-group">
             <div className="models-rail-group-title">{TXT.railGroupProviders}</div>
-            <button
-              type="button"
-              className={['models-rail-item', activeView === 'chatgpt' ? 'active' : ''].join(' ')}
-              onClick={() => setActiveView('chatgpt')}
-            >
-              <ProviderIcon provider="openai" size={16} />
-              <span className="models-rail-name">ChatGPT</span>
-            </button>
             {providersLoading ? (
               <div className="models-rail-note">{TXT.railLoadingProviders}</div>
             ) : (
               <div className="models-rail-list">
-                {railProviders.map(p => {
+                {railEntries.map(e => {
+                  if (e.chatgpt) {
+                    /* ChatGPT OAuth 登录入口：已并入字母序，见 railEntries 注释 */
+                    return (
+                      <button
+                        key={e.key}
+                        type="button"
+                        className={['models-rail-item', activeView === 'chatgpt' ? 'active' : '']
+                          .filter(Boolean)
+                          .join(' ')}
+                        onClick={() => setActiveView('chatgpt')}
+                      >
+                        <ProviderIcon provider="openai" size={16} />
+                        <span className="models-rail-name">ChatGPT</span>
+                      </button>
+                    )
+                  }
+                  const p = e.provider!
                   const isActive = activeView === 'provider' && p.id === provider
                   return (
                     <button
@@ -3209,6 +3236,38 @@ export function ModelsPage({
                             }}
                           >
                             {local.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* StepFun 双通道预设：API Key（按量）与 Step Plan（订阅套餐）共用
+                        同一把 Step API Key，仅 base_url 不同（官方 step-plan/overview）。
+                        默认 base_url 是 API Key 通道，这里一键切换，不改其它配置。 */}
+                    {provider === 'stepfun' && (
+                      <div className="models-local-presets">
+                        {[
+                          {
+                            id: 'stepfun-api',
+                            label: t('models.stepfunChannelApi'),
+                            url: 'https://api.stepfun.com/v1',
+                          },
+                          {
+                            id: 'stepfun-plan',
+                            label: t('models.stepfunChannelPlan'),
+                            url: 'https://api.stepfun.com/step_plan/v1',
+                          },
+                        ].map(ch => (
+                          <button
+                            key={ch.id}
+                            type="button"
+                            className={`models-preset-btn ${baseUrl === ch.url ? 'active' : ''}`}
+                            onClick={() => {
+                              setBaseUrl(ch.url)
+                              setFeedback(null)
+                            }}
+                          >
+                            {ch.label}
                           </button>
                         ))}
                       </div>

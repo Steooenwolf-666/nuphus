@@ -557,6 +557,8 @@ const en: Record<string, string> = {
   'update.errPermission':
     'No write permission, so the install could not finish. Check the install directory permissions and retry.',
   'update.errUnknown': 'The update did not finish. Please send us the error below.',
+  'update.stallHint':
+    'Download is slow or stalled. A common cause: your proxy routes the update server abroad (servers are in China). Try adding nuphus.com and gitee.com as DIRECT rules in your proxy app, or install manually from the Gitee mirror on the download page.',
   'update.changesTitle': 'Changes in this version',
   'update.changesEmpty': 'No changelog entries for this version',
   'update.changesUnavailable': 'Changelog unavailable',
@@ -1134,6 +1136,8 @@ const en: Record<string, string> = {
   'models.hotModelsTitle': 'Popular models',
   'models.baseUrlLabel': 'Endpoint URL',
   'models.baseUrlHelp': 'Endpoint URL of the relay or gateway, usually ending with /v1',
+  'models.stepfunChannelApi': 'API Key (pay as you go)',
+  'models.stepfunChannelPlan': 'Step Plan (subscription)',
   'models.headerSectionLabel': 'Custom Headers',
   'models.headerSectionHelp': 'Some relays require extra request headers; leave empty to send none',
   'models.headerNamePlaceholder': 'Header name, e.g. X-Gateway',

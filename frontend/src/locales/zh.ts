@@ -539,6 +539,8 @@ const zh: Record<string, string> = {
   'update.errPlatform': '当前系统平台不在更新清单内。请把下方错误信息反馈给我们。',
   'update.errPermission': '没有写入权限，无法完成安装。请检查安装目录权限后重试。',
   'update.errUnknown': '更新未完成。请把下方错误信息反馈给我们。',
+  'update.stallHint':
+    '下载进展缓慢或停滞。常见原因：本机代理把更新服务器分流出境（服务器在国内）。可在代理软件把 nuphus.com 与 gitee.com 设为直连（DIRECT）后重试，或改从下载页的 Gitee 镜像手动安装。',
   'update.changesTitle': '本版更新内容',
   'update.changesEmpty': '暂无本版变更记录',
   'update.changesUnavailable': '无法读取变更记录',
@@ -1087,6 +1089,8 @@ const zh: Record<string, string> = {
   'models.hotModelsTitle': '热门模型',
   'models.baseUrlLabel': '接口地址',
   'models.baseUrlHelp': '中转站或网关的接口地址，通常以 /v1 结尾',
+  'models.stepfunChannelApi': 'API Key 按量计费',
+  'models.stepfunChannelPlan': 'Step Plan 订阅通道',
   'models.headerSectionLabel': '自定义标头',
   'models.headerSectionHelp': '部分中转站要求附加请求头；留空则不发送',
   'models.headerNamePlaceholder': '头名称，如 X-Gateway',
