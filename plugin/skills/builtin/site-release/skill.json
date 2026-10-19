@@ -1,0 +1,32 @@
+{
+  "keywords": [
+    "发版",
+    "官网",
+    "发布",
+    "release",
+    "deploy",
+    "部署",
+    "下载页",
+    "版本发布",
+    "latest.json",
+    "dl.nuphus.com"
+  ],
+  "version": "1.0.0",
+  "displayName": "官网发布部署规范",
+  "name": "site-release",
+  "description": "Nuphus 官网与安装包发布部署：版本号同步清单（download.html×5+hero-ver）、服务器上传路径（/opt/downloads/<ver>/）、GitHub 私有仓中转（SSH 不可用时的标准通道）、Caddy 站点结构、发布核对清单。",
+  "triggers": {
+    "context_hints": [
+      "发版",
+      "官网",
+      "发布版本",
+      "release",
+      "部署官网",
+      "更新下载",
+      "发新版本"
+    ],
+    "auto_suggest": true
+  },
+  "author": "Nuphus",
+  "data_sources": []
+}
