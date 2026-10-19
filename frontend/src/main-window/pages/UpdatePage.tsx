@@ -11,6 +11,29 @@ import { countSectionItems, parseChangelogSection, type ChangelogSection } from 
 import '../../styles/update.css'
 
 /**
+ * 更新请求超时（毫秒）。
+ *
+ * 为什么必须显式传：tauri-plugin-updater 2.11.0 的 reqwest 客户端默认不带任何
+ * 超时（updater.rs 仅在 Some(timeout) 时调用 request.timeout）。而端点多路降级
+ * （tauri.conf.json endpoints 四级）只在「请求报错」时触发——响应停滞不报错，
+ * 第一个端点挂住就永远轮不到 Gitee/gh-proxy 兜底。显式超时把「停滞」转成
+ * 「错误」，插件才会切下一个端点（updater.rs: for url in &self.endpoints，
+ * Err 落 last_error 后继续）。
+ *
+ * 用户开着代理时（分流把国内域名送出境、或 TUN 全局接管），停滞概率显著升高，
+ * 这是最主要的防线。10s：正常链路 latest.json <1s，防网络波动误报。
+ */
+const UPDATER_CHECK_TIMEOUT_MS = 10_000
+/**
+ * 下载整体兜底超时：reqwest 的 timeout 覆盖「连接到响应体传完」全程，
+ * 不能设小（慢链路 25MB 合法下载可能超过 10s），但必须设上限防止永久挂死。
+ * 600s ≈ 允许低至 ~44KB/s 的慢速下载完成，低于此速度等同停滞。
+ */
+const DOWNLOAD_TOTAL_TIMEOUT_MS = 600_000
+/** 下载停滞判定：连续 10s 无进度回调 → 提示用户（不中断，可能自行恢复） */
+const DOWNLOAD_STALL_MS = 10_000
+
+/**
  * 把 updater 抛出的未知异常变成「一段人话 + 原始错误」。
  *
  * 2026-09-30 起因：有用户反馈换用镜像下载渠道后自动更新失效，而我们拿不到任何
@@ -69,6 +92,8 @@ export function UpdatePage() {
   const [update, setUpdate] = useState<Update | null>(null)
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState('')
+  /** 下载停滞看门狗：连续 DOWNLOAD_STALL_MS 无进度回调时亮提示（不中断下载） */
+  const [stalled, setStalled] = useState(false)
   const [, setDownloaded] = useState(0)
   const [currentVersion, setCurrentVersion] = useState('—')
   const [changelog, setChangelog] = useState<ChangelogState>({ status: 'loading' })
@@ -108,7 +133,9 @@ export function UpdatePage() {
     setStatus('checking')
     setError('')
     try {
-      const found = await check()
+      // 显式超时是端点降级的前置条件：无超时时首个端点停滞 = 永久挂死，
+      // 永远轮不到 Gitee/gh-proxy 兜底（插件默认无任何超时）
+      const found = await check({ timeout: UPDATER_CHECK_TIMEOUT_MS })
       setUpdate(found)
       setStatus(found ? 'available' : 'latest')
     } catch (e) {
@@ -124,21 +151,39 @@ export function UpdatePage() {
     setStatus('downloading')
     setProgress(0)
     setDownloaded(0)
+    setStalled(false)
+    // 停滞看门狗：连接活着但字节不来（代理分流停滞的典型形态）时，
+    // 进度条永远 0% 且无任何反馈。连续 10s 无进度回调则亮出提示。
+    // 不中断下载——链路可能自行恢复；整体兜底由 download timeout 承担。
+    let stallTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      setStalled(true)
+    }, DOWNLOAD_STALL_MS)
+    const bump = () => {
+      if (stallTimer) {
+        clearTimeout(stallTimer)
+        stallTimer = setTimeout(() => setStalled(true), DOWNLOAD_STALL_MS)
+      }
+    }
     try {
       let contentLength: number | null = null
       let downloadedBytes = 0
-      await update.download(event => {
-        if (event.event === 'Started') {
-          contentLength = event.data.contentLength ?? null
-          // Content length is kept locally for progress calculation.
-        } else if (event.event === 'Progress') {
-          downloadedBytes += event.data.chunkLength
-          setDownloaded(downloadedBytes)
-          setProgress(contentLength ? Math.min(100, (downloadedBytes / contentLength) * 100) : 0)
-        } else if (event.event === 'Finished') {
-          setProgress(100)
-        }
-      })
+      await update.download(
+        event => {
+          bump()
+          if (event.event === 'Started') {
+            contentLength = event.data.contentLength ?? null
+            // Content length is kept locally for progress calculation.
+          } else if (event.event === 'Progress') {
+            downloadedBytes += event.data.chunkLength
+            setDownloaded(downloadedBytes)
+            setProgress(contentLength ? Math.min(100, (downloadedBytes / contentLength) * 100) : 0)
+          } else if (event.event === 'Finished') {
+            setProgress(100)
+          }
+        },
+        // reqwest timeout 覆盖「连接→响应体传完」全程；必须有上限防永久挂死
+        { timeout: DOWNLOAD_TOTAL_TIMEOUT_MS },
+      )
       await update.install({ restartAfterInstall: true })
       await relaunch()
     } catch (e) {
@@ -146,6 +191,9 @@ export function UpdatePage() {
       // 统一文案会让用户和我们都无法判断，所以原始错误必须保留
       setError(describeUpdateError(e, t))
       setStatus('error')
+    } finally {
+      if (stallTimer) clearTimeout(stallTimer)
+      setStalled(false)
     }
   }, [update, t])
 
@@ -173,6 +221,7 @@ export function UpdatePage() {
             <div className="update-progress">
               <span>{t('update.downloading', progress ? `${progress.toFixed(0)}%` : '…')}</span>
               <progress max="100" value={progress} />
+              {stalled && <div className="update-stall-note">{t('update.stallHint')}</div>}
             </div>
           )}
         </div>

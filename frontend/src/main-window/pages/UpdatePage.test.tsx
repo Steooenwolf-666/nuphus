@@ -67,6 +67,19 @@ describe('UpdatePage 本版更新内容', () => {
     expect(screen.queryByText('上一轮的旧改动。')).toBeNull()
   })
 
+  it('check 必须携带超时参数（端点降级的前置条件：无超时 = 首端点停滞即永久挂死）', async () => {
+    arrange('0.2.16', CHANGELOG)
+    render(<UpdatePage />)
+
+    fireEvent.click(screen.getByRole('button', { name: /检查更新/ }))
+    await waitFor(() => expect(mockedCheck).toHaveBeenCalled())
+    expect(mockedCheck).toHaveBeenCalledWith(
+      expect.objectContaining({ timeout: expect.any(Number) }),
+    )
+    const arg = mockedCheck.mock.calls[0][0]
+    expect(arg?.timeout).toBeGreaterThanOrEqual(1000)
+  })
+
   it('渲染行内代码、强调和链接，保留代码字符与可复制的路径', async () => {
     arrange(
       '1.0.0',
