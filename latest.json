@@ -1,19 +1,19 @@
 {
-  "version": "0.2.30",
-  "notes": "Nuphus 0.2.30",
-  "pub_date": "2026-10-17T12:53:33Z",
+  "version": "0.2.31",
+  "notes": "Nuphus 0.2.31",
+  "pub_date": "2026-10-19T16:11:22Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQm95YnhLcllQd3JTVmpNeG1rc1pmcDhqK1hzZkRNMWl4ZUxvVWd5YzlmTUpXeTZ2UnJTR25oQlhFdkljOFRSdml1TXpmeE4wVS9XVDdwaGtvcE1HMWdRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjQxNTI5CWZpbGU6TnVwaHVzXzAuMi4zMF94NjQtc2V0dXAuZXhlCnNOZS9ucnJhRmI5QzBkSzk1UC9pYXVvb1hlWUp1a3JuNjZwZmhVakQxbFRtdWQvSWNQWjFoQ1JaaGJtREd6anFkNVRUbHNLM1NOdVdNZVlsbHhBaEJnPT0K",
-      "url": "https://gitee.com/nuphus/nuphus/releases/download/v0.2.30/nuphus-win32-x64-0.2.30-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQmhKdk5VSGNoUlVLY3JNNC9ZaEJSUTEvN256RlNHR2xIeW13cVpITnlFMk5aNUFnenk3dlpvcHZCcEZnKzN4OWt0MVZvMjNOcjN6Yi9Jd2l1cUMycUFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNDI2MDgzCWZpbGU6TnVwaHVzXzAuMi4zMV94NjQtc2V0dXAuZXhlCnFJZ0tkdGVWRHByQWhtOU9aU3E3czNyMW5zTnJ5cGFwcUlYQi9GYVcreDkrTzFyV2I0WmdqOHpCdzdpOTJxREtIdjc5b1lVZXNmN0ZhaUlkaDRteEJRPT0K",
+      "url": "https://gitee.com/nuphus/nuphus/releases/download/v0.2.31/nuphus-win32-x64-0.2.31-setup.exe"
     },
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQm9HVDVVTWRUTzBQN1kraG14YWQzWCtxbUdDQk9SVExIZXNuT1dMRlk2QWJCNkFZbXZaV0lrSW1JNGFNb2ExcDkzMlpKaDlBbXN0VXIrV3dVQzFUSUFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjQwODYwCWZpbGU6TnVwaHVzLmFwcC50YXIuZ3oKcWZNTDEwVXhsaFEvZXRIZEtPYkwwUkQrVnlibG9qMERqRmcvczQrbDZYeWFjWllTbWlHSzIvR1NqNVI0NUFMM2sxUTE0S1JEcW9INGFnT0M4SUVHQ0E9PQo=",
-      "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v0.2.30/Nuphus.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQmtGbWlaRlBna24zUEtvRlcxeVVaTkt3Ky84UWpEUTBNLzZXS0lSMjBqY2doNTJkTmZBa3dRem4yQ2V6Z0pkZHZqSHNTaXJDVzVmeDFhRGdlS2F1YUFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNDI1NjUyCWZpbGU6TnVwaHVzLmFwcC50YXIuZ3oKUEh6QndHUE1aSFZscjFsSEJQVXdhblVMMmpOMk4vM1ZLVkZUWDJRck0rTUxPKzJhQ3RmMFpFdUJzTXBZaVNuVmN2UzdlRzRBUlJTRTRqY2wvQW14Q2c9PQo=",
+      "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v0.2.31/Nuphus.app.tar.gz"
     },
     "linux-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQmcwUUlGajdxKzhQWllBWDJ0QldBbnkwU1p0VGtLS0o4RzhGNTVnaEFXdEZKNGR3a0J1c3BZU1BneEFiZGNLWGVxMEJDUVN5dFpXUGNWTGZBY0luVkFZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyMjQwOTIxCWZpbGU6TnVwaHVzXzAuMi4zMF9hbWQ2NC5BcHBJbWFnZQphcy9LMDJUNGJkNVJGUUtMVjVUdmRMbXVZM1IvNEcvYkwrdHNtUWFLUElxb3NqTm9qcHFBT1IxelhqRk1ueFNGZjVHbHllM2VTblJvRzJGd3lOZjdCQT09Cg==",
-      "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v0.2.30/Nuphus_0.2.30_amd64.AppImage"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQmlkS1BsZDZWQ2VHc0tWdjg0ZlFQTG5ybXJsTGZxcFl2aWtSWE5jbHQ4TDRKL2VtYTdFZldENEw3MGR3TkdhdXNmdmpYL29CREZRaXJXUmUvZklueFE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNDI1NDc1CWZpbGU6TnVwaHVzXzAuMi4zMV9hbWQ2NC5BcHBJbWFnZQprZStpOFdkeUJWNkkrWGJsS2pObWMzcytxYVk4SklxRDRNTUpnNzFYbDlRNmNHQ25wT2NDMEpHd0VzOWZIT1hVZVlMTGM3MkFPUWlLbWxvTzNSUzJCUT09Cg==",
+      "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v0.2.31/Nuphus_0.2.31_amd64.AppImage"
     }
   }
 }

@@ -57,7 +57,7 @@ tags: [release, deploy, website, caddy, download, version]
 
 文件名模式：`nuphus-win32-x64-<版本>-setup.exe` / `nuphus-osx-arm64-<版本>.zip` / `nuphus-linux-x64-<版本>.tar.gz`
 
-### 2. 官网：版本号引用同步（易漏！全站共 7 处）
+### 2. 官网：版本号引用同步（易漏！0.2.31 实测 10 个文件 94 处）
 
 | 文件 | 位置 | 内容 |
 |---|---|---|
@@ -66,10 +66,10 @@ tags: [release, deploy, website, caddy, download, version]
 | `site/download.html` | `.page-head p` | `<版本> 发布于 <日期>` |
 | `site/download.html` | `#dl-title` | `Nuphus <版本>` |
 | `site/download.html` | `data-file` / 表格文件名 ×3 + 镜像区路径 | `nuphus-*-<版本>-*` |
-| `site/download.html` | 全部 `dl.nuphus.com/0.2.30/` 链接 | 改成新版本目录 |
+| `site/download.html` | 全部 `dl.nuphus.com/<版本>/` 链接 | 改成新版本目录 |
 | `site/index.html` | `.hero-ver` | `v<版本>`（hero-meta 三元信息中间位） |
 
-**做法**：全局搜旧版本号字符串（如 `0.2.30`）逐处替换，禁止凭记忆改。改完 `grep -r "0.2.30"` 应零残留。
+**做法**：全局搜旧版本号字符串逐处替换，禁止凭记忆改。改完 `grep -r "<旧版本>"` 应零残留。**大小与 SHA-256 取自 GitHub Release asset 的 `size` / `digest`（或 dl 实测），不要手抄旧版**；0.2.31 实测替换面：版本 39 + 链接 12 + 大小 29 + SHA 6 + 日期等，共 94 处。
 
 ### 3. 官网：下载链接批量替换
 
@@ -167,6 +167,8 @@ Invoke-WebRequest -Uri 'https://nuphus.com/' -Method Head -MaximumRedirection 0 
 
 **Gitee 事实**：只有 Windows setup.exe 是真实安装包（zip/tar.gz 是源码归档），macOS/Linux 只能靠官网直连或 GitHub。
 
+**Gitee 兜底（CI 不自动推）**：发版后必须 `git push gitee main` + `git push gitee v<版本>`，并用 Gitee API 创建 Release、上传 Windows setup.exe（凭据在 git credential manager，API 登录 `nuphus`）；否则仓库根 `latest.json` 的 Windows 兜底会 404。0.2.31 实测：`POST /releases` 得 release id，再 `POST /releases/<id>/attach_files` 上传，`browser_download_url` 与 `latest.json` 的 URL 一致。
+
 ---
 
 ## 四、坑（已付过学费）
@@ -174,7 +176,7 @@ Invoke-WebRequest -Uri 'https://nuphus.com/' -Method Head -MaximumRedirection 0 
 1. **Caddyfile 站点块重复** → `ambiguous site definition`。追加前先 `grep -n '<域名>' /etc/caddy/Caddyfile` 确认不存在。
 2. **heredoc 失败半截写入** → 追加型 `tee -a` 在前面命令失败时仍会执行，撞重复。追加了就 `grep` 验证，重复用 `sed -i '<起>,<止>d'` 删。
 3. **sudo git clone 属主 root** → 客户端 `dubious ownership`，`git config --global --add safe.directory /var/www/nuphus-site` 解决。
-4. **版本号漏改** → 官网 7 处 + 链接 18 处，靠 grep 兜底不靠记忆。
+4. **版本号漏改** → 官网 10 个文件 94 处（版本 / 链接 / 大小 / SHA / 日期），靠 grep 兜底不靠记忆。
 5. **改 Caddyfile 三步走**：改 → `sudo caddy validate --config /etc/caddy/Caddyfile`（必须 Valid）→ `sudo systemctl reload caddy`。跳过 validate 直接 reload，配置坏了服务就挂。
 
 ---
@@ -183,7 +185,7 @@ Invoke-WebRequest -Uri 'https://nuphus.com/' -Method Head -MaximumRedirection 0 
 
 | 项 | 值 |
 |---|---|
-| 线上版本 | 0.2.30（2026-10-17 发布） |
-| 官网 commit | `de94564`（首次上线） |
-| 包目录 | `/opt/downloads/0.2.30/`（3 文件，165MB） |
+| 线上版本 | 0.2.31（2026-10-19 发布） |
+| 官网 commit | `7d2f313`（0.2.31 发版） |
+| 包目录 | `/opt/downloads/0.2.31/`（7 文件，含 updater 专属产物与签名） |
 | GitHub 私有仓 | `mrpulor-gh/nuphus-site`（main） |
