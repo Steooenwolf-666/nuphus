@@ -60,6 +60,17 @@
  * 区间其余 42 个提交全为仓库所有者直推，按既定口径以 **commit 出处**收录重要功能；
  * 纯格式 / lint / 发版杂务提交不收录。
  *
+ * `0.2.30` 轮次（零 PR）取证：2026-10-19 经 `/pulls?state=closed` API 核对，v0.2.29（2026-10-15）
+ * 之后至 v0.2.30（2026-10-17）无任何合并 PR（最后合并仍是 #105，2026-10-14，已收录于 0.2.29
+ * 轮次，非新提交者）；`git log v0.2.29..v0.2.30` 全为仓库所有者直推，按既定口径以 **commit 出处**
+ * 收录重要功能（`pr: null` + `commit: 短 sha`）；纯格式 / lint / 发版杂务提交不收录。
+ *
+ * `0.2.31` 轮次取证：2026-10-19 经 `/pulls?state=closed` API 核对，v0.2.30 之后合并 #107
+ * （ChatGPT 套餐登录与 Responses 推理，2026-10-18 23:19:33）与 #108（IPC 参数修复，同日
+ * 23:19:17），作者均为 Steooenwolf-666；该账号已在 0.2.23 轮次收录，非新提交者，头像墙无新增。
+ * 区间其余提交全为仓库所有者直推，按既定口径以 **commit 出处**收录重要功能；纯格式 / lint /
+ * 发版杂务提交不收录。`/contributors` API 六个账号与既有列表一致。
+ *
  * ⛔ 新增记录前必须先在上面的三处找到出处并经所有者确认；不得凭印象补充贡献者或贡献内容。
  */
 
@@ -120,6 +131,164 @@ export interface GithubRound {
 
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
+  {
+    version: '0.2.31',
+    date: '2026-10-19',
+    contributors: [
+      {
+        user: 'Steooenwolf-666',
+        contributions: [
+          {
+            pr: 107,
+            summary:
+              'ChatGPT 套餐登录与 Responses 推理：通用 OAuth、凭据安全存储、逐模型协议路由与请求约束',
+          },
+          {
+            pr: 108,
+            summary: '修复执行点评、内联配置与新会话的 IPC 参数（顶层统一 camelCase）',
+          },
+        ],
+      },
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: '44bbaf62',
+            summary:
+              'StepFun 接入：API Key 与 Step Plan 双通道，step-5-preview / 3.7-flash / 3.5-flash',
+          },
+          {
+            pr: null,
+            commit: '9306f969',
+            summary: '更新检查优先走 dl.nuphus.com，自建线路国内外可达并保留三级兜底',
+          },
+          {
+            pr: null,
+            commit: 'b17927b1',
+            summary: '更新检查 10s / 下载 600s 兜底超时，连续 10s 无进度给出停滞提示',
+          },
+          {
+            pr: null,
+            commit: '3124171e',
+            summary: '退出持久化转后台，8s 看门狗兜底；判死前用 eval 探针确认渲染进程存活',
+          },
+          {
+            pr: null,
+            commit: '956ab3ae',
+            summary: '日志折叠计数按 sink 隔离，文件与 stderr 不再互相抢首条',
+          },
+          {
+            pr: null,
+            commit: '28e7af16',
+            summary: '图片预览 portal 到 body 层级置顶，浏览器按钮打开官网，走秒保持可见',
+          },
+          {
+            pr: null,
+            commit: 'f1cc4760',
+            summary: '心跳回归主线程节奏，撤销 Worker 探针（invoke 依赖 window）',
+          },
+          {
+            pr: null,
+            commit: '033f5731',
+            summary: '视觉模型与 provider 成对解析，修复同名模型跨段盲选导致的 401',
+          },
+          {
+            pr: null,
+            commit: '35f7ebea',
+            summary: '工具栏取消固定后恢复自动隐藏计时',
+          },
+          {
+            pr: null,
+            commit: '76f4ca98',
+            summary:
+              '图标链补全：1024 PNG / 32px ICO 首层 / 11 块 ICNS，安装后刷新资源管理器图标缓存',
+          },
+          {
+            pr: null,
+            commit: '1b7dd373',
+            summary: '低内存机器 release 构建兜底：16MiB 栈、opt-level 2 与 codegen-units 32',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    version: '0.2.30',
+    date: '2026-10-17',
+    contributors: [
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: '5c545265',
+            summary: '网页搜索源可切换官方 Search / Fetch，失败或限流时降级到内置免费源',
+          },
+          {
+            pr: null,
+            commit: 'da653a0c',
+            summary: '模型设置新增独立「网页搜索源」页，按服务商段绑定',
+          },
+          {
+            pr: null,
+            commit: 'ef920435',
+            summary: 'system_shell 超过 300s 自动转后台，进程树与输出保留',
+          },
+          {
+            pr: null,
+            commit: '1ca4d7ea',
+            summary: '框选 / 取色增加放大镜与方向键微调（Shift 十倍速）',
+          },
+          {
+            pr: null,
+            commit: '3c1bec6d',
+            summary: '取色工具可直接从屏幕取字体颜色',
+          },
+          {
+            pr: null,
+            commit: 'bb2b08db',
+            summary: '桌面工具条全局 Ctrl+1/2/3 热键',
+          },
+          {
+            pr: null,
+            commit: '2fa28b8a',
+            summary: 'MCP 读取机器本地 servers.local.yaml 并合并仓库配置',
+          },
+          {
+            pr: null,
+            commit: 'fcc11f8b',
+            summary: '视觉工具改用内存帧并新增 wait_for',
+          },
+          {
+            pr: null,
+            commit: 'f90df0b1',
+            summary: '执行追踪展开思考支持视口锚定折叠',
+          },
+          {
+            pr: null,
+            commit: '5560ccc2',
+            summary: '定时调度放开界面类步骤，改按「是否会停下来等人」判定',
+          },
+          {
+            pr: null,
+            commit: 'e57a0216',
+            summary: '所有 Tauri 命令移出主线程，数据库连接池不再阻塞',
+          },
+          {
+            pr: null,
+            commit: '99480720',
+            summary: '主 webview 死亡自愈：自动重载 + 原生恢复对话框',
+          },
+          {
+            pr: null,
+            commit: '6508fb39',
+            summary: '发布资产下载自动选择最快镜像节点',
+          },
+        ],
+      },
+    ],
+  },
   {
     version: '0.2.29',
     date: '2026-10-15',
@@ -600,7 +769,7 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
 ]
 
 /**
- * 仓库全部贡献者（GitHub `/contributors` API 快照，2026-09-29 拉取，按提交数降序）。
+ * 仓库全部贡献者（GitHub `/contributors` API 快照，2026-10-19 拉取，按提交数降序）。
  *
  * 与 CONTRIBUTOR_ROUNDS 互补，二者取并集才是完整的「历史贡献者」：
  *   - 轮次表按 **PR 归属**记录（覆盖 GitHub 未把 commit 关联到账号的人）；
@@ -614,10 +783,10 @@ export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
  */
 export const REPO_COMMITTERS: string[] = [
   'yuansui486', // 78 commits
-  'Steooenwolf-666', // 22 commits（#91 合并后 /contributors 已刷新）
+  'Steooenwolf-666', // 24 commits（2026-10-19 API）
   'fouyzjl', // 13 commits
-  'mrpulor-gh', // 3 commits（仓库所有者；2026-10-05 发版后重跑 API 仍报 3——/contributors
-  // 统计有缓存滞后，0.2.26 的 8 个直推提交已 push 双远端，计数待 GitHub 后台刷新）
+  'mrpulor-gh', // 4 commits（2026-10-19 API；仓库所有者）
+  'jiangdingwei123-afk', // 1 commit（2026-10-19 API，main 上的 80a2e053）
   'zhoupeiyu515-ui', // 1 commit
 ]
 

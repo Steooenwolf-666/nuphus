@@ -10,7 +10,7 @@
 
 > **官方网站**: [www.nuphus.com](https://www.nuphus.com) — 产品介绍、下载安装包、更新日志与使用文档
 
-> **版本**: 0.2.30 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
+> **版本**: 0.2.31 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -310,6 +310,15 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 ---
 
 ## 致谢
+
+### v0.2.31 贡献者
+
+感谢本版本提交 Pull Request 的社区贡献者：
+
+| 贡献者 | PR | 内容 |
+|--------|-----|------|
+| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#107](https://github.com/mrpulor-gh/nuphus/pull/107) | ChatGPT 套餐登录与 Responses 推理：通用 OAuth、凭据安全存储、逐模型协议路由与请求约束 |
+| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#108](https://github.com/mrpulor-gh/nuphus/pull/108) | 修复执行点评、内联配置与新会话的 IPC 参数（顶层统一 camelCase） |
 
 ### v0.2.30 贡献者
 

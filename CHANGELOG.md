@@ -5,7 +5,33 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.2.31] - 2026-10-19
+
+### Added
+- **StepFun（阶跃星辰）提供商**：OpenAI 兼容 Chat Completions，API Key 按量计费与 Step Plan
+  订阅共用同一把 Key，仅 `base_url` 不同（`/v1` 与 `/step_plan/v1`），模型页提供双通道预设按钮。
+  内置 step-5-preview（1M 上下文 / 64k 输出 / 视觉）、step-3.7-flash、step-3.5-flash。
+- **ChatGPT 套餐登录与 Responses 推理（#107）**：新增 ChatGPT 账号登录入口，通用 OAuth 支持扩展
+  授权参数、一次性 nonce、OIDC 签名 / issuer / audience 校验与动态客户端注册；模型新增逐模型
+  `transport`（Chat Completions / Responses / Anthropic Messages）与 `responses` 约束，ChatGPT
+  接入层只声明 SIWC 参数、账号模型目录和套餐请求约束。凭据继续使用 DPAPI / Unix 0600、原子写入与
+  刷新文件锁；登录失效或刷新失败直接报错，不回退到 API Key 计费。
+- **更新检查优先走自建下载线路**：`tauri.conf.json` endpoints 增加 `dl.nuphus.com/latest.json`
+  并置于首位，Gitee / gh-proxy / GitHub 保留为三级兜底——发版后存量用户下一版自动切换。
+
+### Changed
+- **发布产线自动同步下载站**：`release.yml` 新增 sync-server job，tag 触发构建后自动把三平台安装包
+  与 updater 专属产物（`Nuphus.app.tar.gz` / `Nuphus_<v>_amd64.AppImage` 及签名）上传到
+  `/opt/downloads/<版本>/`，生成指向 dl 域名的 latest.json 并逐项校验 HEAD 200；发版只需打 tag。
+- **更新器等待有明确上限**：检查请求 10s 超时、下载整体 600s 兜底，连续 10s 无进度回调显示停滞
+  提示。插件原本不设超时，首个端点响应停滞时不会报错，四级端点降级永远轮不到兜底线路。
+- **退出路径后台化**：关窗后的会话持久化移到后台线程，主线程立即返回事件循环；8s 看门狗兜底
+  持久化卡死，正常路径 1~2s 内完成，缩小关窗后重开撞旧进程的窗口。
+- **看门狗判死前先验证渲染进程**：心跳停 90s 后先向 webview 注入 `eval("void 0;")` 探针
+  （WebView2 `ExecuteScript`，不经 JS IPC 通道）；Ok = 渲染进程仍在（只是 JS 忙）→ 撤销判死，
+  Err = 真死才进入自动重载 / 原生对话框阶梯。巨大会话执行期主线程饱和不再被误判为界面死亡。
+- **日志限流按 sink 隔离**：文件与 stderr 各用独立折叠计数器，周期摘要标注 `sink`，避免共用计数器
+  被先写入的一方消费、另一 sink 丢失窗口内首条日志。
 
 ### Fixed
 - **发布包图标链补全，安装/升级后主动刷新图标缓存**：此前 `bundle.icon` 只列 `icon.ico` 与
@@ -27,6 +53,16 @@
   请清掉，环境变量优先级高于仓库配置。
   为不牺牲实际性能，视觉预处理热点所在的 `desktop-api`（源码仅约 200 KB）单独保留
   `opt-level = 3`——降优化是为了省内存，不是为了省性能。
+- **同名模型跨服务商时视觉请求 401**：视觉目标改为 `(model, provider)` 成对解析——Main 走实际
+  绑定，Capability 无 provider 时唯一候选消歧、多候选报歧义；不再按段序盲选首个同名模型，避免
+  用错服务商的 Key 鉴权。
+- **图片预览被标题栏与工具条盖住**：lightbox 从 `.chat-area` 的层叠上下文 portal 到 body
+  （z-index 10001），补显式关闭钮与 Esc；浏览器按钮改为打开官网，ChatInputBar / TurnMetaBar /
+  执行追踪的走秒节奏按定稿恢复（1000ms / 200ms / 100ms）。
+- **工具栏取消固定后不自动隐藏**：解除 `dockPinned` 时重启 auto-hide 计时，不再等待用户再次 hover；
+  可见性改经 ref 读取，避免 effect 随 show/hide 反复重跑。
+- **执行点评、内联配置与新会话的 IPC 参数（#108）**：顶层参数统一 camelCase，保留嵌套配置字段；
+  修正新会话标记，内联配置加载与保存失败给出可恢复的反馈。
 
 ## [0.2.30] - 2026-10-17
 

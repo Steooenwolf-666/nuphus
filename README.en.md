@@ -10,7 +10,7 @@
 
 > **Official website**: [www.nuphus.com](https://www.nuphus.com) — product overview, installers, changelog and documentation
 
-> **Version**: 0.2.30 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
+> **Version**: 0.2.31 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -277,6 +277,15 @@ All plugins are plain-text files (.md / .json); drop them into the matching `plu
 ---
 
 ## Acknowledgements
+
+### v0.2.31 Contributors
+
+Thanks to the community contributors who submitted pull requests in this release:
+
+| Contributor | PR | Summary |
+|--------|-----|------|
+| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#107](https://github.com/mrpulor-gh/nuphus/pull/107) | ChatGPT plan sign-in and Responses inference: generic OAuth, secure credential storage, per-model protocol routing and request constraints |
+| [@Steooenwolf-666](https://github.com/Steooenwolf-666) | [#108](https://github.com/mrpulor-gh/nuphus/pull/108) | Fix IPC parameter casing for execution reviews, inline config and new sessions (top-level camelCase) |
 
 ### v0.2.30 Contributors
 
