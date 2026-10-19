@@ -94,7 +94,10 @@ pub async fn browser_show_window(
                 // 「唤出/置前」，日常点击只置前不改动现场，避免标签堆积与页面顶掉。
                 if let Some(target) = default_url {
                     if url == "about:blank" {
-                        diag(&format!("step3: navigating blank page to default ({})", ms()));
+                        diag(&format!(
+                            "step3: navigating blank page to default ({})",
+                            ms()
+                        ));
                         match client.navigate(&target).await {
                             Ok(_) => {
                                 diag(&format!("default page loaded after {}ms", ms()));

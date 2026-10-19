@@ -861,8 +861,7 @@ id = "shared-model"
             return;
         }
 
-        let (model, provider) =
-            resolve_vision_target(&registry, &VisionStrategy::Main).unwrap();
+        let (model, provider) = resolve_vision_target(&registry, &VisionStrategy::Main).unwrap();
 
         assert_eq!(model, bound_model);
         assert_eq!(
