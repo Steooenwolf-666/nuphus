@@ -1696,6 +1696,9 @@ const zh: Record<string, string> = {
 
   'sessionDivider.refined': '会话已提炼',
   'sessionDivider.messages': '{0}条消息',
+  'refineCollapse.archived': '已归档 {n} 条',
+  'refineCollapse.expand': '展开历史消息',
+  'refineCollapse.collapse': '折叠历史消息',
 
   'taskBubble.idle': '待命',
   'taskBubble.failed': ' · {0}失败',

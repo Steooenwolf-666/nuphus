@@ -55,6 +55,7 @@ import { RefIcon } from './ReferenceBar'
 import { WelcomeScreen } from './WelcomeScreen'
 import { OnboardingModal } from './OnboardingModal'
 import { SessionDivider } from './SessionDivider'
+import { RefineCollapseBar } from './RefineCollapseBar'
 import type { ApiHealthState } from '../../core/types'
 import { PauseOverlay } from './PauseOverlay'
 import { ChatInputBar } from './ChatInputBar'
@@ -350,6 +351,45 @@ export function ChatPanel({
   const [selectedOption, setSelectedOption] = useState(0)
   const [pausing, setPausing] = useState(false)
   const [showPauseLocal, setShowPauseLocal] = useState(false)
+
+  // ── Refine 折叠：refine 前历史消息默认折叠（小巧占位），解决多轮 refine 后
+  // 前端历史气泡累积卡顿。点击折叠条展开/折叠。expandedRefineIds 记录展开的段。
+  const [expandedRefineIds, setExpandedRefineIds] = useState<Set<string>>(new Set())
+  const toggleRefineExpand = useCallback((id: string) => {
+    setExpandedRefineIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+  // 按 refine 边界分段：每个 refine 消息前的连续消息为可折叠段
+  const refineSegments = useMemo(() => {
+    const segs: { refineId: string; beforeStart: number; beforeEnd: number; count: number }[] = []
+    let segStart = 0
+    messages.forEach((msg, idx) => {
+      if (msg.role === 'refine') {
+        segs.push({
+          refineId: msg.id,
+          beforeStart: segStart,
+          beforeEnd: idx - 1,
+          count: idx - segStart,
+        })
+        segStart = idx + 1
+      }
+    })
+    return segs
+  }, [messages])
+  // 折叠段内的消息索引（未展开的段）——map 时跳过，不渲染
+  const collapsedBeforeIds = useMemo(() => {
+    const set = new Set<number>()
+    refineSegments.forEach(seg => {
+      if (!expandedRefineIds.has(seg.refineId) && seg.count > 0) {
+        for (let i = seg.beforeStart; i <= seg.beforeEnd; i++) set.add(i)
+      }
+    })
+    return set
+  }, [refineSegments, expandedRefineIds])
 
   // ── 文件预览覆盖层（AI 回复路径点击） ──
   const [previewPath, setPreviewPath] = useState<string | null>(null)
@@ -1817,18 +1857,31 @@ export function ChatPanel({
                 return (
                   <>
                     {messages.map((msg, idx) => {
+                      // Refine 折叠：未展开的 refine 前历史消息跳过渲染（小巧折叠条代替），
+                      // 解决多轮 refine 后前端历史气泡累积卡顿。
+                      if (collapsedBeforeIds.has(idx)) return null
                       // Refine message → render SessionDivider, skip normal message-row
                       if (msg.role === 'refine') {
+                        const seg = refineSegments.find(s => s.refineId === msg.id)
+                        const segExpanded = expandedRefineIds.has(msg.id)
                         return (
-                          <SessionDivider
-                            key={msg.id}
-                            summary={msg.refineStatus === 'completed' ? msg.content : ''}
-                            messageCount={msg.messageCount ?? 0}
-                            sessionId={msg.sessionId ?? ''}
-                            streamingContent={
-                              msg.refineStatus === 'streaming' ? msg.content || null : null
-                            }
-                          />
+                          <React.Fragment key={msg.id}>
+                            {seg && seg.count > 0 && !segExpanded && (
+                              <RefineCollapseBar
+                                count={seg.count}
+                                expanded={false}
+                                onToggle={() => toggleRefineExpand(msg.id)}
+                              />
+                            )}
+                            <SessionDivider
+                              summary={msg.refineStatus === 'completed' ? msg.content : ''}
+                              messageCount={msg.messageCount ?? 0}
+                              sessionId={msg.sessionId ?? ''}
+                              streamingContent={
+                                msg.refineStatus === 'streaming' ? msg.content || null : null
+                              }
+                            />
+                          </React.Fragment>
                         )
                       }
                       const isCurrentAgent = msg.role === 'assistant' && idx === messages.length - 1

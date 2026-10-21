@@ -1781,6 +1781,9 @@ const en: Record<string, string> = {
 
   'sessionDivider.refined': 'Session refined',
   'sessionDivider.messages': '{0} messages',
+  'refineCollapse.archived': '{n} archived',
+  'refineCollapse.expand': 'Expand history',
+  'refineCollapse.collapse': 'Collapse history',
 
   'taskBubble.idle': 'Idle',
   'taskBubble.failed': ' → {0} failed',
