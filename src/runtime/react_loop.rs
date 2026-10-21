@@ -144,6 +144,16 @@ impl super::Runtime {
             });
         }
 
+        // ── 提示词前缀：先校验/还原会话快照，再注入原则变更 ──
+        // 顺序有含义：prepare 会丢弃失效快照，inject 若先跑就会基于作废快照误发更新。
+        // 两者都必须在 push_user 之前 —— 原则更新须排在用户提问之前入 session，
+        // 否则同一轮出现「提问 → 原则更新」的倒序（连续两条 user 消息）。
+        self.agent
+            .prepare_session_prompt_snapshot(self.config.mode.as_str());
+        if !resume {
+            self.agent.inject_tenet_update();
+        }
+
         // 2. Add user input to session（resume 时跳过：断点已在 session 中，直接续跑）
         if !resume {
             if let Some(imgs) = images {
@@ -465,6 +475,9 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
             }
 
             let request = self.agent.build_request(&merged_system);
+
+            self.agent
+                .capture_session_prompt_snapshot(self.config.mode.as_str());
 
             self.agent.emit_pre_llm_diag(iteration, &request.messages);
 

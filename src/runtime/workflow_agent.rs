@@ -17,7 +17,7 @@ use crate::agent::reminders::{ReminderCategory, ReminderPriority, ReminderQueue}
 use crate::runtime::protection::ProtectionGuard;
 use crate::{
     api::{ApiClient, AssistantEvent, MessageRequest},
-    session::{ContentBlock, Session},
+    session::{ContentBlock, PromptSnapshot, Session},
     tools::ToolRegistry,
     AgentOutput, ToolCall, ToolResult,
 };
@@ -224,8 +224,8 @@ impl WorkflowAgent {
         self.supports_vision = Self::resolve_supports_vision(&model_label, llm.provider_name());
         self.llm = llm;
         self.model_label = model_label;
-        self.cached_prompt = None;
-        self.cached_tools = None;
+        self.drop_prompt_prefix_cache();
+        self.session.clear_prompt_snapshot();
     }
 
     /// Enable or disable the enhanced decision layer for this WorkflowAgent.
@@ -234,8 +234,9 @@ impl WorkflowAgent {
     pub fn set_enhanced_mode(&mut self, enabled: bool) {
         if self.tools.enhanced_mode() != enabled {
             self.tools.set_enhanced_mode(enabled);
-            self.cached_prompt = None;
-            self.cached_tools = None;
+            // 工具集变化 → 旧快照的 tools/system_prompt 均不再成立；
+            // 由 prepare_session_prompt_snapshot 的 tools 比对兜底拒绝。
+            self.drop_prompt_prefix_cache();
         }
     }
 
@@ -267,10 +268,123 @@ impl WorkflowAgent {
             .unwrap_or(false)
     }
 
+    fn current_vision_model(&self) -> Option<String> {
+        match crate::config::resolve_vision_strategy() {
+            crate::config::VisionStrategy::Capability(name) => Some(name),
+            crate::config::VisionStrategy::Main => Some(self.model_label.clone()),
+            crate::config::VisionStrategy::None => None,
+        }
+    }
+
+    fn snapshot_matches(
+        &self,
+        snapshot: &PromptSnapshot,
+        tools: &[crate::api::ToolDefinition],
+    ) -> bool {
+        snapshot.provider == self.llm.provider_name()
+            && snapshot.model == self.model_label
+            && snapshot.mode == "workflow"
+            && snapshot.project_path == crate::utils::active_project().map(|(_, dir)| dir)
+            && snapshot.supports_vision
+                == Self::resolve_supports_vision(&self.model_label, self.llm.provider_name())
+            && snapshot.vision_model == self.current_vision_model()
+            && snapshot.tools == tools
+    }
+
+    /// 只丢弃内存里的运行时构建缓存（不动会话快照）。
+    pub fn drop_prompt_prefix_cache(&mut self) {
+        self.cached_prompt = None;
+        self.cached_tools = None;
+    }
+
+    pub(crate) fn prepare_session_prompt_snapshot(&mut self) {
+        let Some(snapshot) = self.session.prompt_snapshot().cloned() else {
+            return;
+        };
+        let tools = self.get_filtered_schemas();
+        if !self.snapshot_matches(&snapshot, &tools) {
+            self.drop_prompt_prefix_cache();
+            self.session.clear_prompt_snapshot();
+            return;
+        }
+        self.cached_prompt = Some(snapshot.system_prompt);
+        self.cached_tools = Some(snapshot.tools);
+        tracing::info!("[PromptSnapshot] restored workflow prompt prefix");
+    }
+
+    pub(crate) fn capture_session_prompt_snapshot(&mut self) {
+        if self.session.prompt_snapshot().is_some() {
+            return;
+        }
+        let (Some(system_prompt), Some(tools)) =
+            (self.cached_prompt.clone(), self.cached_tools.clone())
+        else {
+            return;
+        };
+        self.session.set_prompt_snapshot(PromptSnapshot {
+            system_prompt,
+            tools,
+            provider: self.llm.provider_name().to_string(),
+            model: self.model_label.clone(),
+            mode: "workflow".to_string(),
+            project_path: crate::utils::active_project().map(|(_, dir)| dir),
+            // workflow 无 Custom 卡片概念，恒为 None
+            custom_agent_id: None,
+            supports_vision: Self::resolve_supports_vision(
+                &self.model_label,
+                self.llm.provider_name(),
+            ),
+            vision_model: self.current_vision_model(),
+            tenets_section: crate::agent::prompt::tenets_section(),
+        });
+        tracing::info!("[PromptSnapshot] captured workflow prompt prefix");
+    }
+
+    pub(crate) fn inject_tenet_update(&mut self) -> bool {
+        let current = crate::agent::prompt::tenets_section();
+        let previous = match self.session.prompt_snapshot() {
+            Some(snapshot) => snapshot.tenets_section.clone(),
+            None => return false,
+        };
+        if previous == current {
+            return false;
+        }
+        self.session
+            .push_user_internal(crate::agent::prompt::format_tenet_update(&current));
+        self.session.set_prompt_snapshot_tenets(current);
+        tracing::info!(
+            "[PromptSnapshot] injected workflow tenet update ({} -> {} chars)",
+            previous.len(),
+            self.session
+                .prompt_snapshot()
+                .map(|s| s.tenets_section.len())
+                .unwrap_or(0)
+        );
+        true
+    }
+
+    /// Drop the cached system prompt (project-scoped tenets/memory changed).
+    pub fn invalidate_prompt_cache(&mut self) {
+        self.drop_prompt_prefix_cache();
+        self.session.clear_prompt_snapshot();
+    }
+
+    pub fn invalidate_prompt_cache_for_project(&mut self, project: Option<&str>) {
+        self.drop_prompt_prefix_cache();
+        let unchanged = self
+            .session
+            .prompt_snapshot()
+            .map(|snapshot| snapshot.project_path.as_deref() == project)
+            .unwrap_or(false);
+        if !unchanged {
+            self.session.clear_prompt_snapshot();
+        }
+    }
     /// Update user/assistant names and invalidate prompt cache
     pub fn set_names(&mut self, user_label: String, assistant_name: String) {
         if self.user_label != user_label || self.assistant_name != assistant_name {
-            self.cached_prompt = None; // invalidate cache
+            self.drop_prompt_prefix_cache();
+            self.session.clear_prompt_snapshot();
         }
         self.user_label = user_label;
         self.assistant_name = assistant_name;
@@ -380,11 +494,7 @@ impl WorkflowAgent {
                 serde_json::to_string(&schemas).unwrap_or_default()
             };
             // Check vision availability: capabilities.vision > main model supports_vision > none
-            let vision_model = match crate::config::resolve_vision_strategy() {
-                crate::config::VisionStrategy::Capability(name) => Some(name),
-                crate::config::VisionStrategy::Main => Some(self.model_label.clone()),
-                crate::config::VisionStrategy::None => None,
-            };
+            let vision_model = self.current_vision_model();
             // 主模型 supports_vision：统一消歧入口（经 resolve_supports_vision 同源）
             let main_supports_vision =
                 Self::resolve_supports_vision(&self.model_label, self.llm.provider_name());
@@ -439,6 +549,9 @@ impl WorkflowAgent {
         self.max_warning_injected = 0;
         self.user_terminated = false;
         self.pending_warnings.clear();
+        self.prepare_session_prompt_snapshot();
+        // 原则变更通知须排在用户提问之前入 session（顺序见 react_loop 同名注释）
+        self.inject_tenet_update();
 
         // 1. Push user input (with optional images) to our session
         // internal_input=true（refine 内部流程）：调用方已手动 push_user_internal，此处跳过
@@ -1324,6 +1437,7 @@ impl WorkflowAgent {
             let request = MessageRequest::new("", messages)
                 .with_system(base.clone())
                 .with_tools(tools.clone());
+            self.capture_session_prompt_snapshot();
 
             // Collect events while streaming text deltas to frontend in real-time
             // AtomicU32 tracks nesting depth to prevent premature close when
@@ -1531,6 +1645,220 @@ impl WorkflowAgent {
             &mut self.pending_warnings,
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::WorkflowAgent;
+    use crate::api::{ApiClient, MessageRequest, ProviderKind};
+    use crate::tools::ToolRegistry;
+    use async_trait::async_trait;
+    use std::sync::Arc;
+
+    /// 快照逻辑不发起真实请求，只需满足 WorkflowAgent::new 签名。
+    struct NoopApiClient;
+
+    #[async_trait]
+    impl ApiClient for NoopApiClient {
+        async fn stream(
+            &self,
+            _request: MessageRequest,
+        ) -> crate::Result<Vec<crate::api::AssistantEvent>> {
+            Ok(vec![])
+        }
+
+        fn model_name(&self) -> &str {
+            "mock-model"
+        }
+
+        fn provider_kind(&self) -> ProviderKind {
+            ProviderKind::MiniMax
+        }
+
+        fn provider_name(&self) -> &str {
+            "provider-a"
+        }
+    }
+
+    fn agent() -> WorkflowAgent {
+        WorkflowAgent::new(
+            Arc::new(NoopApiClient),
+            ToolRegistry::work_agent(),
+            None,
+            None,
+            "model-1".to_string(),
+            "用户".to_string(),
+            "Nuphus".to_string(),
+            crate::permissions::ToolPermissions::default(),
+            0.5,
+        )
+    }
+
+    /// 先让 agent 具备可捕获的 prompt/tools 缓存，再捕获快照。
+    fn agent_with_snapshot() -> WorkflowAgent {
+        let mut wa = agent();
+        wa.session_mut().push_user("hi".to_string());
+        let tools = wa.get_filtered_schemas();
+        wa.cached_prompt = Some("SNAP".to_string());
+        wa.cached_tools = Some(tools);
+        wa.capture_session_prompt_snapshot();
+        assert!(wa.session().prompt_snapshot().is_some());
+        wa
+    }
+
+    /// 切走再切回：运行时缓存被清空后，快照应把系统提示前缀还原回来。
+    #[test]
+    fn workflow_snapshot_restores_prefix_after_cache_drop() {
+        let mut wa = agent_with_snapshot();
+        wa.drop_prompt_prefix_cache();
+        assert!(wa.cached_prompt.is_none());
+        assert!(wa.cached_tools.is_none());
+
+        // 切走不清快照（切换会话路径只丢运行时缓存）
+        assert!(wa.session().prompt_snapshot().is_some());
+
+        wa.prepare_session_prompt_snapshot();
+        assert_eq!(wa.cached_prompt.as_deref(), Some("SNAP"));
+        assert!(wa.cached_tools.is_some());
+        assert!(wa.session().prompt_snapshot().is_some(), "命中后快照应保留");
+    }
+
+    /// 模型变更 → `set_llm` 主动丢缓存 + 丢快照，不得还原旧前缀。
+    #[test]
+    fn workflow_set_llm_drops_snapshot() {
+        let mut wa = agent_with_snapshot();
+        wa.set_llm(Arc::new(NoopApiClient), "model-2".to_string());
+        assert!(
+            wa.session().prompt_snapshot().is_none(),
+            "换模型应主动清快照"
+        );
+        assert!(wa.cached_prompt.is_none());
+        assert!(wa.cached_tools.is_none());
+    }
+
+    /// 模型判据本身：快照 model 与当前 agent 不符时必须被拒。
+    /// （上一条只覆盖 set_llm 的主动清空，不覆盖 `snapshot_matches` 的 model 分支。）
+    #[test]
+    fn workflow_snapshot_rejected_on_model_mismatch() {
+        let mut wa = agent_with_snapshot();
+        wa.session_mut().prompt_snapshot.as_mut().unwrap().model = "model-other".to_string();
+        wa.prepare_session_prompt_snapshot();
+        assert!(
+            wa.session().prompt_snapshot().is_none(),
+            "model 判据不成立应丢弃快照"
+        );
+        assert!(wa.cached_prompt.is_none());
+    }
+
+    /// provider 判据：换服务商但模型名相同时必须被拒（同模型名跨服务商很常见）。
+    #[test]
+    fn workflow_snapshot_rejected_on_provider_mismatch() {
+        let mut wa = agent_with_snapshot();
+        wa.session_mut().prompt_snapshot.as_mut().unwrap().provider = "provider-b".to_string();
+        wa.prepare_session_prompt_snapshot();
+        assert!(wa.session().prompt_snapshot().is_none());
+    }
+
+    /// 工具集变化（enhanced 开关 / work_agent 工具增减）→ 快照必须被拒。
+    #[test]
+    fn workflow_snapshot_rejected_on_tools_change() {
+        let mut wa = agent_with_snapshot();
+        wa.session_mut()
+            .prompt_snapshot
+            .as_mut()
+            .unwrap()
+            .tools
+            .clear();
+        wa.prepare_session_prompt_snapshot();
+        assert!(
+            wa.session().prompt_snapshot().is_none(),
+            "判据不成立应丢弃快照"
+        );
+        assert!(wa.cached_prompt.is_none());
+    }
+
+    /// 项目目录变更 → 快照被拒（项目原则随项目作用域注入）。
+    #[test]
+    fn workflow_snapshot_rejected_on_project_change() {
+        let mut wa = agent_with_snapshot();
+        wa.session_mut()
+            .prompt_snapshot
+            .as_mut()
+            .unwrap()
+            .project_path = Some("__other_project__".to_string());
+        wa.prepare_session_prompt_snapshot();
+        assert!(wa.session().prompt_snapshot().is_none());
+    }
+
+    /// mode 判据硬编码为 "workflow"：伪造别的 mode 必须被拒，
+    /// 防止 Leader 快照被 Workflow 槽误用。
+    #[test]
+    fn workflow_snapshot_rejected_on_foreign_mode() {
+        let mut wa = agent_with_snapshot();
+        wa.session_mut().prompt_snapshot.as_mut().unwrap().mode = "leader".to_string();
+        wa.prepare_session_prompt_snapshot();
+        assert!(wa.session().prompt_snapshot().is_none());
+    }
+
+    /// 捕获幂等：快照已存在时不得覆盖（否则 tenets 基线被重置，
+    /// 每轮都会重复注入原则更新）。
+    #[test]
+    fn workflow_capture_keeps_existing_snapshot() {
+        let mut wa = agent_with_snapshot();
+        wa.session_mut()
+            .set_prompt_snapshot_tenets("stale-tenets".to_string());
+        wa.capture_session_prompt_snapshot();
+        assert_eq!(
+            wa.session().prompt_snapshot().unwrap().tenets_section,
+            "stale-tenets",
+            "已有快照不得被二次 capture 覆盖"
+        );
+    }
+
+    /// 原则清单变化 → 注入一次 internal user 消息并同步基线；再次调用不重复。
+    #[test]
+    fn workflow_tenet_update_injected_once() {
+        let mut wa = agent_with_snapshot();
+        wa.session_mut()
+            .set_prompt_snapshot_tenets("stale-tenets".to_string());
+        let before = wa.session().len();
+
+        assert!(wa.inject_tenet_update(), "原则已变应注入");
+        assert_eq!(wa.session().len(), before + 1);
+        assert!(!wa.inject_tenet_update(), "基线已同步，不得重复注入");
+        assert_eq!(wa.session().len(), before + 1);
+        assert_eq!(
+            wa.session().prompt_snapshot().unwrap().tenets_section,
+            crate::agent::prompt::tenets_section()
+        );
+    }
+
+    /// 无快照时不注入原则更新（无基线可比，且 capture 尚未发生）。
+    #[test]
+    fn workflow_tenet_update_skipped_without_snapshot() {
+        let mut wa = agent();
+        let before = wa.session().len();
+        assert!(!wa.inject_tenet_update());
+        assert_eq!(wa.session().len(), before);
+    }
+
+    /// 注入的消息必须是 internal（前端历史过滤掉，不上屏）且声明旧清单作废。
+    #[test]
+    fn workflow_tenet_update_message_is_internal_and_declares_obsolete() {
+        let mut wa = agent_with_snapshot();
+        wa.session_mut()
+            .set_prompt_snapshot_tenets("stale-tenets".to_string());
+        assert!(wa.inject_tenet_update());
+
+        let msg = wa.session().messages().last().expect("应有注入消息");
+        assert!(msg.internal, "原则更新不得上屏，必须 internal");
+        assert_eq!(msg.role, crate::session::MessageRole::User);
+        let text = msg.text_content();
+        assert!(
+            text.contains("此前系统提示中的原则清单作废") || text.contains("没有生效中的用户原则"),
+            "必须显式声明旧清单作废，否则模型会并存两套原则：{text}"
+        );
     }
 }
 

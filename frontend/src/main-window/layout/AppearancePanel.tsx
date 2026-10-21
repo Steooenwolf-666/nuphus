@@ -44,21 +44,16 @@ import { useTheme } from '../../hooks/useTheme'
 import type { ThemeId } from '../../hooks/useTheme'
 import {
   CORE_TOKEN_KEYS,
-  OPACITY_COLOR_KEYS,
   SKIN_OPACITY_KEY,
   applyCoreColor,
-  markOpacityIntent,
   newCustomThemeId,
   normalizeHexInput,
   parseColorAlpha,
   parseColorValue,
   parseCustomThemeJSON,
-  readOpacityIntent,
-  stripOpacityColorKeys,
   toRgba,
   type CoreTokenKey,
   type CustomTheme,
-  type OpacityChannel,
 } from '../../hooks/customTheme'
 import { Button } from '../../ui/Button'
 import { FormRow } from '../../ui/PageLayout'
@@ -327,13 +322,6 @@ function readOpacityAlphas(overrides: Record<string, string>, skinDefault: numbe
   }
 }
 
-/** 两个覆盖集合是否等价（键集合相同且逐键同值；键序无关） */
-function sameOverrides(a: Record<string, string>, b: Record<string, string>): boolean {
-  const keys = Object.keys(a)
-  if (keys.length !== Object.keys(b).length) return false
-  return keys.every(k => a[k] === b[k])
-}
-
 /* ── 不透明度滑块行：range + 百分比数值 ──
    `label` 直接就是**被调整的对象名**（消息气泡 / 输入框 / 控制面板 / 弹窗 /
    背景图），不再挂「影响对象」小注：label 与 note 早先互为同义反复
@@ -474,81 +462,11 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
     overrides,
   })
 
-  // 基底切换后的第二阶段：新基底颜色已写入 DOM（旧派生色已被上一步剥离），
-  // 此时按当前 α 重新派生 rgba 覆盖。用 ref 记住已处理过的基底，避免拖动等渲染重复执行。
-  //
-  // dirty 语义：只有用户**显式拖过**的滑块通道才在基底切换后重派覆盖。
-  // 若不做这层约束，切换内置主题卡片就会因「旧基底滑块读数 ≠ 新基底默认 α」
-  // 误写 --modal-bg 覆盖 → 预览态/落盘被标记为「用户自定义」且刷新后回不来纯主题。
-  //
-  // dirty 的**来源必须是持久的**（localStorage，见 customTheme.readOpacityIntent）：
-  // 本浮窗虽已保活（开合不卸载），但「重开页面 / 重启」仍会让组件 ref 归零；
-  // 若以 ref 为准，用户「拖滑块 → 刷新 → 切主题」这条路径会让 dirty 判为 false，
-  // 于是 --input-bg 等派生色被 strip 后不再重派 → 回落基底实色，
-  // 用户设定的透明度被静默丢弃（滑块读数仍显示旧值）。这是输入框/气泡不跟透明度
-  // 变化的确定性根因。
-  //
-  // ── 状态职责（2026-09-28 语义正名，改前先读）──
-  // baseDefaults 是 **effect A 独占**的「当前基底 token 计算值」：A 与 B 同在
-  // theme 变化这一批执行、后写胜出，B 昔日直接 setBaseDefaults(next) 会把 A 刚
-  // 写入的正确基底值覆写成「剥皮后的覆盖集合」，表现为切主题后颜色区整片
-  // 褪成 #000000、滑块读数停在上一套。B 的产物是「基底切换后重派的派生覆盖」，
-  // 出口只有一个 —— 预览通道 applyCustomPreview(buildPreview(theme, next))。
-  const lastDerivedBaseRef = useRef(theme)
-  const dirtyOpacityRef = useRef<Record<OpacityChannel, boolean>>(readOpacityIntent())
-  useEffect(() => {
-    if (lastDerivedBaseRef.current === theme) return
-    lastDerivedBaseRef.current = theme
-    // 纯净预设态（无自定义激活、无预览草稿）没有可迁移的覆盖：基底值的刷新
-    // 完全归 effect A。此处一个字节的状态都不写 —— 否则点系统预设卡回不到
-    // 纯净态（铁律②），持久 dirty 意图也会把旧覆盖借尸还魂。
-    if (previewOverrides === null && customTheme === null) return
-    const dirty = dirtyOpacityRef.current
-    const { bubbles, input, panel, modal } = opacityAlphas
-    const cs = getComputedStyle(document.documentElement)
-    const colors: Record<string, { r: number; g: number; b: number } | null> = {}
-    for (const key of OPACITY_COLOR_KEYS) {
-      colors[key] = parseColorValue(cs.getPropertyValue(key).trim())
-    }
-    const user = colors['--msg-user-bg']
-    const assistant = colors['--msg-assistant-bg']
-    const inputColor = colors['--input-bg']
-    const panelColor = colors['--panel-bg']
-    const modalColor = colors['--modal-bg']
-    const next = stripOpacityColorKeys(activeOverrides)
-    if (dirty.bubbles && bubbles < 100 && user && assistant) {
-      next['--msg-user-bg'] = toRgba(user, bubbles / 100)
-      next['--msg-assistant-bg'] = toRgba(assistant, bubbles / 100)
-    }
-    if (dirty.input && input < 100 && inputColor) {
-      next['--input-bg'] = toRgba(inputColor, input / 100)
-    }
-    // 面板与弹窗同族：基底即半透明玻璃，仅当滑块值 ≠ 新基底默认 α 时才写覆盖
-    // （100% 写 α=1 实色，否则回落基底仍是玻璃）
-    if (dirty.panel && panelColor) {
-      const computedPct = Math.round(
-        (parseColorAlpha(cs.getPropertyValue('--panel-bg').trim()) ?? 0.8) * 100,
-      )
-      if (panel !== computedPct) {
-        next['--panel-bg'] = toRgba(panelColor, panel / 100)
-      }
-    }
-    if (dirty.modal && modalColor) {
-      const computedPct = Math.round(
-        (parseColorAlpha(cs.getPropertyValue('--modal-bg').trim()) ?? 0.8) * 100,
-      )
-      if (modal !== computedPct) {
-        next['--modal-bg'] = toRgba(modalColor, modal / 100)
-      }
-    }
-    // 出口语义正名（铁律①）：重派产物走预览通道。与当前生效覆盖一致（没有
-    // 需要重派的东西）时不动预览 —— 空预览会经 ThemeProvider 把已生效的
-    // 覆盖整体清掉。baseDefaults 由 effect A 独占，本 effect 不得写它。
-    if (!sameOverrides(next, activeOverrides)) {
-      applyCustomPreview(buildPreview(theme, next))
-    }
-  }, [theme, opacityAlphas, activeOverrides, customTheme])
-
+  // 不透明度属于**每个自定义主题自己的数据**（以 rgba / 数值覆盖的形式存于 overrides，
+  // 由主题 JSON 一起保存 / 导出 / 导入）。激活主题只应用该主题的 overrides，
+  // 绝不能用「上一个主题的滑块读数」重新派生覆盖 —— 那会把目标主题已保存的
+  // 不透明度改写成源主题的值（基底不同时必现，同基底时偶发，取决于 dirty 通道）。
+  // 早先的 dirty-intent 全局重派机制正是这一缺陷的来源，已整体移除。
   const handleColorCommit = (key: CoreTokenKey, hex: string) => {
     const next = applyCoreColor(activeOverrides, key, hex)
     const nextTheme = buildPreview(theme, next)
@@ -558,18 +476,8 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
   /* ── 不透明度滑块 ── */
   // 取当前生效色（computed style，兼容 hex/rgb/rgba）→ 转 rgba(color, α) 写入覆盖通道。
   // 拖动时读到的 rgb 即基底色（α 不改变 rgb 分量），后续拖动可继续以此派生。
-  //
-  // 每个 handler 都调 markOpacityIntent：把「用户拖过这个通道」落成持久声明。
-  // 只写组件内 ref 是不够的 —— 刷新/重启后 ref 归零，切主题时该通道的覆盖会被
-  // strip 掉且不再重派（详见 dirtyOpacityRef 处注释）。mark 写 ref 供本次会话立即生效，
-  // 写 localStorage 供重开 / 重启后仍然生效。
-  const markDirty = (channel: OpacityChannel) => {
-    dirtyOpacityRef.current[channel] = true
-    markOpacityIntent(channel)
-  }
-
+  // 覆盖随「保存」落到当前自定义主题；切换主题时按目标主题的覆盖原样恢复。
   const handleBubbleOpacity = (percent: number) => {
-    markDirty('bubbles')
     setOpacityAlphas(prev => ({ ...prev, bubbles: percent }))
     const cs = getComputedStyle(document.documentElement)
     const user = parseColorValue(cs.getPropertyValue('--msg-user-bg').trim())
@@ -587,7 +495,6 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
   }
 
   const handleInputOpacity = (percent: number) => {
-    markDirty('input')
     setOpacityAlphas(prev => ({ ...prev, input: percent }))
     const cs = getComputedStyle(document.documentElement)
     const inputColor = parseColorValue(cs.getPropertyValue('--input-bg').trim())
@@ -601,7 +508,6 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
   // 设置中心面板：语义上属弹窗族（--panel-bg），与弹窗同规则 ——
   // 基底即半透明玻璃，100% 需写 α=1 实色覆盖（不能 delete 回落基底，否则仍是玻璃）
   const handlePanelOpacity = (percent: number) => {
-    markDirty('panel')
     setOpacityAlphas(prev => ({ ...prev, panel: percent }))
     const cs = getComputedStyle(document.documentElement)
     const panelColor = parseColorValue(cs.getPropertyValue('--panel-bg').trim())
@@ -612,7 +518,6 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
   }
 
   const handleModalOpacity = (percent: number) => {
-    markDirty('modal')
     setOpacityAlphas(prev => ({ ...prev, modal: percent }))
     const cs = getComputedStyle(document.documentElement)
     const modalColor = parseColorValue(cs.getPropertyValue('--modal-bg').trim())
@@ -625,7 +530,6 @@ export function AppearancePanel({ open, onClose, toggleRef }: AppearancePanelPro
 
   // 皮肤背景图为数值直写（非 rgba 派生），0% 即隐藏背景图
   const handleSkinOpacity = (percent: number) => {
-    markDirty('skin')
     setOpacityAlphas(prev => ({ ...prev, skin: percent }))
     const next = { ...activeOverrides }
     next[SKIN_OPACITY_KEY] = String(percent / 100)

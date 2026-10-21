@@ -22,7 +22,7 @@ use crate::{
     api::ApiClient,
     hooks::{HookConfig, HookRunner},
     permissions::{PermissionPolicy, ToolCategory, ToolPermissions},
-    session::Session,
+    session::{PromptSnapshot, Session},
     ExecutionStep, Result, ToolCall, ToolRegistry, ToolResult,
 };
 use std::collections::HashMap;
@@ -313,7 +313,7 @@ impl ReactAgent {
     ///
     /// 缓存第一：merged system prompt 每 session 只构建一次。
     /// 一旦已构建，后续 set_leader_context 调用直接忽略——soul/relation/
-    /// tenets/memory.md 的中途变更一律下个 session 才生效，
+    /// memory.md 的中途变更一律下个 session 才生效，
     /// 保证 provider 侧 prompt cache 前缀在整个 session 内稳定。
     pub fn set_leader_context(&mut self, ctx: prompt::LeaderContext) {
         if self.cached_merged_system_prompt.is_some() {
@@ -326,14 +326,149 @@ impl ReactAgent {
         self.cached_tools_schemas = None;
     }
 
-    /// Invalidate prompt/tool-schema caches without touching leader_ctx.
-    /// Called on mode switch (Leader ↔ Workflow ↔ Custom) because Custom swaps
-    /// the L2 block and narrows the tool whitelist — cached merged prompt must rebuild.
+    /// 彻底作废提示词前缀：清运行时缓存 + 丢弃 session 快照。
+    ///
+    /// 用于「这份提示词内容已确定不再适用于本会话」的场景（换 mode、换 Custom
+    /// 卡片、换模型）。仅清缓存会保留 session 快照，下轮会被快照还原回来，
+    /// 等于没失效——所以这两个动作必须成对。
     pub fn invalidate_prompt_cache(&mut self) {
+        self.drop_prompt_prefix_cache();
+        self.session.clear_prompt_snapshot();
+    }
+
+    /// 换项目：清运行时缓存；仅当会话快照归属的项目已变时才丢弃快照。
+    ///
+    /// 切到归属同项目的会话时快照仍有效，保留可命中 provider 前缀缓存。
+    pub fn invalidate_prompt_cache_for_project(&mut self, project: Option<&str>) {
+        self.drop_prompt_prefix_cache();
+        let unchanged = self
+            .session
+            .prompt_snapshot()
+            .map(|snapshot| snapshot.project_path.as_deref() == project)
+            .unwrap_or(false);
+        if !unchanged {
+            self.session.clear_prompt_snapshot();
+        }
+    }
+
+    /// 只丢弃内存里的运行时构建缓存（cached_base/l1/merged/tools）。
+    ///
+    /// **不动 session 快照**——切走会话时用这个，让目标会话的快照留待下次
+    /// 切回时命中。要连快照一起作废请用 [`Self::invalidate_prompt_cache`]。
+    pub fn drop_prompt_prefix_cache(&mut self) {
         self.cached_base_prompt = None;
         self.cached_l1_prompt = None;
         self.cached_merged_system_prompt = None;
         self.cached_tools_schemas = None;
+    }
+
+    fn prompt_tool_schemas(&self) -> Vec<crate::api::ToolDefinition> {
+        match &self.custom_tool_whitelist {
+            Some(wl) => self.tools.get_schemas_for(wl),
+            None => self.tools.get_schemas(),
+        }
+    }
+
+    fn snapshot_matches(
+        &self,
+        snapshot: &PromptSnapshot,
+        mode: &str,
+        tools: &[crate::api::ToolDefinition],
+    ) -> bool {
+        snapshot.provider == self.config.provider
+            && snapshot.model == self.config.model
+            && snapshot.mode == mode
+            && snapshot.project_path == crate::utils::active_project().map(|(_, dir)| dir)
+            && snapshot.custom_agent_id == crate::custom_agents::current_custom_agent_id()
+            && snapshot.supports_vision == self.config.supports_vision
+            && snapshot.vision_model == self.config.vision_model
+            && snapshot.tools == tools
+    }
+
+    pub(crate) fn prepare_session_prompt_snapshot(&mut self, mode: &str) -> bool {
+        let Some(snapshot) = self.session.prompt_snapshot().cloned() else {
+            return false;
+        };
+        let tools = self.prompt_tool_schemas();
+        if !self.snapshot_matches(&snapshot, mode, &tools) {
+            // 逐字段对照：两种失败（快照在序列化跳板上丢失 / 判据不匹配）在日志里
+            // 签名完全相同（都是 rebuilt + captured），不拆开就只能靠猜。
+            tracing::info!(
+                "[PromptSnapshot] rejected: provider({}→{}) model({}→{}) mode({}→{}) \
+                 project({:?}→{:?}) custom({:?}→{:?}) vision({}→{}) vmodel({:?}→{:?}) \
+                 tools_eq({})",
+                snapshot.provider,
+                self.config.provider,
+                snapshot.model,
+                self.config.model,
+                snapshot.mode,
+                mode,
+                snapshot.project_path,
+                crate::utils::active_project().map(|(_, dir)| dir),
+                snapshot.custom_agent_id,
+                crate::custom_agents::current_custom_agent_id(),
+                snapshot.supports_vision,
+                self.config.supports_vision,
+                snapshot.vision_model,
+                self.config.vision_model,
+                snapshot.tools == tools,
+            );
+            self.drop_prompt_prefix_cache();
+            self.session.clear_prompt_snapshot();
+            return false;
+        }
+        self.cached_merged_system_prompt = Some(snapshot.system_prompt);
+        self.cached_tools_schemas = Some(snapshot.tools);
+        tracing::info!("[PromptSnapshot] restored session prompt prefix");
+        true
+    }
+
+    pub(crate) fn capture_session_prompt_snapshot(&mut self, mode: &str) {
+        if self.session.prompt_snapshot().is_some() {
+            return;
+        }
+        let (Some(system_prompt), Some(tools)) = (
+            self.cached_merged_system_prompt.clone(),
+            self.cached_tools_schemas.clone(),
+        ) else {
+            return;
+        };
+        self.session.set_prompt_snapshot(PromptSnapshot {
+            system_prompt,
+            tools,
+            provider: self.config.provider.clone(),
+            model: self.config.model.clone(),
+            mode: mode.to_string(),
+            project_path: crate::utils::active_project().map(|(_, dir)| dir),
+            custom_agent_id: crate::custom_agents::current_custom_agent_id(),
+            supports_vision: self.config.supports_vision,
+            vision_model: self.config.vision_model.clone(),
+            tenets_section: prompt::tenets_section(),
+        });
+        tracing::info!("[PromptSnapshot] captured session prompt prefix");
+    }
+
+    pub(crate) fn inject_tenet_update(&mut self) -> bool {
+        let current = prompt::tenets_section();
+        let previous = match self.session.prompt_snapshot() {
+            Some(snapshot) => snapshot.tenets_section.clone(),
+            None => return false,
+        };
+        if previous == current {
+            return false;
+        }
+        self.session
+            .push_user_internal(prompt::format_tenet_update(&current));
+        self.session.set_prompt_snapshot_tenets(current);
+        tracing::info!(
+            "[PromptSnapshot] injected tenet update ({} -> {} chars)",
+            previous.len(),
+            self.session
+                .prompt_snapshot()
+                .map(|s| s.tenets_section.len())
+                .unwrap_or(0)
+        );
+        true
     }
 
     /// Set task_dispatch execution resources (full tools + LLM + event emitter)
@@ -395,21 +530,17 @@ impl ReactAgent {
             }));
             self.last_used_binding = Some((provider, model));
         }
-        let tools = self
-            .cached_tools_schemas
-            .get_or_insert_with(|| {
-                // Custom mode whitelist narrows the API-visible function-calling schemas.
-                let schemas = match &self.custom_tool_whitelist {
-                    Some(wl) => self.tools.get_schemas_for(wl),
-                    None => self.tools.get_schemas(),
-                };
-                tracing::info!(
-                    "[PromptCache] Tool schemas cached ({} tools) for session",
-                    schemas.len()
-                );
-                schemas
-            })
-            .clone();
+        let tools = if let Some(tools) = &self.cached_tools_schemas {
+            tools.clone()
+        } else {
+            let schemas = self.prompt_tool_schemas();
+            tracing::info!(
+                "[PromptCache] Tool schemas cached ({} tools) for session",
+                schemas.len()
+            );
+            self.cached_tools_schemas = Some(schemas.clone());
+            schemas
+        };
 
         crate::api::MessageRequest::new(&self.config.model, messages)
             .with_merged_system(merged_system_prompt)
@@ -776,9 +907,13 @@ impl ReactAgent {
     }
 
     /// Set session (for restoring from history)
+    ///
+    /// 换会话必须清运行时缓存：否则上一会话已构建的 merged prompt 会被直接复用。
+    /// 新会话自带的快照（若有）由下轮 `prepare_session_prompt_snapshot` 还原。
     pub fn set_session(&mut self, session: Session) {
         self.session = session;
         self.steps.clear();
+        self.drop_prompt_prefix_cache();
     }
 
     /// Consume Agent and return execution steps (for persisting timeline)
@@ -992,5 +1127,133 @@ mod tests {
             extract_tool_calls_from_text_with_tags("text <tool_call>{\"name\":\"Read\"}", &[]);
         assert!(calls.is_empty());
         assert!(clean.contains("<tool_call>"));
+    }
+
+    #[test]
+    fn test_prompt_snapshot_restored_after_session_switch() {
+        let mut agent = agent_with_binding("provider-a", "model-1");
+        agent.session_mut().push_user("hi".to_string());
+        agent.cached_merged_system_prompt = Some("SNAP".to_string());
+        agent.build_request("SNAP");
+        agent.capture_session_prompt_snapshot("leader");
+        assert!(agent.session().prompt_snapshot().is_some());
+
+        let session = agent.session().clone();
+        agent.set_session(session);
+        assert!(agent.cached_merged_system_prompt.is_none());
+        assert!(agent.cached_tools_schemas.is_none());
+        assert!(agent.prepare_session_prompt_snapshot("leader"));
+        assert_eq!(agent.cached_merged_system_prompt.as_deref(), Some("SNAP"));
+        assert!(agent.cached_tools_schemas.is_some());
+    }
+
+    #[test]
+    fn test_prompt_snapshot_rejected_on_model_or_mode_change() {
+        let mut agent = agent_with_binding("provider-a", "model-1");
+        agent.session_mut().push_user("hi".to_string());
+        agent.cached_merged_system_prompt = Some("SNAP".to_string());
+        agent.build_request("SNAP");
+        agent.capture_session_prompt_snapshot("leader");
+
+        assert!(!agent.prepare_session_prompt_snapshot("custom"));
+        agent.config.model = "model-2".to_string();
+        assert!(!agent.prepare_session_prompt_snapshot("leader"));
+        assert!(agent.cached_merged_system_prompt.is_none());
+    }
+
+    #[test]
+    fn test_invalidate_prompt_cache_drops_snapshot() {
+        let mut agent = agent_with_binding("provider-a", "model-1");
+        agent.session_mut().push_user("hi".to_string());
+        agent.cached_merged_system_prompt = Some("SNAP".to_string());
+        agent.build_request("SNAP");
+        agent.capture_session_prompt_snapshot("leader");
+        agent.invalidate_prompt_cache();
+        assert!(agent.session().prompt_snapshot().is_none());
+        assert!(!agent.prepare_session_prompt_snapshot("leader"));
+    }
+
+    #[test]
+    fn test_prompt_snapshot_rejected_on_tools_change() {
+        let mut agent = agent_with_binding("provider-a", "model-1");
+        agent.session_mut().push_user("hi".to_string());
+        agent.cached_merged_system_prompt = Some("SNAP".to_string());
+        agent.build_request("SNAP");
+        agent.capture_session_prompt_snapshot("leader");
+        // 工具集变化（换 Custom 卡片白名单 / enhanced 开关）→ 前缀不再成立
+        agent
+            .session_mut()
+            .prompt_snapshot
+            .as_mut()
+            .unwrap()
+            .tools
+            .clear();
+        assert!(!agent.prepare_session_prompt_snapshot("leader"));
+        assert!(agent.session().prompt_snapshot().is_none());
+    }
+
+    #[test]
+    fn test_project_change_keeps_snapshot_for_same_project() {
+        let mut agent = agent_with_binding("provider-a", "model-1");
+        agent.session_mut().push_user("hi".to_string());
+        agent.cached_merged_system_prompt = Some("SNAP".to_string());
+        agent.build_request("SNAP");
+        agent.capture_session_prompt_snapshot("leader");
+        let current = crate::utils::active_project().map(|(_, dir)| dir);
+        agent.invalidate_prompt_cache_for_project(current.as_deref());
+        assert!(agent.session().prompt_snapshot().is_some());
+        agent
+            .session_mut()
+            .prompt_snapshot
+            .as_mut()
+            .unwrap()
+            .project_path = Some("__other_project__".to_string());
+        assert!(!agent.prepare_session_prompt_snapshot("leader"));
+        assert!(agent.session().prompt_snapshot().is_none());
+    }
+
+    #[test]
+    fn test_capture_keeps_existing_snapshot_marker() {
+        let mut agent = agent_with_binding("provider-a", "model-1");
+        agent.session_mut().push_user("hi".to_string());
+        agent.cached_merged_system_prompt = Some("SNAP".to_string());
+        agent.build_request("SNAP");
+        agent.capture_session_prompt_snapshot("leader");
+        agent
+            .session_mut()
+            .set_prompt_snapshot_tenets("stale-tenets".to_string());
+        agent.capture_session_prompt_snapshot("leader");
+        assert_eq!(
+            agent.session().prompt_snapshot().unwrap().tenets_section,
+            "stale-tenets"
+        );
+    }
+
+    #[test]
+    fn test_tenet_update_injected_once() {
+        let mut agent = agent_with_binding("provider-a", "model-1");
+        agent.session_mut().push_user("hi".to_string());
+        agent
+            .session_mut()
+            .set_prompt_snapshot(crate::session::PromptSnapshot {
+                system_prompt: "SNAP".to_string(),
+                tools: Vec::new(),
+                provider: "provider-a".to_string(),
+                model: "model-1".to_string(),
+                mode: "leader".to_string(),
+                project_path: None,
+                custom_agent_id: None,
+                supports_vision: false,
+                vision_model: None,
+                tenets_section: "stale-tenets".to_string(),
+            });
+        let before = agent.session().len();
+        assert!(agent.inject_tenet_update());
+        assert_eq!(agent.session().len(), before + 1);
+        assert!(!agent.inject_tenet_update());
+        assert_eq!(
+            agent.session().prompt_snapshot().unwrap().tenets_section,
+            prompt::tenets_section()
+        );
     }
 }

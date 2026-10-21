@@ -20,7 +20,7 @@ import { act, fireEvent, render, screen, waitFor, type RenderResult } from '@tes
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppearancePanel } from './AppearancePanel'
 import { ThemeProvider } from '../../hooks/useTheme'
-import { markOpacityIntent, OPACITY_COLOR_KEYS } from '../../hooks/customTheme'
+import { OPACITY_COLOR_KEYS } from '../../hooks/customTheme'
 import { __setThumbEncoder } from '../../ui/assetUrl'
 
 // 轻提示通道：jsdom 无 Tauri IPC，桩掉（HUD/island 分流不在本测试范围）
@@ -859,7 +859,7 @@ describe('系统主题切换：自定义区实时跟随当前基底', () => {
     expect(screen.queryByRole('button', { name: '放弃修改' })).toBeNull()
     expect(document.documentElement.style.getPropertyValue('--msg-user-bg')).toBe('')
 
-    // 再切清新仍跟随（持久 dirty 意图 ≠ 覆盖可跨主题残留）
+    // 再切清新仍跟随（系统预设态不携带任何自定义覆盖）
     await switchPreset(view, 2)
     expect(opacitySliderValues(view)).toEqual(EXPECTED.fresh.sliders)
   })
@@ -884,7 +884,7 @@ describe('系统主题切换：自定义区实时跟随当前基底', () => {
     expect(opacitySliderValues(view)).toEqual(EXPECTED.light.sliders)
   })
 
-  it('dirty 通道跨基底重派走预览通道：激活另一基底的已存主题时按新基底色重派生', async () => {
+  it('切换自定义主题：按目标主题自己的不透明度恢复，不被源主题滑块覆盖', async () => {
     localStorage.setItem(
       'nuphus_custom_themes',
       JSON.stringify([
@@ -892,33 +892,82 @@ describe('系统主题切换：自定义区实时跟随当前基底', () => {
           id: 'ct-src',
           name: '源',
           base: 'dark',
-          overrides: { '--msg-user-bg': 'rgba(21, 34, 56, 0.6)' },
+          overrides: {
+            '--msg-user-bg': 'rgba(21, 34, 56, 0.6)',
+            '--msg-assistant-bg': 'rgba(18, 20, 30, 0.6)',
+          },
         },
-        { id: 'ct-dst', name: '目标', base: 'light', overrides: { '--surface-0': '#ffffff' } },
+        {
+          id: 'ct-dst',
+          name: '目标',
+          base: 'light',
+          overrides: {
+            '--surface-0': '#ffffff',
+            '--msg-user-bg': 'rgba(240, 240, 242, 0.4)',
+            '--msg-assistant-bg': 'rgba(255, 255, 255, 0.4)',
+          },
+        },
       ]),
     )
     localStorage.setItem('nuphus_custom_active', 'ct-src')
-    // 用户拖过气泡通道（持久 dirty 意图，customTheme.readOpacityIntent）
-    markOpacityIntent('bubbles')
     const view = await renderPanel()
 
     // 源主题激活态：滑块读自身覆盖（60%）
     expect(opacitySliderValues(view)[0]).toBe(60)
 
-    // 激活另一基底的已存主题（dark → light）：dirty 通道按新基底颜色重派，
-    // 产物走预览通道（「放弃修改」随之出现），而不是覆写基底显示值
+    // 激活另一基底的已存主题（dark → light）：必须原样恢复目标主题保存的 40%，
+    // 不得用源主题的 60% 重派覆盖（这正是旧 dirty 重派机制的缺陷）
     await act(async () => {
       fireEvent.click(themeCards(view)[0].querySelector('.apnp-theme-face') as HTMLElement)
     })
 
-    expect(screen.getByRole('button', { name: '放弃修改' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '放弃修改' })).toBeNull()
+    expect(opacitySliderValues(view)[0]).toBe(40)
     expect(document.documentElement.style.getPropertyValue('--msg-user-bg')).toBe(
-      'rgba(240, 240, 242, 0.6)',
+      'rgba(240, 240, 242, 0.4)',
     )
     expect(document.documentElement.style.getPropertyValue('--msg-assistant-bg')).toBe(
-      'rgba(255, 255, 255, 0.6)',
+      'rgba(255, 255, 255, 0.4)',
     )
     // 颜色区：生效覆盖优先（ct-dst 的 surface-0），其余回落 light 基底（非 #000000）
     expect(colorTokenValues(view)).toEqual(EXPECTED.light.colors)
+  })
+
+  it('每个自定义主题各自保存不透明度：改完保存后切走再切回仍保留', async () => {
+    localStorage.setItem(
+      'nuphus_custom_themes',
+      JSON.stringify([
+        { id: 'ct-a', name: '甲', base: 'dark', overrides: {} },
+        { id: 'ct-b', name: '乙', base: 'light', overrides: {} },
+      ]),
+    )
+    localStorage.setItem('nuphus_custom_active', 'ct-a')
+    const view = await renderPanel()
+    const cardByName = (name: string) =>
+      themeCards(view).find(c => c.querySelector('.apnp-theme-name')?.textContent === name)!
+
+    // 在甲上把气泡拖到 35% 并保存
+    fireEvent.change(view.container.querySelectorAll('.opacity-range')[0], {
+      target: { value: '35' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    const savedA = storedThemes().find(t => t.id === 'ct-a')
+    expect(savedA?.overrides['--msg-user-bg']).toBe('rgba(21, 34, 56, 0.35)')
+
+    // 切到乙（无覆盖 → 回落 light 基底默认 100%）
+    await act(async () => {
+      fireEvent.click(cardByName('乙').querySelector('.apnp-theme-face') as HTMLElement)
+    })
+    expect(opacitySliderValues(view)[0]).toBe(100)
+
+    // 切回甲 → 恢复甲保存的 35%
+    await act(async () => {
+      fireEvent.click(cardByName('甲').querySelector('.apnp-theme-face') as HTMLElement)
+    })
+    expect(opacitySliderValues(view)[0]).toBe(35)
+    expect(document.documentElement.style.getPropertyValue('--msg-user-bg')).toBe(
+      'rgba(21, 34, 56, 0.35)',
+    )
   })
 })

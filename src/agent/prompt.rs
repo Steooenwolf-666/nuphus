@@ -1151,10 +1151,24 @@ pub fn build_workagent_prompt(
     parts.join("\n")
 }
 
-/// User teaching tenets (injected into L1, shared across dispatch → KV cache stable)
+/// User teaching tenets (injected into L1, shared across dispatch → KV cache stable).
+/// General tenets always apply; project tenets are filtered by the current project.
 pub fn tenets_section() -> String {
     let store = crate::memory::TenetStore::new();
-    store.format_for_prompt().unwrap_or_default()
+    let current_project = crate::utils::active_project().map(|(_, dir)| dir);
+    store
+        .format_for_prompt(current_project.as_deref())
+        .unwrap_or_default()
+}
+
+pub fn format_tenet_update(current: &str) -> String {
+    if current.trim().is_empty() {
+        "## 用户原则更新\n此前注入的用户原则清单已全部失效；当前没有生效中的用户原则。".to_string()
+    } else {
+        format!(
+            "## 用户原则更新（即时生效；此前系统提示中的原则清单作废，以下为当前完整清单）\n{current}"
+        )
+    }
 }
 
 /// MCP capability declaration — always injected regardless of config state.
@@ -1195,6 +1209,15 @@ pub fn mcp_tools_section() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tenet_update_marks_previous_list_obsolete() {
+        let text = format_tenet_update("当前原则");
+        assert!(text.contains("此前系统提示中的原则清单作废"));
+        assert!(text.contains("当前原则"));
+        let empty = format_tenet_update("  ");
+        assert!(empty.contains("没有生效中的用户原则"));
+    }
 
     /// 解析用 model id 与展示用标签必须分流（Exec 路径回归钉子）。
     ///

@@ -11,6 +11,40 @@ use serde::{Deserialize, Serialize};
 pub const REFINE_SYSTEM_PREFIX: &str =
     "[当前 session 对话内容已触发提炼，以下是提炼的内容，非当前指令]";
 
+/// 进程内提示词前缀快照（session 切换时复用，避免重建 L0+L2+L1）。
+///
+/// **只活在内存，永不落盘**——这是本结构的核心约束，不是实现细节：
+/// - L1 里含每运行随机生成的门铃令牌（`handoff::HandoffState::token`）和
+///   `chrono::Local` 当天日期。若随 `Session` 序列化进 SQLite，重启后恢复
+///   旧会话会把死令牌/旧日期当成有效系统提示，外部 Agent 上报一律 403。
+/// - 升级安装包必然重启进程 → 快照天然失效，提示词按新版本重建，不存在
+///   「旧版本宪法滞留」的静默偏差。
+///
+/// 因此快照不需要 revision / created_at 之类的版本或时效判据：进程边界
+/// 就是唯一且完备的失效条件。失效口径 = 「重启即重算」，与项目「重启走
+/// 最新数据、不做缓存保障」一致。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptSnapshot {
+    pub system_prompt: String,
+    #[serde(default)]
+    pub tools: Vec<crate::api::ToolDefinition>,
+    pub provider: String,
+    pub model: String,
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub project_path: Option<String>,
+    /// Custom 模式激活卡片 id；其它模式 None。防同工具集的两张卡串 L2。
+    #[serde(default)]
+    pub custom_agent_id: Option<String>,
+    #[serde(default)]
+    pub supports_vision: bool,
+    #[serde(default)]
+    pub vision_model: Option<String>,
+    #[serde(default)]
+    pub tenets_section: String,
+}
+
 /// 会话
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -45,6 +79,11 @@ pub struct Session {
     /// 用作 memory entry 的 turn_id，用于因果链追踪。
     #[serde(default)]
     pub turn_count: u32,
+    /// 进程内提示词前缀快照（session 切换复用）。**永不落盘**：
+    /// `skip` 使其不进任何 serde 序列化路径（SQLite 镜像 / session_backup /
+    /// retry_session / 手机端回执），进程重启即自然丢弃，按最新数据重建。
+    #[serde(skip)]
+    pub prompt_snapshot: Option<PromptSnapshot>,
 }
 
 impl Session {
@@ -62,6 +101,7 @@ impl Session {
             api_input_tokens: 0,
             api_output_tokens: 0,
             turn_count: 0,
+            prompt_snapshot: None,
         }
     }
 
@@ -91,6 +131,7 @@ impl Session {
             api_input_tokens: 0,
             api_output_tokens: 0,
             turn_count: parent_depth + 1,
+            prompt_snapshot: None,
         }
     }
 
@@ -141,6 +182,7 @@ impl Session {
             api_input_tokens: 0,
             api_output_tokens: 0,
             turn_count: 0,
+            prompt_snapshot: None,
         }
     }
 
@@ -230,6 +272,25 @@ impl Session {
     pub fn clear(&mut self) {
         self.messages.clear();
         self.refined = false;
+        self.prompt_snapshot = None;
+    }
+
+    pub fn prompt_snapshot(&self) -> Option<&PromptSnapshot> {
+        self.prompt_snapshot.as_ref()
+    }
+
+    pub fn set_prompt_snapshot(&mut self, snapshot: PromptSnapshot) {
+        self.prompt_snapshot = Some(snapshot);
+    }
+
+    pub fn clear_prompt_snapshot(&mut self) {
+        self.prompt_snapshot = None;
+    }
+
+    pub fn set_prompt_snapshot_tenets(&mut self, tenets_section: String) {
+        if let Some(snapshot) = self.prompt_snapshot.as_mut() {
+            snapshot.tenets_section = tenets_section;
+        }
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -376,6 +437,7 @@ impl Session {
             api_input_tokens: 0,
             api_output_tokens: 0,
             turn_count: 0,
+            prompt_snapshot: None,
         }
     }
 }
@@ -383,5 +445,61 @@ impl Session {
 impl Default for Session {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 核心不变量：提示词快照绝不进序列化产物。
+    /// 一旦回归，重启恢复会把旧进程的门铃令牌/日期当成有效系统提示。
+    #[test]
+    fn prompt_snapshot_never_serialized() {
+        let mut session = Session::new();
+        session.set_prompt_snapshot(PromptSnapshot {
+            system_prompt: "sys".to_string(),
+            tools: Vec::new(),
+            provider: "p".to_string(),
+            model: "m".to_string(),
+            mode: "leader".to_string(),
+            project_path: None,
+            custom_agent_id: None,
+            supports_vision: false,
+            vision_model: None,
+            tenets_section: String::new(),
+        });
+        assert!(session.prompt_snapshot().is_some());
+
+        let value = serde_json::to_value(&session).unwrap();
+        assert!(
+            value.get("prompt_snapshot").is_none(),
+            "prompt_snapshot 必须被 serde(skip) 排除，否则会落盘"
+        );
+
+        // 往返后快照必然丢失 —— 这就是「重启即重算」的实现方式
+        let restored: Session = serde_json::from_value(value).unwrap();
+        assert!(restored.prompt_snapshot().is_none());
+    }
+
+    #[test]
+    fn clear_resets_prompt_snapshot() {
+        let mut session = Session::new();
+        session.set_prompt_snapshot(PromptSnapshot {
+            system_prompt: "sys".to_string(),
+            tools: Vec::new(),
+            provider: "p".to_string(),
+            model: "m".to_string(),
+            mode: "leader".to_string(),
+            project_path: None,
+            custom_agent_id: None,
+            supports_vision: false,
+            vision_model: None,
+            tenets_section: String::new(),
+        });
+        session.set_prompt_snapshot_tenets("tenets".to_string());
+        assert_eq!(session.prompt_snapshot().unwrap().tenets_section, "tenets");
+        session.clear();
+        assert!(session.prompt_snapshot().is_none());
     }
 }

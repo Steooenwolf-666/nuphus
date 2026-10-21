@@ -570,6 +570,11 @@ impl Runtime {
         self.agent.session_mut()
     }
 
+    /// 丢弃运行时构建缓存，但保留会话自身的提示词快照（切换会话时用）。
+    pub fn drop_prompt_prefix_cache(&mut self) {
+        self.agent.drop_prompt_prefix_cache();
+    }
+
     /// Set Session (used when restoring from history)
     pub fn set_session(&mut self, session: Session) {
         self.agent.set_session(session);

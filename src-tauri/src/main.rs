@@ -451,6 +451,7 @@ fn main() {
             commands::reject_user_input,
             commands::get_tenets,
             commands::add_tenet,
+            commands::update_tenet,
             commands::delete_tenet,
             commands::skill_install,
             commands::skill_install_git,

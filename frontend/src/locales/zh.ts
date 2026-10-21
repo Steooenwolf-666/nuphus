@@ -369,6 +369,7 @@ const zh: Record<string, string> = {
   'sessionRail.newChatBrowse': '浏览本地目录…',
   'sessionRail.newChatSwitchFail': '切换项目失败，未创建对话',
   'sessionRail.newChatBrowseFail': '未能打开目录选择器',
+  'sessionRail.editProjectTenets': '编辑项目原则',
   // ── 会话工作台：「项目」行 ⋯ 菜单（整理 / 排序 / 恢复隐藏项目）+ 📁+ ──
   'sessionRail.projectsMenu': '项目菜单',
   'sessionRail.newProjectFolder': '新建项目文件夹',
@@ -2013,6 +2014,22 @@ const zh: Record<string, string> = {
   'memory.tenet.content': '原则内容 *',
   'memory.tenet.placeholder': '例如：涉及用户隐私的操作必须先征得同意',
   'memory.tenet.priority': '优先级',
+  'memory.tenet.generalTitle': '通用原则',
+  'memory.tenet.projectTitle': '项目原则',
+  'memory.tenet.projectTitleWithName': '项目原则 · {0}',
+  'memory.tenet.projectGuide':
+    '仅对「{0}」生效；切换项目后自动改用该项目的原则。修改将在下一条消息生效。',
+  'memory.tenet.projectEmpty': '该项目暂未设置原则',
+  'memory.tenet.addProject': '添加项目原则',
+  'memory.tenet.allTitle': '教导原则',
+  'memory.tenet.allGuide':
+    '通用原则对所有项目生效；项目原则仅对对应项目生效。修改将在下一条消息生效。',
+  'memory.tenet.scope': '作用域',
+  'memory.tenet.edit': '编辑原则',
+  'memory.tenet.priority.critical': '核心',
+  'memory.tenet.priority.high': '重要',
+  'memory.tenet.priority.medium': '一般',
+  'memory.tenet.priority.low': '提醒',
   'memory.noTenets': '暂无教导原则。在对话中 Nuphus 会自主总结经验，也可通过审批流添加原则。',
   'memory.noPatterns': '暂无可复用经验（来源：用户点评 / 系统提炼）',
   'memory.annotation.guide':

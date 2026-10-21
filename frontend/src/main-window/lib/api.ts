@@ -46,6 +46,8 @@ export function getTenets() {
     items: Array<{
       id: string
       content: string
+      /** null/空 = 通用原则；非空 = 仅归属该项目目录 */
+      project_path: string | null
       priority: string
       enforce: string
       active: boolean
@@ -58,8 +60,12 @@ export function deleteTenet(id: string) {
   return invoke<boolean>('delete_tenet', { id })
 }
 
-export function addTenet(content: string, priority?: string) {
-  return invoke<void>('add_tenet', { content, priority })
+export function addTenet(content: string, priority?: string, projectPath?: string) {
+  return invoke<void>('add_tenet', { content, priority, projectPath })
+}
+
+export function updateTenet(id: string, content: string, priority?: string) {
+  return invoke<boolean>('update_tenet', { id, content, priority })
 }
 
 // ── 新知识库 API ──

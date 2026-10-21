@@ -382,6 +382,7 @@ const en: Record<string, string> = {
   'sessionRail.newChatBrowse': 'Browse local folder…',
   'sessionRail.newChatSwitchFail': 'Project switch failed ...chat not created',
   'sessionRail.newChatBrowseFail': 'Could not open the folder picker',
+  'sessionRail.editProjectTenets': 'Edit project tenets',
   // ── Session rail: "Projects" row menu (tidy / sort / restore hidden) + 📁+ ──
   'sessionRail.projectsMenu': 'Project menu',
   'sessionRail.newProjectFolder': 'New project folder',
@@ -2114,6 +2115,22 @@ const en: Record<string, string> = {
   'memory.tenet.content': 'Content *',
   'memory.tenet.placeholder': 'e.g., Always ask before modifying user configuration files',
   'memory.tenet.priority': 'Priority',
+  'memory.tenet.generalTitle': 'General Tenets',
+  'memory.tenet.projectTitle': 'Project Tenets',
+  'memory.tenet.projectTitleWithName': 'Project Tenets · {0}',
+  'memory.tenet.projectGuide':
+    'Applies only to "{0}". Switching projects automatically uses that project\'s tenets. Changes take effect on your next message.',
+  'memory.tenet.projectEmpty': 'No tenets for this project yet.',
+  'memory.tenet.addProject': 'Add project tenet',
+  'memory.tenet.allTitle': 'Tenets',
+  'memory.tenet.allGuide':
+    'General tenets apply to every project; project tenets apply only to their own project. Changes take effect on your next message.',
+  'memory.tenet.scope': 'Scope',
+  'memory.tenet.edit': 'Edit tenet',
+  'memory.tenet.priority.critical': 'Core',
+  'memory.tenet.priority.high': 'Important',
+  'memory.tenet.priority.medium': 'General',
+  'memory.tenet.priority.low': 'Reminder',
   'memory.noTenets':
     'No tenets yet. Nuphus learns principles from conversations, or you can add them through the approval flow.',
   'memory.noPatterns': 'No reusable experience yet (sources: user reviews / system distills).',
