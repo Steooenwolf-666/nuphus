@@ -1,4 +1,12 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo, type ReactNode } from 'react'
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useLayoutEffect,
+  useCallback,
+  useMemo,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import type {
   ChatMessage,
@@ -351,45 +359,6 @@ export function ChatPanel({
   const [selectedOption, setSelectedOption] = useState(0)
   const [pausing, setPausing] = useState(false)
   const [showPauseLocal, setShowPauseLocal] = useState(false)
-
-  // ── Refine 折叠：refine 前历史消息默认折叠（小巧占位），解决多轮 refine 后
-  // 前端历史气泡累积卡顿。点击折叠条展开/折叠。expandedRefineIds 记录展开的段。
-  const [expandedRefineIds, setExpandedRefineIds] = useState<Set<string>>(new Set())
-  const toggleRefineExpand = useCallback((id: string) => {
-    setExpandedRefineIds(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }, [])
-  // 按 refine 边界分段：每个 refine 消息前的连续消息为可折叠段
-  const refineSegments = useMemo(() => {
-    const segs: { refineId: string; beforeStart: number; beforeEnd: number; count: number }[] = []
-    let segStart = 0
-    messages.forEach((msg, idx) => {
-      if (msg.role === 'refine') {
-        segs.push({
-          refineId: msg.id,
-          beforeStart: segStart,
-          beforeEnd: idx - 1,
-          count: idx - segStart,
-        })
-        segStart = idx + 1
-      }
-    })
-    return segs
-  }, [messages])
-  // 折叠段内的消息索引（未展开的段）——map 时跳过，不渲染
-  const collapsedBeforeIds = useMemo(() => {
-    const set = new Set<number>()
-    refineSegments.forEach(seg => {
-      if (!expandedRefineIds.has(seg.refineId) && seg.count > 0) {
-        for (let i = seg.beforeStart; i <= seg.beforeEnd; i++) set.add(i)
-      }
-    })
-    return set
-  }, [refineSegments, expandedRefineIds])
 
   // ── 文件预览覆盖层（AI 回复路径点击） ──
   const [previewPath, setPreviewPath] = useState<string | null>(null)
@@ -1111,10 +1080,95 @@ export function ChatPanel({
   // 执行追踪面板（ExecutionTraceFloating）不传该选项，保持原严格语义不变。
   // smoothPull = true（2026-10-11）：流式增长与回底按钮改走 rAF 追踪循环（每帧向底部
   // 收拢、目标每帧重测），「瞬移跳动」变连续滑移；程序性回填（followReset）保持瞬移。
-  const { scrollRef, showJumpButton, onScroll, jumpToBottom, followReset } = useStickyScroll(
-    messages,
-    { bottomZonePx: 80, smoothPull: true },
+  const { scrollRef, showJumpButton, onScroll, jumpToBottom, followReset, nudgeScrollTop } =
+    useStickyScroll(messages, { bottomZonePx: 80, smoothPull: true })
+
+  // ── Refine 折叠：refine 前历史消息默认折叠（小巧占位），解决多轮 refine 后
+  // 前端历史气泡累积卡顿。点击折叠条展开/折叠。expandedRefineIds 记录展开的段。
+  //
+  // 两条体验铁律（大王 10-21）：
+  // 1) refine 进行中（streaming）不折叠它前面的历史——刚触发提炼就把上文藏了，
+  //    用户看不到提炼正在处理的上下文；等 refine 完成（completed）再折叠。
+  // 2) 折叠/展开不跳顶：历史消息批量显隐会骤改滚动高度，浏览器把视口重定位到
+  //    顶部。操作前记录 refine 分隔线的视口位置，DOM 提交后补偿 scrollTop；贴底
+  //    跟随时直接回底（用户在底部看最新内容，不该被中间折叠条拽到上文去）。
+  const [expandedRefineIds, setExpandedRefineIds] = useState<Set<string>>(new Set())
+  const refineAnchorRef = useRef<{ id: string; atBottom: boolean; viewportY: number } | null>(null)
+  const toggleRefineExpand = useCallback(
+    (id: string) => {
+      const container = scrollRef.current
+      if (container) {
+        const anchor = container.querySelector(`[data-refine-anchor="${id}"]`) as HTMLElement | null
+        refineAnchorRef.current = {
+          id,
+          atBottom: !showJumpButton,
+          viewportY: anchor
+            ? anchor.getBoundingClientRect().top - container.getBoundingClientRect().top
+            : 0,
+        }
+      }
+      setExpandedRefineIds(prev => {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        return next
+      })
+    },
+    [showJumpButton],
   )
+  // DOM 提交后（绘制前）恢复锚点：贴底则回底，否则把 refine 分隔线挪回原视口位置，
+  // 抵消历史消息批量显隐造成的滚动高度跳变。
+  useLayoutEffect(() => {
+    const anchor = refineAnchorRef.current
+    if (!anchor) return
+    refineAnchorRef.current = null
+    const container = scrollRef.current
+    if (!container) return
+    if (anchor.atBottom) {
+      jumpToBottom()
+      return
+    }
+    const el = container.querySelector(`[data-refine-anchor="${anchor.id}"]`) as HTMLElement | null
+    if (!el) return
+    const newViewportY = el.getBoundingClientRect().top - container.getBoundingClientRect().top
+    const delta = newViewportY - anchor.viewportY
+    if (delta !== 0) nudgeScrollTop(delta)
+  }, [expandedRefineIds, nudgeScrollTop, jumpToBottom])
+  // 按 refine 边界分段：每个 refine 消息前的连续消息为可折叠段
+  const refineSegments = useMemo(() => {
+    const segs: {
+      refineId: string
+      beforeStart: number
+      beforeEnd: number
+      count: number
+      streaming: boolean
+    }[] = []
+    let segStart = 0
+    messages.forEach((msg, idx) => {
+      if (msg.role === 'refine') {
+        segs.push({
+          refineId: msg.id,
+          beforeStart: segStart,
+          beforeEnd: idx - 1,
+          count: idx - segStart,
+          streaming: msg.refineStatus === 'streaming',
+        })
+        segStart = idx + 1
+      }
+    })
+    return segs
+  }, [messages])
+  // 折叠段内的消息索引（未展开的段）——map 时跳过，不渲染。
+  // streaming 段不折叠：提炼进行中保留上文可见（见上方铁律 1）。
+  const collapsedBeforeIds = useMemo(() => {
+    const set = new Set<number>()
+    refineSegments.forEach(seg => {
+      if (!seg.streaming && !expandedRefineIds.has(seg.refineId) && seg.count > 0) {
+        for (let i = seg.beforeStart; i <= seg.beforeEnd; i++) set.add(i)
+      }
+    })
+    return set
+  }, [refineSegments, expandedRefineIds])
   // followReset 回填：useEvents 在 App 层（本组件之上）监听 nuphus-event，
   // execution_started（新轮次恢复跟随后续流式）/ execution_completed（完成瞬间补拉）
   // 都要拉回底部 —— 函数不能经 props 上行，父层下发 followResetRef、本组件把最新闭包
@@ -1866,7 +1920,7 @@ export function ChatPanel({
                         const segExpanded = expandedRefineIds.has(msg.id)
                         return (
                           <React.Fragment key={msg.id}>
-                            {seg && seg.count > 0 && !segExpanded && (
+                            {seg && seg.count > 0 && !segExpanded && !seg.streaming && (
                               <RefineCollapseBar
                                 count={seg.count}
                                 expanded={false}
@@ -1877,6 +1931,7 @@ export function ChatPanel({
                               summary={msg.refineStatus === 'completed' ? msg.content : ''}
                               messageCount={msg.messageCount ?? 0}
                               sessionId={msg.sessionId ?? ''}
+                              anchorId={msg.id}
                               streamingContent={
                                 msg.refineStatus === 'streaming' ? msg.content || null : null
                               }
