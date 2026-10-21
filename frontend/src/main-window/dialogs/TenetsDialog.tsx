@@ -53,9 +53,7 @@ export function TenetsDialog({ onClose, project }: TenetsDialogProps) {
   const title = project
     ? t('memory.tenet.projectTitleWithName', project.name)
     : t('memory.tenet.allTitle')
-  const guide = project
-    ? t('memory.tenet.projectGuide', project.name)
-    : t('memory.tenet.allGuide')
+  const guide = project ? t('memory.tenet.projectGuide', project.name) : t('memory.tenet.allGuide')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -227,27 +225,17 @@ export function TenetsDialog({ onClose, project }: TenetsDialogProps) {
                   <div key={tenet.id} className="td-card">
                     <div className="td-card-header">
                       <div className="td-card-meta">
-                        <span
-                          className="td-badge-project"
-                          title={tenet.project_path || undefined}
-                        >
+                        <span className="td-badge-project" title={tenet.project_path || undefined}>
                           {scopeName(tenet)}
                         </span>
                         <select
                           className="td-priority-select"
                           aria-label={t('memory.tenet.priority')}
                           title={t('memory.tenet.priority')}
-                          value={
-                            editing
-                              ? editPriority
-                              : normalizeTenetPriority(tenet.priority)
-                          }
+                          value={editing ? editPriority : normalizeTenetPriority(tenet.priority)}
                           disabled={busyId === tenet.id}
                           onChange={e =>
-                            void handlePriorityChange(
-                              tenet,
-                              normalizeTenetPriority(e.target.value),
-                            )
+                            void handlePriorityChange(tenet, normalizeTenetPriority(e.target.value))
                           }
                         >
                           {TENET_PRIORITIES.map(priority => (
@@ -370,9 +358,7 @@ export function TenetsDialog({ onClose, project }: TenetsDialogProps) {
                   id="tenet-priority"
                   className="memdlg-select"
                   value={addPriority}
-                  onChange={e =>
-                    setAddPriority(normalizeTenetPriority(e.target.value))
-                  }
+                  onChange={e => setAddPriority(normalizeTenetPriority(e.target.value))}
                 >
                   {TENET_PRIORITIES.map(priority => (
                     <option key={priority} value={priority}>

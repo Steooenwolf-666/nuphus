@@ -229,15 +229,10 @@ export function ProjectTenetsPanel({ project }: ProjectTenetsPanelProps) {
                       className="td-priority-select"
                       aria-label={t('memory.tenet.priority')}
                       title={t('memory.tenet.priority')}
-                      value={
-                        editing ? editPriority : normalizeTenetPriority(tenet.priority)
-                      }
+                      value={editing ? editPriority : normalizeTenetPriority(tenet.priority)}
                       disabled={busyId === tenet.id}
                       onChange={e =>
-                        void handlePriorityChange(
-                          tenet,
-                          normalizeTenetPriority(e.target.value),
-                        )
+                        void handlePriorityChange(tenet, normalizeTenetPriority(e.target.value))
                       }
                     >
                       {TENET_PRIORITIES.map(priority => (

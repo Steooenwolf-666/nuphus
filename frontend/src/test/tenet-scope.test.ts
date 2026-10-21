@@ -24,9 +24,9 @@ describe('原则作用域过滤', () => {
   })
 
   it('不匹配任何项目 → 空列表，不把通用原则混入项目视图', () => {
-    expect(
-      filterTenetsForScope(items, { name: 'C', path: 'E:\\proj\\C' }).map(t => t.id),
-    ).toEqual([])
+    expect(filterTenetsForScope(items, { name: 'C', path: 'E:\\proj\\C' }).map(t => t.id)).toEqual(
+      [],
+    )
   })
 })
 

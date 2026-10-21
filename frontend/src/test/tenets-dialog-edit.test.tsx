@@ -52,9 +52,7 @@ function renderDialog() {
 describe('输入框原则弹窗：项目名 / 优先级 / 编辑', () => {
   beforeEach(() => {
     getTenets.mockReset().mockResolvedValue({ count: 2, total: 2, items })
-    getProjectBookmarks.mockReset().mockResolvedValue([
-      { name: '甲项目', path: 'E:\\Proj\\A' },
-    ])
+    getProjectBookmarks.mockReset().mockResolvedValue([{ name: '甲项目', path: 'E:\\Proj\\A' }])
     getProjectDir.mockReset().mockResolvedValue({
       path: 'E:\\Proj\\A',
       name: '甲项目',
@@ -92,9 +90,7 @@ describe('输入框原则弹窗：项目名 / 优先级 / 编辑', () => {
     expect(updateTenet).not.toHaveBeenCalled()
 
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
-    await waitFor(() =>
-      expect(updateTenet).toHaveBeenCalledWith('g', '通用规则改', 'medium'),
-    )
+    await waitFor(() => expect(updateTenet).toHaveBeenCalledWith('g', '通用规则改', 'medium'))
   })
 
   it('直接切换优先级立即保存当前内容', async () => {
@@ -104,8 +100,6 @@ describe('输入框原则弹窗：项目名 / 优先级 / 编辑', () => {
     fireEvent.change(screen.getAllByLabelText('优先级')[1], {
       target: { value: 'critical' },
     })
-    await waitFor(() =>
-      expect(updateTenet).toHaveBeenCalledWith('a', '项目规则', 'critical'),
-    )
+    await waitFor(() => expect(updateTenet).toHaveBeenCalledWith('a', '项目规则', 'critical'))
   })
 })
