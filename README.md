@@ -10,7 +10,7 @@
 
 > **官方网站**: [www.nuphus.com](https://www.nuphus.com) — 产品介绍、下载安装包、更新日志与使用文档
 
-> **版本**: 0.2.31 · **状态**: Alpha（积极开发中） · **平台**: Windows / macOS / Linux
+> **版本**: 0.3.1 · **状态**: Release（稳定版） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">

@@ -5,6 +5,20 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+## [0.3.1] - 2026-10-21
+
+### Added
+- **分项目原则（project-scoped tenets）**：通用原则所有项目适用，项目原则按当前项目路径过滤（Windows 大小写不敏感），异项目原则不泄露。`tenet_add` 支持 `scope=project/global`。
+- **执行中上下文预算防溢出**：ReAct loop 每轮监测 token 用量，预警线（`prompt_ratio`）提醒规划收敛，强制收敛线（`force_ratio`）让 agent 输出最终回复结束循环，loop 结束后自动 refine——执行中不碰压缩，不影响前缀缓存命中。
+- **Refine 折叠区**：refine 前历史消息默认折叠成小巧占位（非通栏），点击展开/折叠，解决多轮 refine 后前端历史气泡累积卡顿。
+- **Turn-rail refine 分界线过滤**：refine 是分界线，turn-rail 只保留最后一个 refine 之后的 turn，防止多轮 refine 后 turn-rail 无限膨胀。
+
+### Changed
+- **Refine 不累加**：多次 refine 只保留最新摘要，过往 refine 归档到记忆系统（`refine-{session_id}-{timestamp}`），单对话可无限复用、兼容小模型。
+- **项目状态**：README 状态从 Alpha（积极开发中）改为 Release（稳定版）。
+
 ## [0.2.31] - 2026-10-19
 
 ### Added

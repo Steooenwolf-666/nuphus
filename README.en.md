@@ -10,7 +10,7 @@
 
 > **Official website**: [www.nuphus.com](https://www.nuphus.com) — product overview, installers, changelog and documentation
 
-> **Version**: 0.2.31 · **Status**: Alpha (under active development) · **Platforms**: Windows / macOS / Linux
+> **Version**: 0.3.1 · **Status**: Release (stable) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
