@@ -132,6 +132,38 @@ export interface GithubRound {
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
   {
+    version: '0.3.1',
+    date: '2026-10-21',
+    contributors: [
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: '9835fe2e',
+            summary: '预览 URL 保持目录边界',
+          },
+          {
+            pr: null,
+            commit: '39e0e12b',
+            summary: '分项目原则：通用原则全局适用，项目原则按当前项目路径过滤，异项目不泄露',
+          },
+          {
+            pr: null,
+            commit: 'a7828be3',
+            summary:
+              '执行中上下文预算防溢出（预警 70%/强制收敛 85%）+ refine 不累加（只保留最新摘要）',
+          },
+          {
+            pr: null,
+            commit: 'bf82e1a8',
+            summary: 'Refine 折叠区（小巧占位点击展开）+ turn-rail refine 分界线过滤',
+          },
+        ],
+      },
+    ],
+  },
+  {
     version: '0.2.31',
     date: '2026-10-19',
     contributors: [

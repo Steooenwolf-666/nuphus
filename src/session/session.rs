@@ -369,7 +369,8 @@ impl Session {
         self.api_input_tokens = 0;
         self.api_output_tokens = 0;
         // 只保留最新 refine：移除过往 refine System 消息，非 refine 的 System 消息保留
-        self.messages.retain(|m| !Session::is_refine_system_message(m));
+        self.messages
+            .retain(|m| !Session::is_refine_system_message(m));
         self.messages.push(Message {
             role: MessageRole::System,
             content: vec![ContentBlock::Text {
