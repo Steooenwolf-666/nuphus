@@ -5,7 +5,7 @@
   "platforms": {
     "windows-x86_64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQnNaOGtKSUVHemVYSWNVN2M3dWFYUjYzMG4xcnpHVDd5UEd2WlhhWnBwMVg4SjlHSk82cjZxWUtsTU5odW1pQ0pCa1dnWUpyREdQMzJYV2t4ditWU1E4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNTg5Mzc4CWZpbGU6TnVwaHVzXzAuMy4xX3g2NC1zZXR1cC5leGUKWGd5TWJsMFdSN0lXNXVvR0EvbnNxZUJoUGUxV0l0aWNpZkdUNjB2ZGQ5TEcrR3VzVzNWb3VUcGpxWDJVR1VURVJCbDRHNjlaQ0hGYVhxSlhNTlVIRHc9PQo=",
-      "url": "https://gh-proxy.com/https://github.com/mrpulor-gh/nuphus/releases/download/v0.3.1/nuphus-win32-x64-0.3.1-setup.exe"
+      "url": "https://gitee.com/nuphus/nuphus/releases/download/v0.3.1/nuphus-win32-x64-0.3.1-setup.exe"
     },
     "darwin-aarch64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSb205UC9CUDlIQm0rUTgvaUEweTU5VXZXWXU5VlRRekpqWEtLSDRROU4wbGlMSVg2N1hsMS9zK2RVenhWWTVYM2t4QXRWU1cxb0YxK0RNTmk2dnlsOXpGaDZ0U00rMmdBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkyNTg5MDEyCWZpbGU6TnVwaHVzLmFwcC50YXIuZ3oKYitVQis3bVBBNTdFRXpWWHhNbTdLemhyVkMvOFc0ZDV4TFBzbmJia0dHcmxUOHlaL0FYSmd0eU1mTmNkZUZZdVpOTytCenZqa2h4OGx3SkxEZDBGQ3c9PQo=",
