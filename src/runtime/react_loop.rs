@@ -330,6 +330,12 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
         // 不会留下孤立空行。修在 Rust 侧而非前端，一次覆盖气泡 / timeline / mobile。
         let stream_text_seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
+        // 上下文预算：执行中防溢出（预警 + 强制收敛）。达到强制线 = 让 agent 输出
+        // 最终回复、自然结束循环；loop 结束后 maybe_refine_session 自动 refine，
+        // 执行中不碰压缩。flag 保证预警/强制收敛各注入一次，不撑大上下文。
+        let mut ctx_warned = false;
+        let mut ctx_force_converged = false;
+
         for iteration in 0..self.agent.config.max_iterations {
             // 本轮是否需要补分隔 = 此前是否已有迭代产出过内容 text。
             // 用独立 Arc 而非复用 stream_text_seen：发出即清零，保证同轮后续
@@ -472,6 +478,43 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                 self.agent
                     .session
                     .push_user_internal(crate::handoff::format_doorbell_section(&handoff_events));
+            }
+
+            // ── 上下文预算：执行中防溢出（预警 + 强制收敛，执行中不碰压缩）──
+            // 达到强制线 = 让 agent 输出最终回复、自然结束循环；loop 结束后
+            // maybe_refine_session 自动 refine。注入走 push_user_internal，不动
+            // 系统提示前缀，不影响缓存命中（同 reminders 机制）。flag 各注入一次。
+            {
+                let cw = crate::agent::goal_types::get_context_window_for(
+                    &self.agent.config.model,
+                    Some(&self.agent.config.provider),
+                );
+                let tokens = self.agent.session.api_input_tokens as usize;
+                if cw > 0 && tokens > 0 {
+                    let tier = crate::agent::distill::RefineTier::for_window(cw);
+                    let force_ratio =
+                        tier.force_ratio(self.agent.config.large_force_refine_threshold);
+                    let ratio = tokens as f64 / cw as f64;
+                    if ratio >= force_ratio && !ctx_force_converged {
+                        ctx_force_converged = true;
+                        self.agent.session.push_user_internal(format!(
+                            "⚠ 上下文用量已达 {:.0}%（约 {}/{} tokens）。请立即停止发起新的工具调用，基于当前已获得的信息输出最终回复，结束任务。",
+                            ratio * 100.0,
+                            tokens,
+                            cw
+                        ));
+                    } else if let Some(pr) = tier.prompt_ratio() {
+                        if ratio >= pr && !ctx_warned {
+                            ctx_warned = true;
+                            self.agent.session.push_user_internal(format!(
+                                "[系统] 上下文用量已达 {:.0}%（约 {}/{} tokens）。请规划收敛：优先完成核心目标，非关键探索可省略，尽快输出结论。",
+                                ratio * 100.0,
+                                tokens,
+                                cw
+                            ));
+                        }
+                    }
+                }
             }
 
             let request = self.agent.build_request(&merged_system);

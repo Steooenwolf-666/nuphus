@@ -359,14 +359,17 @@ impl Session {
         });
     }
 
-    /// 累积提炼：保留已有的提炼 System 消息，清空其余消息，追加新摘要
-    /// 用于同一 session 多次 refine —— 先前摘要不动，前缀缓存不失效
+    /// 再次提炼：只保留当前 refine —— 移除过往 refine System 消息（内容已由
+    /// save_refine_entry 归档至记忆系统 refine-{session_id}-{timestamp}），清空其余
+    /// 消息，插入新摘要。避免 refine1+refine2 累加撑大小模型上下文，单对话可无限复用。
+    /// 非 refine 的 System 消息（安全警告等）保留。
     pub fn accumulate_distill(&mut self, distill_content: &str) {
         self.refined = true;
         // 同 replace_with_distill：不清零则旧峰值残留，下一轮 force refine 必复发
         self.api_input_tokens = 0;
         self.api_output_tokens = 0;
-        self.messages.retain(|m| m.role == MessageRole::System);
+        // 只保留最新 refine：移除过往 refine System 消息，非 refine 的 System 消息保留
+        self.messages.retain(|m| !Session::is_refine_system_message(m));
         self.messages.push(Message {
             role: MessageRole::System,
             content: vec![ContentBlock::Text {
@@ -376,6 +379,14 @@ impl Session {
             internal: true,
             timestamp: Some(crate::session::types::now_ms()),
         });
+    }
+
+    /// 判断消息是否为 refine 摘要 System 消息（content 以 REFINE_SYSTEM_PREFIX 开头）
+    pub(crate) fn is_refine_system_message(m: &Message) -> bool {
+        m.role == MessageRole::System
+            && m.content.iter().any(|b| {
+                matches!(b, ContentBlock::Text { text, .. } if text.starts_with(REFINE_SYSTEM_PREFIX))
+            })
     }
 
     /// 移除并返回最后一条 User 消息（用于 refine 失败后清理残留 prompt）

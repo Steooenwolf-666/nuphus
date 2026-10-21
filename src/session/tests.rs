@@ -108,6 +108,13 @@ mod tests {
         session.accumulate_distill("second summary");
         assert_eq!(session.api_input_tokens, 0, "accumulate_distill 必须清零");
         assert!(session.estimate_token_usage() < 102_400);
+        // 只保留当前 refine：过往 refine System 消息被移除，不累加（兼容小模型）
+        let refine_count = session
+            .messages
+            .iter()
+            .filter(|m| Session::is_refine_system_message(m))
+            .count();
+        assert_eq!(refine_count, 1, "accumulate 后只保留 1 条 refine，不累加");
     }
 
     /// 界面上的 ctx 占用必须来自官方 usage（input + output），不掺字符估算。
