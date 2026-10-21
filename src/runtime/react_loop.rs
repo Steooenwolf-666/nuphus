@@ -481,21 +481,20 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
             }
 
             // ── 上下文预算：执行中防溢出（预警 + 强制收敛，执行中不碰压缩）──
-            // 达到强制线 = 让 agent 输出最终回复、自然结束循环；loop 结束后
-            // maybe_refine_session 自动 refine。注入走 push_user_internal，不动
-            // 系统提示前缀，不影响缓存命中（同 reminders 机制）。flag 各注入一次。
             {
+                // 执行中防溢出：预警线 70%，强制收敛线 85%（固定值）。
+                // 达到强制线 = 让 agent 输出最终回复、自然结束循环；loop 结束后
+                // maybe_refine_session 自动 refine。注入走 push_user_internal，不动
+                // 系统提示前缀，不影响缓存命中（同 reminders 机制）。flag 各注入一次。
                 let cw = crate::agent::goal_types::get_context_window_for(
                     &self.agent.config.model,
                     Some(&self.agent.config.provider),
                 );
                 let tokens = self.agent.session.api_input_tokens as usize;
                 if cw > 0 && tokens > 0 {
-                    let tier = crate::agent::distill::RefineTier::for_window(cw);
-                    let force_ratio =
-                        tier.force_ratio(self.agent.config.large_force_refine_threshold);
+                    // 预警线 70%，强制收敛线 85%（固定值，不随 refine 档位）。
                     let ratio = tokens as f64 / cw as f64;
-                    if ratio >= force_ratio && !ctx_force_converged {
+                    if ratio >= 0.85 && !ctx_force_converged {
                         ctx_force_converged = true;
                         self.agent.session.push_user_internal(format!(
                             "⚠ 上下文用量已达 {:.0}%（约 {}/{} tokens）。请立即停止发起新的工具调用，基于当前已获得的信息输出最终回复，结束任务。",
@@ -503,16 +502,14 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
                             tokens,
                             cw
                         ));
-                    } else if let Some(pr) = tier.prompt_ratio() {
-                        if ratio >= pr && !ctx_warned {
-                            ctx_warned = true;
-                            self.agent.session.push_user_internal(format!(
-                                "[系统] 上下文用量已达 {:.0}%（约 {}/{} tokens）。请规划收敛：优先完成核心目标，非关键探索可省略，尽快输出结论。",
-                                ratio * 100.0,
-                                tokens,
-                                cw
-                            ));
-                        }
+                    } else if ratio >= 0.70 && !ctx_warned {
+                        ctx_warned = true;
+                        self.agent.session.push_user_internal(format!(
+                            "[系统] 上下文用量已达 {:.0}%（约 {}/{} tokens）。请规划收敛：优先完成核心目标，非关键探索可省略，尽快输出结论。",
+                            ratio * 100.0,
+                            tokens,
+                            cw
+                        ));
                     }
                 }
             }
