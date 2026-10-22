@@ -248,7 +248,7 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 24px 64px 180px;
+  padding: 24px 64px 200px;
   min-width: 0;
   margin: 0 auto;
   width: 100%;
@@ -2264,15 +2264,36 @@
 }
 
 /* ── .message-actions 内嵌 ──
-   元数据条是只读信息，并入动作行只为共享同一行排版，**不共享按钮的交互语义**：
-   - 左侧留 10px 与图标按钮拉开，避免紧贴
-   - gap 与 .message-actions 同值（4px），三个 chip 与图标按钮保持同一节奏
-   - 不设 hover / active，不做任何点击反馈——它不是按钮 */
+   元数据条已移出动作容器（2026-10-22 大王定：耗时/步数常驻不随 hover，
+   执行中也能看到在涨；按钮组才是执行完才用的动作）。此处仅保留与动作行
+   同源的排版参数：左侧不缩进（独立成行），上方 4px 与按钮行拉开。 */
 .turn-meta-bar--actions {
-  margin-top: 0;
-  margin-left: 10px;
+  margin-top: 4px;
+  margin-left: 0;
   gap: var(--space-1);
   align-items: center;
+}
+
+/* 执行中状态 spinner（HUD IconSpinner 同款：track + 半圆弧旋转）——仅 duration
+   slot 且 isLive 时由 TurnMetaBar 渲染（大王 2026-10-22 定）。 */
+.turn-meta-spinner {
+  flex-shrink: 0;
+  margin-right: 3px;
+  color: var(--spark-dim);
+  animation: turn-meta-spin 0.9s linear infinite;
+}
+@keyframes turn-meta-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 耐心提示 chip（HUD 逻辑移植，大王 2026-10-22 定）：本轮执行持续 60s 后出现
+   在步数 chip 之后，完成/终止（isLive 转 false）立即消失。 */
+.turn-meta-chip--patience {
+  color: var(--spark-dim);
+  font-style: italic;
+  opacity: 0.85;
 }
 
 /* 字号与行高对齐动作行（12px / 1.5），仅压缩水平内边距与透明度让位给图标按钮 */

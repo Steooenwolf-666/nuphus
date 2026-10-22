@@ -74,6 +74,30 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
+/** 执行中状态指示：HUD IconSpinner 同款（track + 半圆弧旋转）——「复用 HUD 的
+ * svg 图标变化」（大王 2026-10-22）。仅 duration slot 且 isLive 时渲染。 */
+function LiveSpinner() {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 14 14"
+      fill="none"
+      className="turn-meta-spinner"
+      aria-hidden="true"
+    >
+      <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" fill="none" opacity="0.3" />
+      <path
+        d="M12.5 7A5.5 5.5 0 0 0 1.5 7"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        fill="none"
+      />
+    </svg>
+  )
+}
+
 export function TurnMetaBar({
   meta,
   slots = ['duration', 'tokens', 'steps'],
@@ -89,6 +113,20 @@ export function TurnMetaBar({
     if (!isLive) return
     const timer = window.setInterval(() => forceTick(n => n + 1), 200)
     return () => window.clearInterval(timer)
+  }, [isLive])
+
+  // 耐心提示（移植 HUD 既有逻辑——hud/App.tsx:442-449 同款 60s 到时提醒，大王
+  // 2026-10-22 定移到消息气泡）：本轮执行持续 60s 无结果 → 步数后追加
+  // 「Running（验证/构建/测试中）...」。纪律同 HUD：到时提醒、不假装完成；
+  // 完成/终止（isLive 转 false）经 effect 依赖立即重置消失，不等定时器。
+  const [patience, setPatience] = useState(false)
+  useEffect(() => {
+    if (!isLive) {
+      setPatience(false)
+      return
+    }
+    const timer = window.setTimeout(() => setPatience(true), 60_000)
+    return () => window.clearTimeout(timer)
   }, [isLive])
 
   // 判空：duration / token / steps 全空**且无起点**才不渲染（无起点连耗时都推不出）。
@@ -107,8 +145,10 @@ export function TurnMetaBar({
   const ctxDelta = m.contextDeltaTokens ?? 0
   const steps = resolveTurnCalls(meta)
 
-  // 图标一律不配：三个 chip 都是纯文字（时间/上下文/步数）。曾给令牌项加过一个
-  // CPU 图标——既把 chip 拉宽挤同行其它项，又与「纯只读信息、不是按钮」的定位不符。
+  // 图标策略（2026-10-22 大王定）：**仅 duration slot 且执行中（isLive）**配 HUD
+  // 同款旋转 spinner——它是状态指示（「在跑」vs「已完成」的区分），不是装饰。
+  // 其余 slot（令牌/步数）保持纯文字：只读信息、不是按钮，图标只会拉宽 chip
+  // 挤同行其它项（曾给令牌项加 CPU 图标的教训）。
   const chips: { key: TurnMetaSlot; label: string; value: string }[] = []
   for (const slot of slots) {
     if (slot === 'duration' && durationMs > 0) {
@@ -131,10 +171,16 @@ export function TurnMetaBar({
     <div className={`turn-meta-bar${className ? ` ${className}` : ''}`}>
       {chips.map(c => (
         <span key={c.key} className={`turn-meta-chip turn-meta-chip--${c.key}`}>
+          {c.key === 'duration' && isLive && <LiveSpinner />}
           <span className="turn-meta-chip-label">{c.label}</span>
           <span className="turn-meta-chip-value">{c.value}</span>
         </span>
       ))}
+      {isLive && patience && (
+        <span className="turn-meta-chip turn-meta-chip--patience">
+          Running（验证/构建/测试中）...
+        </span>
+      )}
     </div>
   )
 }

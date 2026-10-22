@@ -1527,7 +1527,10 @@ export function ExecutionTraceFloating({
         {/* ── Footer Actions ── */}
         <div className="execution-trace-footer">
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {!hasRated && onRate && (
+            {/* 点评/重新生成仅执行完成后可用：实时模式执行中（isProcessing 且无
+                traceOverride 历史覆盖）隐藏——执行没完点评无意义；历史 trace 与
+                已完成轮次照常（大王 2026-10-22 定）。 */}
+            {!hasRated && onRate && !(isProcessing && !traceOverride) && (
               <>
                 <button className="exec-footer-btn primary" onClick={() => setShowRating(true)}>
                   <IconStar size={14} />

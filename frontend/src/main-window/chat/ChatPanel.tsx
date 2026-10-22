@@ -2122,7 +2122,7 @@ export function ChatPanel({
                                   <span className="msg-plain-text">{msg.content}</span>
                                 ) : null}
                               </div>
-                              {msg.role === 'assistant' && (
+                              {msg.role === 'assistant' && !(isCurrentAgent && isProcessing) && (
                                 <div className="message-actions">
                                   <IconButton
                                     variant="msg-action"
@@ -2165,13 +2165,18 @@ export function ChatPanel({
                                     </IconButton>
                                   )}
                                   {/* ── 本轮元数据（耗时 / 令牌 / 步数）──
-                                      与复制/点评同排陈列，随 hover 一同显隐（招安
-                                      .message-actions 的交互与配色）。数据源 =
-                                      ChatMessage.meta（后端 TurnMeta）：实时轮次由
-                                      useEvents 写入、历史由 applyHistory 还原。
-                                      空数据由组件判空后不渲染，不留空位。 */}
-                                  <TurnMetaBar meta={msg.meta} className="turn-meta-bar--actions" />
+                                       已移至动作容器外常驻（2026-10-22）：
+                                       按钮组（复制/点评/执行回溯）执行完成才显示，
+                                       元数据条不随 hover、执行中也实时可见。数据源 =
+                                       ChatMessage.meta（后端 TurnMeta）：实时轮次由
+                                       useEvents 写入、历史由 applyHistory 还原。
+                                       空数据由组件判空后不渲染，不留空位。 */}
                                 </div>
+                              )}
+                              {msg.role === 'assistant' && (
+                                /* 常驻：不随 hover——执行中也能看到耗时/步数实时在涨
+                                   （按钮组才是「执行完才用」的动作，元数据条是状态信息） */
+                                <TurnMetaBar meta={msg.meta} className="turn-meta-bar--actions" />
                               )}
                               {/* user 消息首轮 LLM 失败：hover 显示重试（优雅停止气泡无此标记） */}
                               {msg.role === 'user' && msg.failed && !isProcessing && onRetry && (
