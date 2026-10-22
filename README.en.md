@@ -10,7 +10,7 @@
 
 > **Official website**: [www.nuphus.com](https://www.nuphus.com) — product overview, installers, changelog and documentation
 
-> **Version**: 0.3.1 · **Status**: Release (stable) · **Platforms**: Windows / macOS / Linux
+> **Version**: 1.0.0 · **Status**: Release (stable) · **Platforms**: Windows / macOS / Linux
 > **Tech Stack**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -277,6 +277,10 @@ All plugins are plain-text files (.md / .json); drop them into the matching `plu
 ---
 
 ## Acknowledgements
+
+### v1.0.0 Contributors
+
+No external pull requests were merged in this release; all changes were made by the maintainer.
 
 ### v0.2.31 Contributors
 
