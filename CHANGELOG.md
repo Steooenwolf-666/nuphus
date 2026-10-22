@@ -17,8 +17,14 @@
   `commands/ui_link.rs`（`ui_heartbeat` 命令）、`emitter.rs` 的 `UiLiveness` 全套
   （判死位 / 失联事件节流 / 窗口标题与 HUD 切换）、`NuphusEvent::
   is_essential_when_ui_dead` 事件分级、前端 3s 心跳 `setInterval`。保留：
-  `log_collapse` 日志限流、主线程停摆日志（迁移为 `stall_probe.rs`，只打日志、
-  不做任何干预）、`react_loop.rs` 轮中快照。
+   `log_collapse` 日志限流、主线程停摆日志（迁移为 `stall_probe.rs`，只打日志、
+   不做任何干预）、`react_loop.rs` 轮中快照。
+
+### Added
+- **执行中轮中增量快照**（防「执行中崩溃吞对话」）：会话消息体此前只在进程内存，落盘仅任务完成后一次——执行中崩溃（panic / 强杀 / OOM）= 内存态全丢、DB 零痕迹。现 ReAct 循环进入前首刷（含用户消息），循环内每 10 迭代或距上次落盘 ≥30s 增量写快照（`upsert_snapshot`，best-effort 失败只 warn 不中断，不碰保留策略）。执行中崩溃最多丢失当前迭代的增量而非整个对话。
+
+### Fixed
+- **system_shell 超时默认保留进程**（杀仅限显式 `background:false`）：此前前台（默认 timeout=180s，≤300s）超时即 `kill_process_tree` 腰斩长命令（构建 / 全量测试 / 大下载），重跑全废；`timeout>300` 的 auto-background 只保护主动声明长 timeout 的调用。新增 `kill_on_timeout` 语义：超时分支默认走保留路径（登记 retain + pid + 输出文件 + 存活上限 + 勿重跑文案），取消（Cancelled）路径语义不变（显式声明才保留）。外层 1800s 等待超时不杀（既有），看门狗 3600s 兜底含保留项（既有）。
 
 ## [0.3.1] - 2026-10-21
 

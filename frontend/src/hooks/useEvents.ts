@@ -1436,33 +1436,6 @@ export function useEvents(h: EventHandlers) {
     return () => clearInterval(interval)
   }, [])
 
-  // ── UI 心跳：向后端证明「主界面还活着」（2026-10-22 临时恢复：判死架构拆除前的
-  // 即时修复手段——UI-LINK dead 位卡死 51 分钟导致事件全丢，恢复心跳以清除该位；
-  // 后端判死架构拆除落地后此段将随架构一并移除）──
-  useEffect(() => {
-    const ping = () => {
-      // 不直接链 invoke 的返回值：测试 mock / 非标准桥可能返回 undefined，
-      // `.catch` 链在非 Promise 上会 TypeError。Promise.resolve 包裹后，
-      // 同步返回与 Promise 拒绝两条路径都安全忽略。
-      void Promise.resolve()
-        .then(() => invoke('ui_heartbeat'))
-        .catch(() => {
-          // 后端不可达时静默：心跳只是活性证明，失败不该产生新噪音
-        })
-    }
-    ping()
-    const interval = setInterval(ping, 3000)
-    // 从后台/最小化恢复时立即补一次，缩短后端感知延迟
-    const onVisible = () => {
-      if (document.visibilityState === 'visible') ping()
-    }
-    document.addEventListener('visibilitychange', onVisible)
-    return () => {
-      clearInterval(interval)
-      document.removeEventListener('visibilitychange', onVisible)
-    }
-  }, [])
-
   // ── toolbar:action listener ──
   useEffect(() => {
     let disposed = false
