@@ -546,7 +546,9 @@ export function HudOverlay() {
       {/* ── Content area ── */}
       <div className="hud-content">
         <span className="hud-text" style={{ color: colors.text }} key={`text-${animKey}`}>
-          {state.phase === 'running' && state.patience ? '（验证/构建/测试）中，请耐心等待...' : state.text}
+          {state.phase === 'running' && state.patience
+            ? '（验证/构建/测试）中，请耐心等待...'
+            : state.text}
         </span>
 
         {/* ── Meta row: elapsed time / workflow paused indicator ── */}

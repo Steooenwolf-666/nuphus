@@ -1817,7 +1817,6 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
 // detect_frustration removed — replaced by LLM thinking-based emotion detection.
 // Trigger: src/agent/prompt.rs (build_l2_leader) instructs LLM to read plugin/knowledge/nuphus-self/emotion_guide.md when needed.
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1849,10 +1848,7 @@ mod tests {
         struct Unserializable;
 
         impl serde::Serialize for Unserializable {
-            fn serialize<S: serde::Serializer>(
-                &self,
-                _serializer: S,
-            ) -> Result<S::Ok, S::Error> {
+            fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
                 use serde::ser::Error as _;
                 Err(S::Error::custom("injected serialization failure"))
             }

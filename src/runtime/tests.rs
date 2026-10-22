@@ -633,12 +633,9 @@ fn react_loop_first_flush_persists_user_message_before_first_llm_call() {
         .expect("build should succeed");
     let session_id = runtime.session().id.clone();
 
-    let output = tokio_test::block_on(runtime.run(
-        "轮中快照首刷验证输入",
-        &None,
-        &AtomicBool::new(false),
-    ))
-    .expect("非重试 LLM 错误应正常返回而非传播");
+    let output =
+        tokio_test::block_on(runtime.run("轮中快照首刷验证输入", &None, &AtomicBool::new(false)))
+            .expect("非重试 LLM 错误应正常返回而非传播");
     assert!(!output.success, "首个请求即失败应标记为未成功");
 
     let (mode, json) = crate::store::session::get_snapshot(&session_id)
@@ -678,12 +675,9 @@ fn react_loop_in_loop_snapshot_captures_mid_loop_state() {
         .expect("build should succeed");
     let session_id = runtime.session().id.clone();
 
-    let output = tokio_test::block_on(runtime.run(
-        "轮中快照多轮触发验证",
-        &None,
-        &AtomicBool::new(false),
-    ))
-    .expect("工具循环应正常跑完 max_iterations");
+    let output =
+        tokio_test::block_on(runtime.run("轮中快照多轮触发验证", &None, &AtomicBool::new(false)))
+            .expect("工具循环应正常跑完 max_iterations");
     assert!(!output.success, "达到最大迭代次数应标记为未成功完成");
 
     let (mode, json) = crate::store::session::get_snapshot(&session_id)
