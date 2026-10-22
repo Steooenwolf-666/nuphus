@@ -62,7 +62,18 @@ type ChangelogState =
 
 export function UpdatePage({ updater }: { updater: AppUpdate }) {
   const { t } = useLanguage()
-  const { status, update, progress, error, stalled, checkVersion, install } = updater
+  const {
+    status,
+    update,
+    progress,
+    error,
+    stalled,
+    downloaded,
+    installBlocked,
+    installGuard,
+    checkVersion,
+    install,
+  } = updater
   const [currentVersion, setCurrentVersion] = useState('—')
   const [changelog, setChangelog] = useState<ChangelogState>({ status: 'loading' })
 
@@ -107,8 +118,14 @@ export function UpdatePage({ updater }: { updater: AppUpdate }) {
         <div className="update-available">
           <div className="update-version">{t('update.available', update.version)}</div>
           {update.body && <div className="update-notes">{update.body}</div>}
-          <Button variant="primary" onClick={install}>
-            {t('update.downloadInstall')}
+          {downloaded && <div>{t('update.downloadReady')}</div>}
+          {installGuard && (
+            <div role="status">
+              {t(installGuard === 'busy' ? 'update.waitForIdle' : 'update.stateUnavailable')}
+            </div>
+          )}
+          <Button variant="primary" onClick={install} disabled={installBlocked}>
+            {t(downloaded ? 'update.installRestart' : 'update.downloadInstall')}
           </Button>
         </div>
       ) : (

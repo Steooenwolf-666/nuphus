@@ -7,7 +7,8 @@ import '../../styles/update.css'
 /** 顶部常驻提示不抢焦点、不遮挡对话，下载安装必须由用户明确点击。 */
 export function UpdateNotice({ updater, onOpen }: { updater: AppUpdate; onOpen: () => void }) {
   const { t } = useLanguage()
-  const { status, update, progress, noticeDismissed } = updater
+  const { status, update, progress, noticeDismissed, downloaded, installBlocked, installGuard } =
+    updater
   const downloading = status === 'downloading'
   if (
     !update ||
@@ -28,19 +29,26 @@ export function UpdateNotice({ updater, onOpen }: { updater: AppUpdate; onOpen: 
             ? t('update.downloading', progress ? `${progress.toFixed(0)}%` : '…')
             : status === 'error'
               ? t('update.noticeFailed')
-              : t('update.noticeHint')}
+              : installGuard
+                ? t(installGuard === 'busy' ? 'update.waitForIdle' : 'update.stateUnavailable')
+                : downloaded
+                  ? t('update.downloadReady')
+                  : t('update.noticeHint')}
         </span>
       </div>
       <div className="update-notice-actions">
         <Button
           variant="primary"
           size="sm"
+          disabled={status === 'available' && installBlocked}
           onClick={() => {
             onOpen()
             if (status === 'available') void updater.install()
           }}
         >
-          {status === 'available' ? t('update.downloadInstall') : t('update.viewDetails')}
+          {status === 'available'
+            ? t(downloaded ? 'update.installRestart' : 'update.downloadInstall')
+            : t('update.viewDetails')}
         </Button>
         {!downloading && (
           <Button variant="ghost" size="sm" onClick={updater.dismissNotice}>

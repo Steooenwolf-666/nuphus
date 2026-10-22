@@ -134,7 +134,7 @@ export default function App() {
   // ── Hooks ──
   const { t } = useLanguage()
   const s = useSession()
-  const updater = useAppUpdate(s.appState === 'ready')
+  const updater = useAppUpdate(s.appState === 'ready', s.busy)
   /** +号菜单记忆弹窗：'tenets' | 'annotations' | null */
   const [memoryDialog, setMemoryDialog] = useState<'tenets' | 'annotations' | null>(null)
   const [modelsInitialView, setModelsInitialView] = useState<ModelsInitialView>('provider')

@@ -210,8 +210,53 @@ fn main() {
     // Initialize logging (tracing + file output)
     nuphus::utils::init_logging();
 
-    let app = preview_protocol::register(tauri::Builder::default())
-        .manage(state::AppState::default())
+    // ── 单实例守卫（默认开启）──────────────────────────────────────────────
+    // 上面的 `task` 子命令分支已提前 return，不会走到这里；其余启动形态（快捷方式、
+    // 开始菜单、托盘重开）一律受守卫约束。
+    //
+    // dev / 自动化需要两个实例并存时设 NUPHUS_ALLOW_MULTI_INSTANCE=1 绕过，默认拦截。
+    // 拦截不是静默退出：第二实例的 argv/cwd 交给第一实例，回调里还原并聚焦主窗
+    // （用户感知为「点图标 = 打开已有窗口」，与托盘「显示」同一套动作）。
+    let allow_multi_instance = std::env::var("NUPHUS_ALLOW_MULTI_INSTANCE")
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false);
+    if allow_multi_instance {
+        tracing::warn!(
+            "[SingleInstance] NUPHUS_ALLOW_MULTI_INSTANCE=1，本次允许多开（调试用，勿用于发布）"
+        );
+    }
+
+    let mut builder =
+        preview_protocol::register(tauri::Builder::default()).manage(state::AppState::default());
+
+    // 必须是**第一个** plugin（官方硬要求）：插件按注册顺序执行，第二实例要在其余
+    // setup 之前被裁掉——否则会先建 splash/主窗、抢全局热键、抢 18771 门铃端口。
+    if !allow_multi_instance {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            // 主窗在 setup 里被 hide()（splash 期间），此时 show 会露出尚未渲染的白页；
+            // 启动未完成就什么都不做——finish_startup 自己会 show + set_focus。
+            if !crate::commands::toolbar::STARTUP_FINISHED.load(Ordering::SeqCst) {
+                tracing::info!(
+                    "[SingleInstance] 已有实例正在启动中，第二实例退出（splash 继续；argv={argv:?}, cwd={cwd}）"
+                );
+                return;
+            }
+            match app.get_webview_window("main") {
+                Some(window) => {
+                    // 与托盘「显示」/ 托盘左键同一套动作：先还原再显示，最后抢焦点
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                    tracing::info!("[SingleInstance] 已有实例在运行，已唤醒主窗并退出第二实例");
+                }
+                None => tracing::warn!(
+                    "[SingleInstance] 已有实例在运行，但 main 窗口缺失，无法唤醒（argv={argv:?}, cwd={cwd}）"
+                ),
+            }
+        }));
+    }
+
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
