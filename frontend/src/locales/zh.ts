@@ -112,9 +112,10 @@ const zh: Record<string, string> = {
   'interrupt.reportFailed': '中断未完全生效 · {0}',
   'interrupt.retained': '仍有 {0} 个后台任务在运行（点右下角胶囊可查看或结束）',
 
-  'backgroundTasks.entryTitle': '后台任务',
   'backgroundTasks.entryLabel': '后台任务（{0} 个仍在运行）',
+  'backgroundTasks.entryTip': '正在执行·非卡死——验证通过后完整交付',
   'backgroundTasks.title': '后台任务',
+  'backgroundTasks.hint': '（验证/构建/测试）较耗时，正在进行..',
   'backgroundTasks.close': '关闭',
   'backgroundTasks.loading': '读取中…',
   'backgroundTasks.empty': '当前没有仍在运行的后台任务',

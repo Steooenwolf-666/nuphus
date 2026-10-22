@@ -37,7 +37,10 @@
   width: fit-content;
 }
 .bgt-entry {
-  position: static;
+  /* static → relative：为执行光影（.task-track-shimmer 派生）提供定位上下文；
+     overflow hidden 把 200% 宽的光影梯度裁在胶囊圆角内，不外溢。 */
+  position: relative;
+  overflow: hidden;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -56,6 +59,51 @@
 .bgt-entry:hover {
   background: color-mix(in srgb, var(--panel-bg) 85%, transparent);
   color: var(--spark-primary);
+}
+
+/* ── 入口胶囊的「仍在执行」光影 ──
+ * 超时转后台（system shell >300s 自动后台化）的任务让胶囊长期驻留，
+ * 静态外观容易被误读成「卡死残留」。光影复用 .task-track-shimmer 基类
+ * （task-bubble.css，随主包静态加载），只覆写两处成形参数：
+ *   · 圆角 6px → 999px（贴合胶囊）；
+ *   · 去内描边（胶囊自带 1px 边框，叠内描边会双重线）。 */
+.bgt-entry .task-track-shimmer {
+  border-radius: 999px;
+  border: none;
+}
+
+/* ── 入口 hover 小 tips（与 .agent-tooltip 同族的浮层配方）──
+ * 光影只说「在动」，tips 把语义说全：N 个任务在后台执行、不是卡死、
+ * 点哪里看列表。磨砂底沿用入口同款 --panel-bg 派生（本文件刻意不用
+ * --glass-bg——其 α 写死、面板不透明度滑块管不到它）。 */
+.bgt-tip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  padding: 6px 11px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-bg) 88%, transparent);
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
+  border: var(--border-divider);
+  box-shadow: var(--shadow-elevated);
+  color: var(--spark-secondary);
+  font-size: var(--fz-xs);
+  white-space: nowrap;
+  /* 展开方向向左（right:0 贴胶囊右缘），不与桌面右上角工具条重叠；
+     pointer-events:none 防止一旦误入 tips 触发 hover 抖闪 */
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(2px);
+  transition:
+    opacity var(--dur-fast, 0.14s) var(--ease-out, ease-out),
+    transform var(--dur-fast, 0.14s) var(--ease-out, ease-out);
+  z-index: 60;
+}
+.bgt-entry:hover .bgt-tip,
+.bgt-entry:focus-visible .bgt-tip {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 /* ═══════════════════════════════════════
@@ -127,6 +175,15 @@
      align-items: center 对齐的是两个盒子的中线，字面基线仍偏下。 */
   line-height: 16px;
   color: var(--spark-primary);
+  white-space: nowrap;
+}
+/* 标题旁小字说明：超时转后台的任务多为验证/构建/测试类长命令，
+   说明文字与标题同中线、保持单行不换行。 */
+.bgt-hint {
+  flex: 0 0 auto;
+  font-size: var(--fz-xs);
+  line-height: 16px;
+  color: var(--spark-dim);
   white-space: nowrap;
 }
 .bgt-close-btn {

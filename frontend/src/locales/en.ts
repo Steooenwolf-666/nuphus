@@ -117,9 +117,10 @@ const en: Record<string, string> = {
   'interrupt.retained':
     '{0} background task(s) still running (open the bottom-right capsule to view or end them)',
 
-  'backgroundTasks.entryTitle': 'Background tasks',
   'backgroundTasks.entryLabel': 'Background tasks ({0} still running)',
+  'backgroundTasks.entryTip': 'Running · not stuck — full delivery after verification',
   'backgroundTasks.title': 'Background tasks',
+  'backgroundTasks.hint': 'verify/build/test can take a while — still running..',
   'backgroundTasks.close': 'Close',
   'backgroundTasks.loading': 'Loading…',
   'backgroundTasks.empty': 'No background tasks are still running',

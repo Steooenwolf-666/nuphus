@@ -201,11 +201,16 @@ export function BackgroundTasksPanel({ executionStage }: BackgroundTasksPanelPro
           aria-expanded={open}
           // 无障碍名不能只靠可见文本——按钮里只有图标 + 数字，读屏会把它念成「2」。
           // 显式给 label：控件名 + 数量都在，语义与视觉一致。
+          // 视觉 tips 走自定义 .bgt-tip（hover/focus 呼出）；原生 title 会与它
+          // 双重呼出，故不再设置。
           aria-label={t('backgroundTasks.entryLabel', String(retainedCount))}
-          title={t('backgroundTasks.entryTitle')}
         >
+          <span className="task-track-shimmer" aria-hidden="true" />
           <IconTerminal size={13} />
           <span className="bgt-entry-count">{retainedCount}</span>
+          <span className="bgt-tip" role="tooltip">
+            {t('backgroundTasks.entryTip')}
+          </span>
         </button>
 
         {open && (
@@ -217,6 +222,8 @@ export function BackgroundTasksPanel({ executionStage }: BackgroundTasksPanelPro
                   <IconTerminal size={14} />
                 </span>
                 <span className="bgt-title">{t('backgroundTasks.title')}</span>
+                {/* 小字说明：后台任务多为超时转入的验证/构建/测试长命令（大王钦定文案） */}
+                <span className="bgt-hint">{t('backgroundTasks.hint')}</span>
               </div>
               <button
                 className="bgt-close-btn"

@@ -40,7 +40,7 @@ interface HudState {
   phase: HudPhase
   paused?: boolean
   step_kind?: string | null
-  /// 单次运行超过 1 分钟后的耐心提示态：标题切换为「正在执行，请耐心等待...」。
+  /// 单次运行超过 1 分钟后的耐心提示态：标题切换为「（验证/构建/测试）中，请耐心等待...」。
   /// 只由前端计时触发，不影响 phase（成败仍由后端 ToolResult 决定）。
   patience?: boolean
 }
@@ -309,7 +309,10 @@ function useLiveTimer(running: boolean, resetKey: string): number {
       startRef.current = Date.now()
       setElapsed(0)
       const id = setInterval(() => {
-        setElapsed(Date.now() - startRef.current!)
+        // 防御性封顶 90s：并行调用事件乱序时 phase 可能卡 running，
+        // 计时器永不停表、数字无限跳。封顶后显示停在 1m 30s 不再增长。
+        // 根治项：nuphus-event 按 seq 排序消费（留待后续），本次只封顶。
+        setElapsed(Math.min(Date.now() - startRef.current!, 90_000))
       }, 200)
       return () => clearInterval(id)
     } else {
@@ -543,7 +546,7 @@ export function HudOverlay() {
       {/* ── Content area ── */}
       <div className="hud-content">
         <span className="hud-text" style={{ color: colors.text }} key={`text-${animKey}`}>
-          {state.phase === 'running' && state.patience ? '正在执行，请耐心等待...' : state.text}
+          {state.phase === 'running' && state.patience ? '（验证/构建/测试）中，请耐心等待...' : state.text}
         </span>
 
         {/* ── Meta row: elapsed time / workflow paused indicator ── */}
