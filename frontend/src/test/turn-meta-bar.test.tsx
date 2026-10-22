@@ -45,9 +45,13 @@ describe('TurnMetaBar 契约', () => {
     const meta: TurnMeta = { startedAtMs: Date.now() - 12_500 }
     const { container } = renderBar(<TurnMetaBar meta={meta} />)
     const chips = container.querySelectorAll('.turn-meta-chip')
-    // 只有耗时一 chip（token / 步数尚为 0，被跳过）
-    expect(chips.length).toBe(1)
+    // 耗时一 chip + 执行中状态 chip（isLive → 「正常字体」渐变动态展示）；
+    // token / 步数尚为 0，被跳过
+    expect(chips.length).toBe(2)
     expect(container.querySelector('.turn-meta-chip--duration')?.textContent).toContain('12.5s')
+    expect(container.querySelector('.turn-meta-chip--patience')?.textContent).toBe(
+      '执行中（验证/构建/测试中）...',
+    )
     expect(container.querySelector('.turn-meta-chip--tokens')).toBeNull()
     expect(container.querySelector('.turn-meta-chip--steps')).toBeNull()
   })

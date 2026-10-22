@@ -2288,12 +2288,29 @@
   }
 }
 
-/* 耐心提示 chip（HUD 逻辑移植，大王 2026-10-22 定）：本轮执行持续 60s 后出现
-   在步数 chip 之后，完成/终止（isLive 转 false）立即消失。 */
+/* 执行中状态文案 chip（大王 2026-10-22 定）：isLive 即显示（不等 60s）、完成即
+   消失；变色用流光渐变实现（background-clip:text + 渐变动画扫过）——**字不拆**
+   （逐字 span 拆字被判定太丑，撤）；渐变色值走主题变量，暗亮主题天然兼容。 */
 .turn-meta-chip--patience {
-  color: var(--spark-dim);
-  font-style: italic;
-  opacity: 0.85;
+  background: linear-gradient(
+    90deg,
+    var(--spark-dim) 0%,
+    var(--fg-1, var(--spark-fg, currentColor)) 50%,
+    var(--spark-dim) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: turn-meta-sheen 2.4s linear infinite;
+}
+@keyframes turn-meta-sheen {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
 }
 
 /* 字号与行高对齐动作行（12px / 1.5），仅压缩水平内边距与透明度让位给图标按钮 */

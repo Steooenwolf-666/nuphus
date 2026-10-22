@@ -74,6 +74,11 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
+/** 执行中状态文案（大王 2026-10-22 定）：原文案「Running（验证/构建/测试中）...」
+ *  中 Running 太丑 → 换正常中文「执行中」，其余一字不动；isLive 即显示、完成即
+ *  消失；渐变动态流光展示（字不拆、正常字体呈现）。 */
+const PATIENCE_TEXT = '执行中（验证/构建/测试中）...'
+
 /** 执行中状态指示：HUD IconSpinner 同款（track + 半圆弧旋转）——「复用 HUD 的
  * svg 图标变化」（大王 2026-10-22）。仅 duration slot 且 isLive 时渲染。 */
 function LiveSpinner() {
@@ -86,7 +91,15 @@ function LiveSpinner() {
       className="turn-meta-spinner"
       aria-hidden="true"
     >
-      <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.5" fill="none" opacity="0.3" />
+      <circle
+        cx="7"
+        cy="7"
+        r="5.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        fill="none"
+        opacity="0.3"
+      />
       <path
         d="M12.5 7A5.5 5.5 0 0 0 1.5 7"
         stroke="currentColor"
@@ -115,19 +128,9 @@ export function TurnMetaBar({
     return () => window.clearInterval(timer)
   }, [isLive])
 
-  // 耐心提示（移植 HUD 既有逻辑——hud/App.tsx:442-449 同款 60s 到时提醒，大王
-  // 2026-10-22 定移到消息气泡）：本轮执行持续 60s 无结果 → 步数后追加
-  // 「Running（验证/构建/测试中）...」。纪律同 HUD：到时提醒、不假装完成；
-  // 完成/终止（isLive 转 false）经 effect 依赖立即重置消失，不等定时器。
-  const [patience, setPatience] = useState(false)
-  useEffect(() => {
-    if (!isLive) {
-      setPatience(false)
-      return
-    }
-    const timer = window.setTimeout(() => setPatience(true), 60_000)
-    return () => window.clearTimeout(timer)
-  }, [isLive])
+  // 执行中状态提示（大王 2026-10-22 定调）：**isLive 即显示，不等 60s**
+  // （HUD 的耐心提示要等，这个不用等）——完成/终止（isLive 转 false）即消失。
+  // 变色用流光渐变（CSS background-clip:text），字不拆（逐字 span 拆字太丑，撤）。
 
   // 判空：duration / token / steps 全空**且无起点**才不渲染（无起点连耗时都推不出）。
   // startedAtMs 必须单独计入判据——「仅带起点」的轮次有耗时可展示，不能当空壳条。
@@ -176,11 +179,7 @@ export function TurnMetaBar({
           <span className="turn-meta-chip-value">{c.value}</span>
         </span>
       ))}
-      {isLive && patience && (
-        <span className="turn-meta-chip turn-meta-chip--patience">
-          Running（验证/构建/测试中）...
-        </span>
-      )}
+      {isLive && <span className="turn-meta-chip turn-meta-chip--patience">{PATIENCE_TEXT}</span>}
     </div>
   )
 }
