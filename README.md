@@ -10,7 +10,7 @@
 
 > **官方网站**: [www.nuphus.com](https://www.nuphus.com) — 产品介绍、下载安装包、更新日志与使用文档
 
-> **版本**: 0.3.1 · **状态**: Release（稳定版） · **平台**: Windows / macOS / Linux
+> **版本**: 1.0.0 · **状态**: Release（稳定版） · **平台**: Windows / macOS / Linux
 > **技术栈**: Tauri v2 · Rust · React 18 · TypeScript
 
 <p align="center">
@@ -310,6 +310,10 @@ Nuphus 是一个社区驱动的开源项目。除了代码贡献，你还可以�
 ---
 
 ## 致谢
+
+### v1.0.0 贡献者
+
+本版本未合并外部 Pull Request，全部变更由维护者完成。
 
 ### v0.2.31 贡献者
 

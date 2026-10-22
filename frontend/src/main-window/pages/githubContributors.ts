@@ -71,6 +71,11 @@
  * 区间其余提交全为仓库所有者直推，按既定口径以 **commit 出处**收录重要功能；纯格式 / lint /
  * 发版杂务提交不收录。`/contributors` API 六个账号与既有列表一致。
  *
+ * `1.0.0` 轮次（零 PR）取证：2026-10-22 经 `/pulls?state=closed` API 核对，v0.3.1（2026-10-21）
+ * 之后无任何合并 PR（最后合并仍是 #108，2026-10-18，已收录于 0.2.31 轮次）；`/contributors`
+ * API 六账号与 REPO_COMMITTERS 完全一致（78/24/13/4/1/1），头像墙无新增。区间提交全为仓库
+ * 所有者直推，按既定口径以 **commit 出处** 收录重要功能；纯格式 / lint / 发版杂务提交不收录。
+ *
  * ⛔ 新增记录前必须先在上面的三处找到出处并经所有者确认；不得凭印象补充贡献者或贡献内容。
  */
 
@@ -131,6 +136,50 @@ export interface GithubRound {
 
 /** 轮次倒序（最新在前），轮内按贡献时间先后 */
 export const CONTRIBUTOR_ROUNDS: GithubRound[] = [
+  {
+    version: '1.0.0',
+    date: '2026-10-22',
+    contributors: [
+      {
+        user: 'mrpulor-gh',
+        contributions: [
+          {
+            pr: null,
+            commit: 'eaa2c8c8',
+            summary:
+              '拆除界面判死架构：心跳判死 / 看门狗恢复阶梯 / eval 探针全部移除，保留日志限流与主线程停摆日志',
+          },
+          {
+            pr: null,
+            commit: '7af7a6cb',
+            summary: 'ReAct 循环轮中增量快照：执行中崩溃最多丢当前迭代增量，不再吞整个对话',
+          },
+          {
+            pr: null,
+            commit: 'ab5c73e6',
+            summary:
+              'system_shell 超时默认保留进程（杀仅限显式 background:false），长命令不再腰斩重跑',
+          },
+          {
+            pr: null,
+            commit: '8b100bc2',
+            summary:
+              '消息元数据条常驻：动作按钮执行完成才显示，耗时 / 步数实时可见 + 执行中旋转指示',
+          },
+          {
+            pr: null,
+            commit: '6c042c9e',
+            summary: '后台任务入口执行光影与 hover 提示，标题补耗时小字',
+          },
+          {
+            pr: null,
+            commit: '03f9209b',
+            summary: '执行中耐心提示（验证/构建/测试中）超过 60s 显示、完成即消（渐变流光）',
+          },
+        ],
+      },
+    ],
+  },
   {
     version: '0.3.1',
     date: '2026-10-21',
