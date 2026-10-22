@@ -24,9 +24,9 @@ mod resource_gate;
 mod shortcut;
 mod speech;
 mod splash;
+mod stall_probe;
 mod startup_guard;
 mod state;
-mod ui_watchdog;
 mod utils;
 mod video;
 
@@ -551,7 +551,6 @@ fn main() {
             commands::take_capture_result,
             // -- HUD overlay --
             commands::hud::hud_update,
-            commands::ui_link::ui_heartbeat,
             commands::hud::hud_hide,
             commands::hud::hud_pause,
             commands::hud::hud_resume,
@@ -1214,11 +1213,10 @@ fn main() {
             // 保障是时间驱动的，不依赖用户打开面板。
 nuphus::tools::background_tasks::start_watchdog();
 
-            // ── 界面自愈看门狗 ──
-            // 事件静默期（窗口闲置）也要巡检：心跳停摆 90s 判死后，先自动重载主界面，
-            // 仍不恢复则弹原生对话框给出「重新加载 / 重启」出口——用户不再被锁在
-            // 透明/空白窗口里（2026-10-15 用户报告，详见 ui_watchdog 头注）。
-            crate::ui_watchdog::spawn(app.handle().clone());
+            // ── 主线程停摆探针 ──
+            // 15s tick：向主线程投一条空任务，>3s 未执行即记 ERROR 日志
+            // （2026-10-16 主线程阻塞排查的留证工具）。只打日志、不做任何干预。
+            crate::stall_probe::spawn(app.handle().clone());
 
             // ── 账本变更 → 双推事件（事件驱动的显示链路，2026-10-11）──
             // lib crate 的账本不能依赖 bin crate 的发射器（反向依赖会成环），

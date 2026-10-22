@@ -1436,23 +1436,9 @@ export function useEvents(h: EventHandlers) {
     return () => clearInterval(interval)
   }, [])
 
-  // ── UI 心跳：向后端证明「主界面还活着」──
-  //
-  // 为什么需要：Tauri 的 emit 在 webview 渲染进程死亡后仍然返回 Ok（失败发生在
-  // wry 消息循环里，表现为 HRESULT 0x8007139F 错误洪水），Rust 侧拿不到任何
-  // 信号。心跳停摆超 90s 即被后端判定「界面失联」→ 进入降级模式（丢弃非关键
-  // 事件 + 主窗口标题切换 + HUD 提示）。
-  //
-  // ⚠️ 2026-10-19 曾尝试把心跳搬进 Web Worker（core/ui-heartbeat.worker.ts），
-  // 实证两处不可行并已撤销：① `invoke` 硬依赖 `window.__TAURI_INTERNALS__`
-  // （@tauri-apps/api/core.js:202），Worker 线程没有 window——每次 invoke 必挂；
-  // ② dev 模式 `new Worker(new URL('*.ts'))` 被 Vite dev server 回退成 index.html，
-  // module script 的严格 MIME 校验直接拒绝加载。误判的根因改由 Rust 侧治理：
-  // ui_watchdog 判死前先 eval 探针确认渲染进程存活（见 ui_watchdog.rs），
-  // 渲染饱和（JS 忙）不再被当成界面死亡。
-  //
-  // 恢复路径：后端收到复活心跳会推 `ui_reconnected` 警告（见下方 case 'warning'），
-  // 前端 reload 从 DB 重建完整状态——失联期间被丢弃的事件不做补偿。
+  // ── UI 心跳：向后端证明「主界面还活着」（2026-10-22 临时恢复：判死架构拆除前的
+  // 即时修复手段——UI-LINK dead 位卡死 51 分钟导致事件全丢，恢复心跳以清除该位；
+  // 后端判死架构拆除落地后此段将随架构一并移除）──
   useEffect(() => {
     const ping = () => {
       // 不直接链 invoke 的返回值：测试 mock / 非标准桥可能返回 undefined，

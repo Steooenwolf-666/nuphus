@@ -7,6 +7,19 @@
 
 ## [Unreleased]
 
+### Removed
+- **拆除界面判死架构**（68c7f424 10-11 引入心跳判死、99480720 10-15 加看门狗恢复
+  阶梯、3124171e 10-19 加 eval 探针）：该架构净效果为负——治的两个病已被
+  `log_collapse` 兜底（错误洪水）或治不成（透明窗口），却制造了真实的饱和误判
+  骚扰（10-19 两次实锤：大会话执行中 JS 渲染饱和 → 心跳饿死 >90s → 误判死 →
+  自动 reload + 弹窗，疑为用户报告「执行中崩溃」的触发层）。移除：`ui_watchdog.rs`
+  （判死 tick / 恢复阶梯 / `webview_alive` 探针 / `reload_main` / `notify_user`）、
+  `commands/ui_link.rs`（`ui_heartbeat` 命令）、`emitter.rs` 的 `UiLiveness` 全套
+  （判死位 / 失联事件节流 / 窗口标题与 HUD 切换）、`NuphusEvent::
+  is_essential_when_ui_dead` 事件分级、前端 3s 心跳 `setInterval`。保留：
+  `log_collapse` 日志限流、主线程停摆日志（迁移为 `stall_probe.rs`，只打日志、
+  不做任何干预）、`react_loop.rs` 轮中快照。
+
 ## [0.3.1] - 2026-10-21
 
 ### Added
