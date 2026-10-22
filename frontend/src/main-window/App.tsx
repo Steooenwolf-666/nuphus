@@ -488,6 +488,7 @@ export default function App() {
             */}
             <ChatPanel
               messages={s.messages}
+              timeline={s.timeline}
               // 唯一执行态（后端 ExecutionStage + 事件推送）：ChatPanel 内部派生
               // 「主循环在迭代中」与「后端仍占用」两个谓词，不再各自订阅不同来源
               executionStage={s.executionStage}

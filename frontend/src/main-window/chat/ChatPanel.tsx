@@ -99,7 +99,7 @@ import {
 import { RatingModal } from '../layout/ExecutionTraceFloating'
 import { MoodFace } from '../../ui/MoodFace'
 import { useLanguage } from '../../locales'
-import { TurnMetaBar } from '../../ui/TurnMetaBar'
+import { TurnMetaBar, type TurnMetaBarActiveTool } from '../../ui/TurnMetaBar'
 import type { TurnMeta } from '../../core/types'
 import { LetterAvatar } from '../../ui/LetterAvatar'
 import { playUiSound } from '../../ui/sound'
@@ -122,6 +122,12 @@ function formatTokens(n: number): string {
 
 interface ChatPanelProps {
   messages: ChatMessage[]
+  /**
+   * 实时执行时间线（useSession.timeline）：仅用于派生「当前正在跑的工具」，
+   * 驱动气泡执行态提示（工具结束——成功或失败——立即消失）。
+   * 缺省空数组，非执行场景与测试无须提供。
+   */
+  timeline?: TimelineEntry[]
   /**
    * 后端权威执行态（唯一来源，见 useExecutionState）。本组件内部只做谓词派生：
    * `running` = agent 主循环在迭代中（气泡光标 / 思考条）；`!== 'idle'` = 后端仍占用
@@ -286,6 +292,7 @@ function migrateLegacyProjectBookmarks(existing: ProjectBookmark[]): ProjectBook
 
 export function ChatPanel({
   messages: messageRecords,
+  timeline = [],
   executionStage,
   onSend,
   onGracefulStop,
@@ -353,6 +360,21 @@ export function ChatPanel({
   // 二者都取自 executionStage 同一个值，不再出现 `!canSwitch || locked` 式多源 OR。
   const isProcessing = executionStage === 'running'
   const backendLocked = executionStage !== 'idle'
+
+  // 当前正在执行的工具（大王 2026-10-22 定）：气泡执行态提示只跟随**这一条**——
+  // 工具结束（成功或失败）立即消失，不等整轮结束。取 timeline 最后一条 running 的
+  // tool_call；非执行态 / 无工具时为 null（失败/中断若丢了 tool_call_end，
+  // isProcessing 转 false 同样清空）。
+  const activeTool = useMemo<TurnMetaBarActiveTool | null>(() => {
+    if (!isProcessing) return null
+    for (let i = timeline.length - 1; i >= 0; i--) {
+      const entry = timeline[i]
+      if (entry.kind === 'tool_call' && entry.status === 'running') {
+        return { id: entry.id, toolName: entry.toolName, params: entry.params }
+      }
+    }
+    return null
+  }, [isProcessing, timeline])
   const [pauseMode, setPauseMode] = useState<'menu' | 'preparing' | 'input'>('menu')
   const [appendInput, setAppendInput] = useState('')
   const [pauseSubmitting, setPauseSubmitting] = useState(false)
@@ -2176,7 +2198,11 @@ export function ChatPanel({
                               {msg.role === 'assistant' && (
                                 /* 常驻：不随 hover——执行中也能看到耗时/步数实时在涨
                                    （按钮组才是「执行完才用」的动作，元数据条是状态信息） */
-                                <TurnMetaBar meta={msg.meta} className="turn-meta-bar--actions" />
+                                <TurnMetaBar
+                                  meta={msg.meta}
+                                  activeTool={activeTool}
+                                  className="turn-meta-bar--actions"
+                                />
                               )}
                               {/* user 消息首轮 LLM 失败：hover 显示重试（优雅停止气泡无此标记） */}
                               {msg.role === 'user' && msg.failed && !isProcessing && onRetry && (

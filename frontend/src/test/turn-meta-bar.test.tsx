@@ -1,6 +1,6 @@
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
-import { TurnMetaBar, formatTurnDuration } from '../ui/TurnMetaBar'
+import { act, render } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { TurnMetaBar, formatTurnDuration, runningToolLabel } from '../ui/TurnMetaBar'
 import { isTurnMetaEmpty, type TurnMeta } from '../core/types'
 import { LangProvider } from '../locales'
 
@@ -53,21 +53,47 @@ describe('TurnMetaBar 契约', () => {
     expect(container.querySelector('.turn-meta-chip--steps')).toBeNull()
   })
 
-  it('②-b 本轮执行超过 60s → 出现耐心 chip；完成即消失', () => {
-    const live: TurnMeta = { startedAtMs: Date.now() - 61_000 }
-    const { container, rerender } = renderBar(<TurnMetaBar meta={live} />)
-    // 门槛按后端起点推算（不是挂载后另等 60s），61s 已到点 → 立即显示
-    expect(container.querySelector('.turn-meta-chip--patience')?.textContent).toBe(
-      '执行中（验证/构建/测试中）...',
-    )
-    // 完成（后端下发终值 durationMs）→ isLive=false → 耐心 chip 立即消失
-    rerender(
-      <LangProvider>
-        <TurnMetaBar meta={{ ...live, durationMs: 61_000 }} />
-      </LangProvider>,
-    )
-    expect(container.querySelector('.turn-meta-chip--patience')).toBeNull()
-    expect(container.querySelector('.turn-meta-chip--duration')?.textContent).toContain('1m 1s')
+  it('②-b 工具执行超过 60s 才提示、工具结束（成功或失败）立即消失', () => {
+    vi.useFakeTimers()
+    try {
+      const meta: TurnMeta = { startedAtMs: Date.now() - 90_000 }
+      const tool = {
+        id: 'call-1',
+        toolName: 'system_shell',
+        params: { command: 'npm run build' },
+      }
+      const { container, rerender } = renderBar(<TurnMetaBar meta={meta} activeTool={tool} />)
+      // 未满 60s → 不出现
+      expect(container.querySelector('.turn-meta-chip--patience')).toBeNull()
+      act(() => {
+        vi.advanceTimersByTime(60_000)
+      })
+      // 到点 → 按命令类型单项显示
+      expect(container.querySelector('.turn-meta-chip--patience')?.textContent).toBe('Building...')
+      // 工具结束（失败/成功都会让 activeTool 变 null）→ 立即消失，不等整轮结束
+      rerender(
+        <LangProvider>
+          <TurnMetaBar meta={meta} activeTool={null} />
+        </LangProvider>,
+      )
+      expect(container.querySelector('.turn-meta-chip--patience')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('②-c system_shell 命令类型判定（判不出回落 Running...）', () => {
+    const shell = (command: string) =>
+      runningToolLabel({ id: 'x', toolName: 'system_shell', params: { command } })
+    expect(shell('cargo test --release -p nuphus-desktop')).toBe('Testing...')
+    expect(shell('npx vitest run')).toBe('Testing...')
+    expect(shell('npm run build')).toBe('Building...')
+    expect(shell('cargo build --release')).toBe('Building...')
+    expect(shell('cargo clippy --all-targets -- -D warnings')).toBe('Checking...')
+    expect(shell('npx tsc --noEmit')).toBe('Checking...')
+    expect(shell('dir C:\\Users')).toBe('Running...')
+    // 非 shell 工具（如 Read）不猜类型
+    expect(runningToolLabel({ id: 'y', toolName: 'Read' })).toBe('Running...')
   })
 
   it('③ 完成后用后端权威 durationMs；令牌项 = 上下文增量（不是累计消耗）', () => {

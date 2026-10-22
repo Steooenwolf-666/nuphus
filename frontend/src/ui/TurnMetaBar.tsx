@@ -55,6 +55,19 @@ export interface TurnMetaBarProps {
   slots?: TurnMetaSlot[]
   /** 附加 class（消息内 / 弹窗内视觉微调） */
   className?: string
+  /**
+   * 当前正在执行的工具（实时 timeline 最后一个 running 的 tool_call，大王
+   * 2026-10-22 定）：执行态提示只跟随**这一条工具**——命令结束（成功或失败）
+   * 立即消失，不等整轮结束。
+   */
+  activeTool?: TurnMetaBarActiveTool | null
+}
+
+/** 当前执行中的工具（只需 name / params 用于判断命令类型） */
+export interface TurnMetaBarActiveTool {
+  id: string
+  toolName?: string
+  params?: unknown
 }
 
 /** 毫秒 → 紧凑可读时长（与执行面板 / 输入栏同款格式，避免三处各写一套） */
@@ -74,12 +87,34 @@ function formatTokens(n: number): string {
   return String(n)
 }
 
-/** 执行中状态文案（大王 2026-10-22 定）：原文案「Running（验证/构建/测试中）...」
- *  中 Running 太丑 → 换正常中文「执行中」，其余一字不动；渐变动态流光展示
- *  （字不拆、正常字体呈现）。 */
-const PATIENCE_TEXT = '执行中（验证/构建/测试中）...'
+/** 执行态提示文案（大王 2026-10-22 定）：按 system_shell 命令类型**单项显示**
+ *  （Testing / Building / Checking）；判断不出类型或非 shell 工具回落 Running。
+ *  无中英对照需求，直接用英文。 */
+export function runningToolLabel(tool: TurnMetaBarActiveTool): string {
+  const isShell = tool.toolName === 'system_shell' || tool.toolName === 'shell'
+  if (!isShell) return 'Running...'
+  const p = tool.params as { command?: unknown } | null | undefined
+  const cmd = typeof p?.command === 'string' ? p.command.toLowerCase() : ''
+  if (!cmd) return 'Running...'
+  // 顺序：测试 → 构建 → 检查（`npm run build` 内部可能含 tsc，按外层命令判）
+  if (
+    /(cargo\s+(test|nextest)|vitest|pytest|jest|npm\s+(run\s+)?test|pnpm\s+(run\s+)?test|yarn\s+test|go\s+test|dotnet\s+test)/.test(
+      cmd,
+    )
+  )
+    return 'Testing...'
+  if (
+    /(cargo\s+build|tauri\s+build|npm\s+run\s+build|pnpm\s+(run\s+)?build|yarn\s+build|vite\s+build|webpack|rollup)/.test(
+      cmd,
+    )
+  )
+    return 'Building...'
+  if (/(cargo\s+(check|clippy|fmt)|tsc\b|eslint|prettier|lint|--check|--noemit)/.test(cmd))
+    return 'Checking...'
+  return 'Running...'
+}
 
-/** 耐心阈值（毫秒）：与 HUD 单次运行 60s 提示同款节奏 */
+/** 耐心阈值（毫秒）：单条工具执行超过 60s 才提示（HUD 单次运行同款节奏） */
 const PATIENCE_DELAY_MS = 60_000
 
 /** 执行中状态指示：HUD IconSpinner 同款（track + 半圆弧旋转）——「复用 HUD 的
@@ -118,6 +153,7 @@ export function TurnMetaBar({
   meta,
   slots = ['duration', 'tokens', 'steps'],
   className,
+  activeTool,
 }: TurnMetaBarProps) {
   const { t } = useLanguage()
 
@@ -131,12 +167,23 @@ export function TurnMetaBar({
     return () => window.clearInterval(timer)
   }, [isLive])
 
-  // 执行中状态提示（大王 2026-10-22 定调）：**本轮执行超过 60s 才显示**
-  // （HUD 耐心提示同款节奏），完成/终止（isLive 转 false）即消失。
-  // 门槛直接由本轮已跑时长判定：isLive 时 durationMs = now − startedAtMs（起点是
-  // 后端权威值）→ 刷新/重新挂载后按真实起点判定，不会二次等 60s；200ms 自 tick
-  // 已保证到点即时出现，无需另设定时器。
-  // 变色用流光渐变（CSS background-clip:text），字不拆（逐字 span 拆字太丑，撤）。
+  // 执行态提示（大王 2026-10-22 定调，两次修正）：
+  //   · 只跟随**当前这一条工具**（activeTool），工具结束（成功或失败）立即消失，
+  //     不等整轮结束——失败 / 中断若没收到 tool_call_end，轮次收尾时 activeTool
+  //     也会变 null，同样立即消失；
+  //   · 单条工具执行**超过 60s** 才出现（HUD 耐心提示同款节奏）；
+  //   · 文案按 system_shell 命令类型单项显示（Testing / Building / Checking），
+  //     判不出类型回落 Running...（无中英对照需求，直接英文）。
+  // 只依赖 activeTool.id 起定时器：timeline 每来一行输出都会产生新数组/新对象，
+  // 若依赖对象本身会把计时器反复重置，60s 永远到不了。
+  const activeToolId = activeTool?.id ?? null
+  const [patience, setPatience] = useState(false)
+  useEffect(() => {
+    setPatience(false)
+    if (!isLive || !activeToolId) return
+    const timer = window.setTimeout(() => setPatience(true), PATIENCE_DELAY_MS)
+    return () => window.clearTimeout(timer)
+  }, [isLive, activeToolId])
 
   // 判空：duration / token / steps 全空**且无起点**才不渲染（无起点连耗时都推不出）。
   // startedAtMs 必须单独计入判据——「仅带起点」的轮次有耗时可展示，不能当空壳条。
@@ -185,8 +232,10 @@ export function TurnMetaBar({
           <span className="turn-meta-chip-value">{c.value}</span>
         </span>
       ))}
-      {isLive && durationMs >= PATIENCE_DELAY_MS && (
-        <span className="turn-meta-chip turn-meta-chip--patience">{PATIENCE_TEXT}</span>
+      {isLive && patience && activeTool && (
+        <span className="turn-meta-chip turn-meta-chip--patience">
+          {runningToolLabel(activeTool)}
+        </span>
       )}
     </div>
   )
