@@ -40,20 +40,34 @@ describe('TurnMetaBar 契约', () => {
     expect(isTurnMetaEmpty(null)).toBe(true)
   })
 
-  it('② 仅有起点 → 由起点推算耗时并渲染', () => {
+  it('② 仅有起点 → 由起点推算耗时并渲染（未满 60s 不出耐心 chip）', () => {
     // 起点取「当前时刻 - 12.5s」，使 resolveTurnDuration 推出 12.5s
     const meta: TurnMeta = { startedAtMs: Date.now() - 12_500 }
     const { container } = renderBar(<TurnMetaBar meta={meta} />)
     const chips = container.querySelectorAll('.turn-meta-chip')
-    // 耗时一 chip + 执行中状态 chip（isLive → 「正常字体」渐变动态展示）；
-    // token / 步数尚为 0，被跳过
-    expect(chips.length).toBe(2)
+    // 只有耗时一 chip（token / 步数尚为 0，被跳过）；耐心 chip 未满 60s 不显示
+    expect(chips.length).toBe(1)
     expect(container.querySelector('.turn-meta-chip--duration')?.textContent).toContain('12.5s')
+    expect(container.querySelector('.turn-meta-chip--patience')).toBeNull()
+    expect(container.querySelector('.turn-meta-chip--tokens')).toBeNull()
+    expect(container.querySelector('.turn-meta-chip--steps')).toBeNull()
+  })
+
+  it('②-b 本轮执行超过 60s → 出现耐心 chip；完成即消失', () => {
+    const live: TurnMeta = { startedAtMs: Date.now() - 61_000 }
+    const { container, rerender } = renderBar(<TurnMetaBar meta={live} />)
+    // 门槛按后端起点推算（不是挂载后另等 60s），61s 已到点 → 立即显示
     expect(container.querySelector('.turn-meta-chip--patience')?.textContent).toBe(
       '执行中（验证/构建/测试中）...',
     )
-    expect(container.querySelector('.turn-meta-chip--tokens')).toBeNull()
-    expect(container.querySelector('.turn-meta-chip--steps')).toBeNull()
+    // 完成（后端下发终值 durationMs）→ isLive=false → 耐心 chip 立即消失
+    rerender(
+      <LangProvider>
+        <TurnMetaBar meta={{ ...live, durationMs: 61_000 }} />
+      </LangProvider>,
+    )
+    expect(container.querySelector('.turn-meta-chip--patience')).toBeNull()
+    expect(container.querySelector('.turn-meta-chip--duration')?.textContent).toContain('1m 1s')
   })
 
   it('③ 完成后用后端权威 durationMs；令牌项 = 上下文增量（不是累计消耗）', () => {

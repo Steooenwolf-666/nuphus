@@ -75,9 +75,12 @@ function formatTokens(n: number): string {
 }
 
 /** 执行中状态文案（大王 2026-10-22 定）：原文案「Running（验证/构建/测试中）...」
- *  中 Running 太丑 → 换正常中文「执行中」，其余一字不动；isLive 即显示、完成即
- *  消失；渐变动态流光展示（字不拆、正常字体呈现）。 */
+ *  中 Running 太丑 → 换正常中文「执行中」，其余一字不动；渐变动态流光展示
+ *  （字不拆、正常字体呈现）。 */
 const PATIENCE_TEXT = '执行中（验证/构建/测试中）...'
+
+/** 耐心阈值（毫秒）：与 HUD 单次运行 60s 提示同款节奏 */
+const PATIENCE_DELAY_MS = 60_000
 
 /** 执行中状态指示：HUD IconSpinner 同款（track + 半圆弧旋转）——「复用 HUD 的
  * svg 图标变化」（大王 2026-10-22）。仅 duration slot 且 isLive 时渲染。 */
@@ -128,8 +131,11 @@ export function TurnMetaBar({
     return () => window.clearInterval(timer)
   }, [isLive])
 
-  // 执行中状态提示（大王 2026-10-22 定调）：**isLive 即显示，不等 60s**
-  // （HUD 的耐心提示要等，这个不用等）——完成/终止（isLive 转 false）即消失。
+  // 执行中状态提示（大王 2026-10-22 定调）：**本轮执行超过 60s 才显示**
+  // （HUD 耐心提示同款节奏），完成/终止（isLive 转 false）即消失。
+  // 门槛直接由本轮已跑时长判定：isLive 时 durationMs = now − startedAtMs（起点是
+  // 后端权威值）→ 刷新/重新挂载后按真实起点判定，不会二次等 60s；200ms 自 tick
+  // 已保证到点即时出现，无需另设定时器。
   // 变色用流光渐变（CSS background-clip:text），字不拆（逐字 span 拆字太丑，撤）。
 
   // 判空：duration / token / steps 全空**且无起点**才不渲染（无起点连耗时都推不出）。
@@ -179,7 +185,9 @@ export function TurnMetaBar({
           <span className="turn-meta-chip-value">{c.value}</span>
         </span>
       ))}
-      {isLive && <span className="turn-meta-chip turn-meta-chip--patience">{PATIENCE_TEXT}</span>}
+      {isLive && durationMs >= PATIENCE_DELAY_MS && (
+        <span className="turn-meta-chip turn-meta-chip--patience">{PATIENCE_TEXT}</span>
+      )}
     </div>
   )
 }
