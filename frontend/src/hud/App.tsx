@@ -309,10 +309,10 @@ function useLiveTimer(running: boolean, resetKey: string): number {
       startRef.current = Date.now()
       setElapsed(0)
       const id = setInterval(() => {
-        // 防御性封顶 90s：并行调用事件乱序时 phase 可能卡 running，
-        // 计时器永不停表、数字无限跳。封顶后显示停在 1m 30s 不再增长。
-        // 根治项：nuphus-event 按 seq 排序消费（留待后续），本次只封顶。
-        setElapsed(Math.min(Date.now() - startRef.current!, 90_000))
+        // 乱序卡 running 已在消费端按 seq 单调消费根治（applyHudUpdate 丢弃
+        // 迟到事件，迟到的 running 不会覆盖已落地的终态 done），删除旧 90s
+        // 防御性封顶：长任务（shell/验证）显示真实时长，完成即退表。
+        setElapsed(Date.now() - startRef.current!)
       }, 200)
       return () => clearInterval(id)
     } else {
@@ -343,6 +343,13 @@ export function HudOverlay() {
 
   // Phase transition animation key — change triggers CSS class swap
   const animRef = useRef(0)
+
+  // 全局事件序号消费水位。Rust TauriEventEmitter 给每条事件分配单调递增
+  // seq；并行工具生命周期事件在双通道上竞争 last-write-wins 显示，迟到的
+  // stale running 落在终态 done 之后会把 phase 卡回 running、计时器永不
+  // 退表（旧实现只能对计时数字封顶 90s 兜底）。seq <= 已见水位的事件直接
+  // 丢弃；0 / 缺省（main.rs、llm.rs、hud_update 命令等直调旁路）恒生效。
+  const lastSeq = useRef(0)
 
   const clearHideTimer = useCallback(() => {
     if (hideTimer.current !== null) {
@@ -378,7 +385,11 @@ export function HudOverlay() {
 
   /// Shared handler for both HUD event channels
   const applyHudUpdate = useCallback(
-    (text: string, phase: HudPhase, step_kind?: string | null) => {
+    (text: string, phase: HudPhase, step_kind?: string | null, seq?: number) => {
+      if (seq && seq > 0) {
+        if (seq <= lastSeq.current) return
+        lastSeq.current = seq
+      }
       if (hideTimer.current !== null) {
         clearTimeout(hideTimer.current)
         hideTimer.current = null
@@ -401,17 +412,17 @@ export function HudOverlay() {
     // Channel A: global nuphus-event bus (Rust agent emits HudUpdate → emitter → here)
     const unlistenGlobal = listen<{ seq: number; event: NuphusEvent }>(
       'nuphus-event',
-      ({ event }) => {
+      ({ seq, event }) => {
         if (event.type === 'hud_update') {
-          applyHudUpdate(event.text, event.phase as HudPhase, event.step_kind)
+          applyHudUpdate(event.text, event.phase as HudPhase, event.step_kind, seq)
         }
       },
     )
     // Channel B: window-local hud-update (frontend invoke → show() → here)
-    const unlistenLocal = listen<{ text: string; phase: string }>(
+    const unlistenLocal = listen<{ text: string; phase: string; seq?: number }>(
       'hud-update',
-      ({ text, phase }) => {
-        applyHudUpdate(text, phase as HudPhase)
+      ({ text, phase, seq }) => {
+        applyHudUpdate(text, phase as HudPhase, undefined, seq)
       },
     )
     return () => {

@@ -62,7 +62,13 @@ pub fn create<R: tauri::Runtime>(app: &AppHandle<R>) {
 }
 
 /// Show HUD with given text and phase
-pub fn show<R: tauri::Runtime>(app: &AppHandle<R>, text: &str, phase: &str) {
+///
+/// `seq`：全局事件序号（TauriEventEmitter 发射时分配）。0 = 无序号的直调
+/// 旁路（main.rs 快捷键、llm.rs 绑定告警、hud_update 命令），前端恒生效。
+/// 非 0 时前端按 seq 单调消费，小于等于已见 seq 的事件直接丢弃——这是
+/// 并行工具生命周期事件乱序（迟到 running 覆盖终态 done、计时器无法
+/// 退出）的根治点。
+pub fn show<R: tauri::Runtime>(app: &AppHandle<R>, text: &str, phase: &str, seq: u64) {
     // Get / recreate window if needed
     let window = match app.get_webview_window(HUD_LABEL) {
         Some(w) => w,
@@ -103,7 +109,7 @@ pub fn show<R: tauri::Runtime>(app: &AppHandle<R>, text: &str, phase: &str) {
     // Emit update event to the frontend
     let _ = window.emit(
         "hud-update",
-        serde_json::json!({ "text": text, "phase": phase }),
+        serde_json::json!({ "text": text, "phase": phase, "seq": seq }),
     );
 
     // Show if not already visible
@@ -407,7 +413,7 @@ mod tests {
 /// Tauri command: update HUD from frontend or agent
 #[tauri::command(async)]
 pub fn hud_update(app: AppHandle, text: String, phase: String) {
-    show(&app, &text, &phase);
+    show(&app, &text, &phase, 0);
 }
 
 /// Tauri command: hide HUD

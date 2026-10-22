@@ -79,7 +79,10 @@ impl<R: tauri::Runtime> EventEmitter for TauriEventEmitter<R> {
                 if phase == "hidden" || phase == "hide" {
                     crate::commands::hud::hide(&self.app);
                 } else {
-                    crate::commands::hud::show(&self.app, text, phase);
+                    // HUD 消费端按全局 seq 单调排序：迟到/乱序的 running 不会再
+                    // 覆盖已落地的终态 done（计时器完成不退表的根源）。直调
+                    // show 的旁路（main.rs / llm.rs）传 seq=0，前端恒生效。
+                    crate::commands::hud::show(&self.app, text, phase, seq);
                 }
             }
             NuphusEvent::UserInputRequest { .. } => {

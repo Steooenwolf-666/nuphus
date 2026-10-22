@@ -575,7 +575,7 @@ fn notify_binding_issues<R: tauri::Runtime>(
     });
     if let Some((agent, reason)) = hit {
         tracing::warn!("[agent_models] {agent} 绑定未生效：{reason}");
-        crate::commands::hud::show(app, &binding_warning_message(agent, &reason), "warning");
+        crate::commands::hud::show(app, &binding_warning_message(agent, &reason), "warning", 0);
     }
 }
 

@@ -254,6 +254,7 @@ fn main() {
                                     &app,
                                     "当前没有正在运行的工作流",
                                     "warning",
+                                    0,
                                 );
                                 return;
                             };
