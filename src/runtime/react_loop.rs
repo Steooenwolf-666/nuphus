@@ -12,6 +12,44 @@ use crate::{session::ContentBlock, ExecutionStep, StepStatus};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+// ══════════════════════════════════════════════════════════════════════════
+// 轮中增量快照持久化
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 事故背景（0.3.1「执行中崩溃 + 吞两个对话」）：会话消息体只在进程内存，落盘
+// 仅任务完成后 flush_active_mirror——执行中崩溃（panic / webview 崩 / OOM /
+// 强杀）= 内存态全丢、DB 零痕迹。本机制在 ReAct 循环内周期性把当前会话完整
+// 快照写入 sessions.snapshot 列，崩溃最多丢失「当前迭代」的增量而非整个对话。
+//
+// 死锁安全：执行期间 agent 被 take() 出 runtime ctx（process.rs），runtime 锁
+// 只在任务开始/完成短暂持有——循环内 flush 只拿 DB 连接，不获取任何 state 锁。
+
+/// 轮中快照落盘判定（纯函数）：迭代数达 10 的倍数，或距上次落盘 ≥ 30 秒。
+///
+/// 与 IO 分离便于单测——测试不需要真跑满 30 秒。
+/// iteration 0 亦命中倍数条件：恰好为「进入循环前的首刷失败」提供即时重试。
+fn should_flush(iteration: usize, elapsed: Duration) -> bool {
+    iteration % 10 == 0 || elapsed >= Duration::from_secs(30)
+}
+
+/// best-effort 落盘核心：序列化失败与写盘失败同一语义——只 warn，绝不 panic/中断。
+///
+/// 与 Shelf::write_mirror（src-tauri/src/commands/process/shelf.rs）同构，但
+/// **不做 prune**：快照保留策略只由完成路径 flush_active_mirror 做。
+/// 泛型序列化入口使「序列化失败路径不 panic」可用强制失败的 Serialize 替身
+/// 直接单测——Session 全为纯数据（String/整数/布尔），正常输入永不触发失败。
+fn write_snapshot_best_effort<T: serde::Serialize>(id: &str, mode: &str, value: &T) {
+    match serde_json::to_string(value) {
+        Ok(json) => {
+            if let Err(e) = crate::store::session::upsert_snapshot(id, mode, &json) {
+                tracing::warn!("[Snapshot] 写快照失败 id={id}: {e}");
+            }
+        }
+        Err(e) => tracing::warn!("[Snapshot] 序列化快照失败 id={id}: {e}"),
+    }
+}
 
 impl super::Runtime {
     pub(super) async fn react_loop(
@@ -336,7 +374,22 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
         let mut ctx_warned = false;
         let mut ctx_force_converged = false;
 
+        // ── 轮中增量快照：进入循环前首刷一次 ──
+        // 此刻 session 已含用户消息（上方 push_user），首次 LLM 请求尚未发出。
+        // resume 场景 session 末尾即断点（见 resume() 文档），同样先落盘再进循环。
+        // best-effort：失败只 warn 不中断（见 write_snapshot_best_effort）。
+        self.flush_session_snapshot();
+        let mut last_flush = Instant::now();
+
         for iteration in 0..self.agent.config.max_iterations {
+            // ── 轮中增量快照：迭代数达 10 的倍数，或距上次落盘 ≥ 30 秒 ──
+            // 执行中崩溃最多丢失当前迭代的增量而非整个对话。iteration 0 亦命中
+            // 倍数条件——为上方首刷失败提供即时重试；UPSERT 幂等，无副作用。
+            if should_flush(iteration, last_flush.elapsed()) {
+                self.flush_session_snapshot();
+                last_flush = Instant::now();
+            }
+
             // 本轮是否需要补分隔 = 此前是否已有迭代产出过内容 text。
             // 用独立 Arc 而非复用 stream_text_seen：发出即清零，保证同轮后续
             // chunk 不会被反复插入换行。
@@ -1745,7 +1798,106 @@ l1_buf.push(prompt::env_info_section(&self.agent.config.model, Some(self.agent.c
             retry_session: None,
         })
     }
+
+    /// 轮中增量快照落盘（best-effort）：把当前会话完整快照写入 `sessions.snapshot` 列。
+    ///
+    /// 进入循环前首刷一次（session 已含用户消息、首次 LLM 请求之前），循环内
+    /// 每 10 迭代或距上次落盘 ≥ 30s 再刷。执行期间 agent 已被 take() 出 runtime
+    /// ctx（process.rs），锁只在任务开始/完成短暂持有：本方法只拿 DB 连接，
+    /// 不获取任何 state 锁，无死锁面。写失败只 warn 不中断，绝不 prune。
+    fn flush_session_snapshot(&self) {
+        write_snapshot_best_effort(
+            &self.agent.session.id,
+            self.config.mode.as_str(),
+            &self.agent.session,
+        );
+    }
 }
 
 // detect_frustration removed — replaced by LLM thinking-based emotion detection.
 // Trigger: src/agent/prompt.rs (build_l2_leader) instructs LLM to read plugin/knowledge/nuphus-self/emotion_guide.md when needed.
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serial_test::serial;
+
+    /// 轮中快照触发条件（纯函数）：10 的倍数必刷、超 30s 必刷、都不满足不刷。
+    #[test]
+    fn should_flush_boundaries() {
+        // 迭代数达 10 的倍数：无论距上次落盘多久都刷
+        assert!(should_flush(10, Duration::ZERO));
+        assert!(should_flush(20, Duration::from_secs(1)));
+        assert!(should_flush(30, Duration::from_secs(0)));
+        // iteration 0 亦命中倍数条件——为「进入循环前的首刷失败」提供即时重试
+        assert!(should_flush(0, Duration::ZERO));
+        // 不足 10 轮但距上次落盘 ≥ 30s（临界含 30s）：刷
+        assert!(should_flush(5, Duration::from_secs(30)));
+        assert!(should_flush(9, Duration::from_secs(31)));
+        // 不足 10 轮且未超时：不刷
+        assert!(!should_flush(1, Duration::ZERO));
+        assert!(!should_flush(5, Duration::from_secs(29)));
+        assert!(!should_flush(9, Duration::from_secs(29)));
+    }
+
+    /// 序列化失败路径：只 warn 不 panic（best-effort 语义）。
+    /// Session 全为纯数据永不触发 serde 失败，用强制失败的 Serialize 替身覆盖该分支。
+    #[test]
+    fn write_snapshot_best_effort_serialize_failure_does_not_panic() {
+        /// 序列化必然失败的测试替身——直接返回 Err 覆盖 warn 分支。
+        struct Unserializable;
+
+        impl serde::Serialize for Unserializable {
+            fn serialize<S: serde::Serializer>(
+                &self,
+                _serializer: S,
+            ) -> Result<S::Ok, S::Error> {
+                use serde::ser::Error as _;
+                Err(S::Error::custom("injected serialization failure"))
+            }
+        }
+
+        // serde 失败路径：只 warn 记录，不 panic、不触碰 DB
+        write_snapshot_best_effort("injected-serialize-failure", "leader", &Unserializable);
+        // 到达此处即未 panic
+    }
+
+    /// 落盘契约：upsert_snapshot 写入后 get_snapshot 读回且内容一致
+    /// （轮中 flush 依赖的存储链路：序列化 → UPSERT → 读回 → 反序列化）。
+    #[test]
+    #[serial]
+    fn snapshot_round_trip_upsert_get_consistent() {
+        let mut session = crate::session::Session::new();
+        session.push_user("轮中快照往返一致性测试".to_string());
+        session.advance_turn();
+        let id = session.id.clone();
+
+        write_snapshot_best_effort(&id, "leader", &session);
+
+        let (mode, json) = crate::store::session::get_snapshot(&id)
+            .unwrap()
+            .expect("快照应可读回");
+        assert_eq!(mode, "leader");
+        let restored: crate::session::Session =
+            serde_json::from_str(&json).expect("快照 JSON 应可反序列化");
+        assert_eq!(restored.id, id, "读回会话 id 应一致");
+        assert_eq!(restored.len(), session.len(), "读回消息数应一致");
+        assert!(
+            restored
+                .messages()
+                .iter()
+                .any(|m| m.text_content().contains("轮中快照往返一致性测试")),
+            "读回内容应含用户消息"
+        );
+        // 恢复链可见性：列表路径应能列出该快照（shelf 预热 / 恢复依赖）
+        let listed: Vec<String> = crate::store::session::list_snapshots(100)
+            .unwrap()
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .collect();
+        assert!(listed.contains(&id), "快照应出现在 list_snapshots");
+
+        crate::store::session::delete_session(&id).unwrap();
+    }
+}
